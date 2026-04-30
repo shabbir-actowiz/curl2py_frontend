@@ -1,7 +1,10 @@
-import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { Mail, Lock, User, Eye, EyeOff } from "lucide-react";
+import { toast } from "sonner";
 import { AuthShell, Divider, SocialButtons } from "@/components/auth/AuthShell";
+import { extractApiErrorMessage } from "@/lib/api";
+import { useAuth } from "@/contexts/auth-context";
 
 function scorePassword(pw: string): { score: 0 | 1 | 2 | 3; label: string } {
   let s = 0;
@@ -15,10 +18,22 @@ function scorePassword(pw: string): { score: 0 | 1 | 2 | 3; label: string } {
 }
 
 export default function Register() {
+  const navigate = useNavigate();
+  const { register, user, isLoading } = useAuth();
   const [showPwd, setShowPwd] = useState(false);
   const [agreed, setAgreed] = useState(false);
+  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [pwd, setPwd] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState("");
   const strength = useMemo(() => scorePassword(pwd), [pwd]);
+
+  useEffect(() => {
+    if (!isLoading && user) {
+      navigate("/");
+    }
+  }, [isLoading, navigate, user]);
 
   const segColor = (i: number) => {
     if (strength.score >= i) {
@@ -39,18 +54,50 @@ export default function Register() {
 
         <form
           className="space-y-4"
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault();
+            if (!agreed) {
+              setError("Accept the terms to continue.");
+              return;
+            }
+            if (!username.trim() || !email.trim() || pwd.length < 8) {
+              setError("Complete the username, email, and password fields.");
+              return;
+            }
+
+            setError("");
+            try {
+              setIsSubmitting(true);
+              const created = await register(
+                {
+                  username: username.trim(),
+                  email: email.trim(),
+                  password: pwd,
+                },
+                { remember: true },
+              );
+              toast.success(`Account created for ${created.username}`);
+              navigate("/");
+            } catch (submitError) {
+              const message = extractApiErrorMessage(submitError);
+              setError(message);
+              toast.error(message);
+            } finally {
+              setIsSubmitting(false);
+            }
           }}
         >
           <div className="space-y-1.5">
-            <label className="text-[12px] font-medium" htmlFor="name">Name</label>
+            <label className="text-[12px] font-medium" htmlFor="username">Username</label>
             <div className="relative">
               <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" strokeWidth={1.75} />
               <input
-                id="name"
+                id="username"
                 type="text"
-                placeholder="Your name"
+                autoComplete="username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="your-handle"
                 className="h-10 w-full rounded-md border border-border bg-background pl-9 pr-3 text-[13px] outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/60 focus:ring-1 focus:ring-primary/30"
               />
             </div>
@@ -63,6 +110,9 @@ export default function Register() {
               <input
                 id="r-email"
                 type="email"
+                autoComplete="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
                 className="h-10 w-full rounded-md border border-border bg-background pl-9 pr-3 text-[13px] outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/60 focus:ring-1 focus:ring-primary/30"
               />
@@ -134,12 +184,18 @@ export default function Register() {
             </span>
           </label>
 
+          {error && (
+            <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-[12px] text-destructive">
+              {error}
+            </p>
+          )}
+
           <button
             type="submit"
-            disabled={!agreed}
+            disabled={!agreed || isSubmitting}
             className="h-10 w-full rounded-md bg-primary text-[13px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Sign up
+            {isSubmitting ? "Creating account..." : "Sign up"}
           </button>
         </form>
 

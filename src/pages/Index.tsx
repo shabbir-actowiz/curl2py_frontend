@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Check, Copy, ChevronDown, ChevronRight, ChevronUp, AlertCircle, Terminal, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical } from "lucide-react";
+import { Check, Copy, ChevronDown, ChevronRight, ChevronUp, AlertCircle, Terminal, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut } from "lucide-react";
 import JSZip from "jszip";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
   parseCurl,
-  toPython,
   type ParsedCurl,
 } from "@/lib/curl-to-python";
-import { buildGeneratedScript, buildParserStub } from "@/lib/merge-generator";
 import { HighlightedPython } from "@/lib/python-highlight";
+import { convertWithBackend, extractApiErrorMessage } from "@/lib/api";
+import { useAuth } from "@/contexts/auth-context";
 
 type Client = "requests" | "httpx";
 
@@ -39,13 +40,9 @@ interface OutputTab {
 
 const SESSION_KEY = "curl2py:session:v2";
 
-const SAMPLE_SNIPPETS: Snippet[] = [
-  {
-    id: "s1",
-    name: "get_octocat",
-    raw: "curl https://api.github.com/users/octocat",
-  },
-];
+const SAMPLE_SNIPPETS: Snippet[] = [];
+
+const BACKEND_PLACEHOLDER = "# Connect to the backend and sync to generate Python code\n";
 
 function sanitizeName(input: string): string {
   return input
@@ -75,6 +72,12 @@ export default function Index() {
   const [savedSession, setSavedSession] = useState<boolean>(false);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [isSyncingBackend, setIsSyncingBackend] = useState(false);
+  const [backendOutputs, setBackendOutputs] = useState<Record<string, string>>({});
+  const [backendMergedOutput, setBackendMergedOutput] = useState<string | null>(null);
+  const [backendParserOutput, setBackendParserOutput] = useState<string | null>(null);
+
+  const { user, accessToken, logout } = useAuth();
 
   const outputRef = useRef<HTMLDivElement>(null);
   const snippetRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -123,8 +126,8 @@ export default function Index() {
   }, [snippets]);
 
   const outputs = useMemo(
-    () => blocks.map((b) => (b.raw.trim() ? toPython(b.parsed, { client, async: isAsync }) : "# Empty snippet — paste a curl command\n")),
-    [blocks, client, isAsync]
+    () => blocks.map((b) => backendOutputs[b.id] ?? (b.raw.trim() ? BACKEND_PLACEHOLDER : "# Empty snippet — paste a curl command\n")),
+    [blocks, backendOutputs]
   );
 
   const allTabs: OutputTab[] = useMemo(() => {
@@ -137,7 +140,6 @@ export default function Index() {
       hasError: !b.raw.trim() || !!b.parsed.error,
     }));
     if (mergeMode && validBlocks.length > 0) {
-      const validParsed = validBlocks.map((b) => b.parsed);
       const validNames = blocks
         .map((b, i) => (b.raw.trim() && !b.parsed.error ? effectiveNames[i] : null))
         .filter((n): n is string => !!n);
@@ -145,17 +147,17 @@ export default function Index() {
         id: "merged",
         kind: "merged",
         filename: "generated_script.py",
-        code: buildGeneratedScript(validParsed, { client, async: isAsync }, validNames),
+        code: backendMergedOutput ?? BACKEND_PLACEHOLDER,
       });
       tabs.push({
         id: "parser",
         kind: "parser",
         filename: "parser.py",
-        code: buildParserStub(validParsed, validNames),
+        code: backendParserOutput ?? BACKEND_PLACEHOLDER,
       });
     }
     return tabs;
-  }, [blocks, outputs, mergeMode, client, isAsync, effectiveNames, validBlocks]);
+  }, [blocks, outputs, mergeMode, validBlocks, backendMergedOutput, backendParserOutput]);
 
   const visibleTabs = useMemo(
     () => allTabs.filter((t) => !closedTabIds.has(t.id)),
@@ -188,6 +190,12 @@ export default function Index() {
       setActiveTabId(visibleTabs[0].id);
     }
   }, [visibleTabs, activeTabId]);
+
+  useEffect(() => {
+    setBackendOutputs({});
+    setBackendMergedOutput(null);
+    setBackendParserOutput(null);
+  }, [snippets, client, isAsync, mergeMode, user, accessToken]);
 
   // Status bar — uses "snippets ready"
   useEffect(() => {
@@ -414,6 +422,126 @@ export default function Index() {
     }
   };
 
+  const handleLogout = () => {
+    logout();
+    setStatusKind("info");
+    setStatusMsg("Signed out");
+    toast.success("Signed out");
+  };
+
+  async function handleSyncBackend(options: { silent?: boolean } = {}) {
+    const silent = options.silent ?? false;
+    if (!user || !accessToken) {
+      setStatusKind("error");
+      setStatusMsg("Login to sync with backend");
+      if (!silent) {
+        toast.error("Sign in to save conversions to the backend");
+      }
+      return;
+    }
+
+    const conversionTargets = blocks
+      .map((block, index) => ({ block, index }))
+      .filter(({ block }) => block.raw.trim().length > 0 && !block.parsed.error);
+
+    if (conversionTargets.length === 0) {
+      setStatusKind("error");
+      setStatusMsg("Add a curl command before syncing");
+      if (!silent) {
+        toast.error("Add a curl command before syncing");
+      }
+      return;
+    }
+
+    try {
+      setIsSyncingBackend(true);
+      const singleResults = await Promise.all(
+        conversionTargets.map(async ({ block, index }) => {
+          const response = await convertWithBackend(
+            {
+              curl: {
+                curl: block.raw,
+                function_name: effectiveNames[index],
+              },
+            },
+            accessToken,
+          );
+
+          if (!response.success) {
+            throw new Error(response.error || response.error_type || `Backend conversion failed for ${effectiveNames[index]}`);
+          }
+
+          return {
+            id: block.id,
+            code: response.python_code ?? response.request_script ?? "",
+            functionName: response.function_name ?? effectiveNames[index],
+          };
+        })
+      );
+
+      const nextOutputs: Record<string, string> = {};
+      singleResults.forEach((entry) => {
+        nextOutputs[entry.id] = entry.code || "# Backend conversion returned no code\n";
+      });
+      setBackendOutputs(nextOutputs);
+
+      if (mergeMode) {
+        const batchResponse = await convertWithBackend(
+          {
+            commands: conversionTargets.map(({ block, index }) => ({
+              curl: block.raw,
+              function_name: effectiveNames[index],
+            })),
+          },
+          accessToken,
+        );
+
+        if (!batchResponse.success) {
+          throw new Error(batchResponse.error || batchResponse.error_type || "Backend batch conversion failed");
+        }
+
+        setBackendMergedOutput(batchResponse.request_script ?? batchResponse.python_code ?? "# Backend conversion returned no code\n");
+        setBackendParserOutput(batchResponse.parser_script ?? "");
+      } else {
+        setBackendMergedOutput(null);
+        setBackendParserOutput(null);
+      }
+
+      const label = `${singleResults.length} snippet${singleResults.length === 1 ? "" : "s"}`;
+      setStatusKind("success");
+      setStatusMsg(`✓ Synced to backend · ${label}`);
+      if (!silent) {
+        toast.success("Generated code via backend");
+      }
+    } catch (error) {
+      const message = extractApiErrorMessage(error);
+      setStatusKind("error");
+      setStatusMsg(message);
+      if (!silent) {
+        toast.error(message);
+      }
+    } finally {
+      setIsSyncingBackend(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!user || !accessToken) {
+      return;
+    }
+
+    const hasRenderableSnippet = snippets.some((snippet) => snippet.raw.trim().length > 0);
+    if (!hasRenderableSnippet) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void handleSyncBackend({ silent: true });
+    }, 650);
+
+    return () => window.clearTimeout(timer);
+  }, [snippets, user, accessToken, mergeMode]);
+
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
       {/* TOP BAR */}
@@ -506,16 +634,48 @@ export default function Index() {
             Download All
           </button>
 
+          <button
+            onClick={() => void handleSyncBackend()}
+            disabled={isSyncingBackend || !user || !accessToken || snippets.length === 0}
+            className={cn(
+              "flex items-center gap-1.5 rounded-sm border px-2.5 py-1 text-[11px] transition-colors",
+              user && accessToken && snippets.length > 0 && !isSyncingBackend
+                ? "border-primary/60 bg-primary/10 text-primary hover:bg-primary/15"
+                : "border-border bg-transparent text-muted-foreground hover:border-border-strong hover:text-foreground",
+              (isSyncingBackend || !user || !accessToken || snippets.length === 0) && "cursor-not-allowed opacity-40"
+            )}
+            title={user ? "Save the current conversion to the backend" : "Login to sync conversions to the backend"}
+          >
+            <Upload className="h-3 w-3" strokeWidth={2} />
+            {isSyncingBackend ? "Syncing" : "Sync backend"}
+          </button>
+
           <div className="mx-1 h-4 w-px bg-border" aria-hidden />
 
-          <Link
-            to="/login"
-            className="flex items-center gap-1.5 rounded-sm border border-primary/60 bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/15"
-            title="Login or sign up to save your collections"
-          >
-            <LogIn className="h-3 w-3" strokeWidth={2} />
-            Login / Signup
-          </Link>
+          {user ? (
+            <div className="flex items-center gap-2">
+              <span className="hidden max-w-[140px] truncate text-[11px] text-muted-foreground sm:inline">
+                {user.username}
+              </span>
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
+                title="Sign out"
+              >
+                <LogOut className="h-3 w-3" strokeWidth={2} />
+                Logout
+              </button>
+            </div>
+          ) : (
+            <Link
+              to="/login"
+              className="flex items-center gap-1.5 rounded-sm border border-primary/60 bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/15"
+              title="Login or sign up to save your collections"
+            >
+              <LogIn className="h-3 w-3" strokeWidth={2} />
+              Login / Signup
+            </Link>
+          )}
         </div>
       </header>
 

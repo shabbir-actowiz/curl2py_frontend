@@ -1,11 +1,26 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
-import { Mail, Lock, Eye, EyeOff } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { User, Lock, Eye, EyeOff } from "lucide-react";
+import { toast } from "sonner";
 import { AuthShell, Divider, SocialButtons } from "@/components/auth/AuthShell";
+import { extractApiErrorMessage } from "@/lib/api";
+import { useAuth } from "@/contexts/auth-context";
 
 export default function Login() {
+  const navigate = useNavigate();
+  const { login, user, isLoading } = useAuth();
   const [showPwd, setShowPwd] = useState(false);
   const [remember, setRemember] = useState(true);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!isLoading && user) {
+      navigate("/");
+    }
+  }, [isLoading, navigate, user]);
 
   return (
     <AuthShell>
@@ -17,18 +32,39 @@ export default function Login() {
 
         <form
           className="space-y-4"
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault();
+            if (!username.trim() || !password) {
+              setError("Enter your username and password.");
+              return;
+            }
+
+            setError("");
+            try {
+              setIsSubmitting(true);
+              const signedIn = await login({ username: username.trim(), password }, { remember });
+              toast.success(`Signed in as ${signedIn.username}`);
+              navigate("/");
+            } catch (submitError) {
+              const message = extractApiErrorMessage(submitError);
+              setError(message);
+              toast.error(message);
+            } finally {
+              setIsSubmitting(false);
+            }
           }}
         >
           <div className="space-y-1.5">
-            <label className="text-[12px] font-medium text-foreground" htmlFor="email">Email</label>
+            <label className="text-[12px] font-medium text-foreground" htmlFor="username">Username</label>
             <div className="relative">
-              <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" strokeWidth={1.75} />
+              <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" strokeWidth={1.75} />
               <input
-                id="email"
-                type="email"
-                placeholder="you@example.com"
+                id="username"
+                type="text"
+                autoComplete="username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="your-handle"
                 className="h-10 w-full rounded-md border border-border bg-background pl-9 pr-3 text-[13px] outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/60 focus:ring-1 focus:ring-primary/30"
               />
             </div>
@@ -41,6 +77,9 @@ export default function Login() {
               <input
                 id="password"
                 type={showPwd ? "text" : "password"}
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
                 className="h-10 w-full rounded-md border border-border bg-background pl-9 pr-10 text-[13px] outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/60 focus:ring-1 focus:ring-primary/30"
               />
@@ -75,11 +114,18 @@ export default function Login() {
             <Link to="#" className="text-[12px] text-primary hover:underline">Forgot password?</Link>
           </div>
 
+          {error && (
+            <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-[12px] text-destructive">
+              {error}
+            </p>
+          )}
+
           <button
             type="submit"
-            className="h-10 w-full rounded-md bg-primary text-[13px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+            disabled={isSubmitting}
+            className="h-10 w-full rounded-md bg-primary text-[13px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Login
+            {isSubmitting ? "Signing in..." : "Login"}
           </button>
         </form>
 
