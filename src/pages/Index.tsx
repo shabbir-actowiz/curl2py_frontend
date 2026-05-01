@@ -76,6 +76,8 @@ export default function Index() {
   const [backendOutputs, setBackendOutputs] = useState<Record<string, string>>({});
   const [backendMergedOutput, setBackendMergedOutput] = useState<string | null>(null);
   const [backendParserOutput, setBackendParserOutput] = useState<string | null>(null);
+  const [dividerPos, setDividerPos] = useState(50);
+  const [isDraggingDivider, setIsDraggingDivider] = useState(false);
 
   const { user, accessToken, logout } = useAuth();
 
@@ -83,6 +85,7 @@ export default function Index() {
   const snippetRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const focusNameOnMountId = useRef<string | null>(null);
   const nameInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const mainRef = useRef<HTMLDivElement>(null);
 
   // Build parsed blocks per snippet
   const blocks: SnippetBlock[] = useMemo(
@@ -238,6 +241,50 @@ export default function Index() {
       focusNameOnMountId.current = null;
     }
   }, [snippets]);
+
+  // Load divider position from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem("curl2py:divider-pos");
+    if (saved) {
+      const pos = parseFloat(saved);
+      if (!isNaN(pos) && pos >= 30 && pos <= 70) {
+        setDividerPos(pos);
+      }
+    }
+  }, []);
+
+  // Save divider position to localStorage
+  useEffect(() => {
+    localStorage.setItem("curl2py:divider-pos", dividerPos.toString());
+  }, [dividerPos]);
+
+  // Handle divider drag
+  useEffect(() => {
+    if (!isDraggingDivider) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!mainRef.current) return;
+      const rect = mainRef.current.getBoundingClientRect();
+      const newX = e.clientX - rect.left;
+      const percentage = (newX / rect.width) * 100;
+
+      // Constrain to 30-70% range
+      const constrained = Math.max(30, Math.min(70, percentage));
+      setDividerPos(constrained);
+    };
+
+    const handleMouseUp = () => {
+      setIsDraggingDivider(false);
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isDraggingDivider]);
 
   // ─────────── Snippet handlers ───────────
   const updateSnippet = (id: string, patch: Partial<Snippet>) => {
@@ -813,9 +860,15 @@ export default function Index() {
         )}
 
         {/* MAIN SPLIT */}
-        <main className="grid flex-1 min-h-0 grid-cols-1 md:grid-cols-2">
+        <main
+          ref={mainRef}
+          style={{ ["--split-left" as any]: `${dividerPos}%` }}
+          className="relative grid flex-1 min-h-0 grid-cols-1 overflow-hidden md:[grid-template-columns:var(--split-left)_1px_minmax(0,1fr)]"
+        >
           {/* LEFT — SNIPPET INPUT */}
-          <section className="flex min-h-0 flex-col border-b border-border md:border-b-0 md:border-r">
+          <section
+            className="flex min-h-0 min-w-0 flex-col border-b border-border md:border-b-0"
+          >
             <PanelHeader label="INPUT" right={
               <span className="text-[10px] text-muted-foreground">
                 {snippets.length > 0 ? `${snippets.length} snippet${snippets.length === 1 ? "" : "s"}` : "—"}
@@ -1006,8 +1059,26 @@ export default function Index() {
             </div>
           </section>
 
+          {/* RESIZABLE DIVIDER */}
+          <div
+            className={cn(
+              "hidden md:block relative h-full w-px self-stretch bg-border",
+              isDraggingDivider && "bg-primary"
+            )}
+            aria-label="Resize panels"
+            role="separator"
+          />
+
+          <div
+            onMouseDown={() => setIsDraggingDivider(true)}
+            onPointerDown={() => setIsDraggingDivider(true)}
+            className="hidden md:block absolute z-10 h-full w-4 -translate-x-1/2 cursor-col-resize touch-none bg-transparent"
+            style={{ left: `calc(${dividerPos}% + 0.5px)` }}
+            aria-label="Resize panels"
+          />
+
           {/* RIGHT — OUTPUT */}
-          <section ref={outputRef} className="flex min-h-0 flex-col">
+          <section ref={outputRef} className="flex min-h-0 min-w-0 flex-col">
             <PanelHeader label="CODE" right={
               <span className="text-[10px] text-muted-foreground">
                 {activeTab?.filename || "—"}
