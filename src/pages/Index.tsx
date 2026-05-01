@@ -1008,7 +1008,7 @@ export default function Index() {
 
           {/* RIGHT — OUTPUT */}
           <section ref={outputRef} className="flex min-h-0 flex-col">
-            <PanelHeader label="OUTPUT" right={
+            <PanelHeader label="</>" right={
               <span className="text-[10px] text-muted-foreground">
                 {activeTab?.filename || "—"}
               </span>
