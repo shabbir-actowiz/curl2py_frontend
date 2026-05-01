@@ -197,6 +197,11 @@ export default function Index() {
     setBackendParserOutput(null);
   }, [snippets, client, isAsync, mergeMode, user, accessToken]);
 
+  // Auto-sync when snippets change
+  useEffect(() => {
+    handleSyncBackend({ silent: true });
+  }, [snippets, client, isAsync, mergeMode]);
+
   // Status bar — uses "snippets ready"
   useEffect(() => {
     const n = snippets.length;
@@ -431,14 +436,6 @@ export default function Index() {
 
   async function handleSyncBackend(options: { silent?: boolean } = {}) {
     const silent = options.silent ?? false;
-    if (!user || !accessToken) {
-      setStatusKind("error");
-      setStatusMsg("Login to sync with backend");
-      if (!silent) {
-        toast.error("Sign in to save conversions to the backend");
-      }
-      return;
-    }
 
     const conversionTargets = blocks
       .map((block, index) => ({ block, index }))

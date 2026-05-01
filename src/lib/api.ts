@@ -238,7 +238,7 @@ export async function getCurrentUser(accessToken: string): Promise<UserResponse>
   }, accessToken);
 }
 
-export async function convertWithBackend(payload: ConvertRequest, accessToken: string): Promise<ConversionResponse> {
+export async function convertWithBackend(payload: ConvertRequest, accessToken?: string): Promise<ConversionResponse> {
   return request<ConversionResponse>(apiRoutes.convert, {
     method: "POST",
     body: JSON.stringify(payload),
