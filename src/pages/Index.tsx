@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Check,Code, Copy, ChevronDown, ChevronRight, ChevronUp, AlertCircle, Terminal, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut } from "lucide-react";
 import JSZip from "jszip";
+import ReactJson from "react-json-view";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
@@ -338,6 +339,9 @@ export default function Index() {
   };
 
   const toggleWorkspace = (workspaceId: string) => {
+    setActiveWorkspaceId(workspaceId);
+    setActiveWorkspaceFile("request.py");
+    setActiveTabId(`req-${workspaceId}`);
     setExpandedWorkspaceIds((prev) => {
       const next = new Set(prev);
       if (next.has(workspaceId)) next.delete(workspaceId);
@@ -551,6 +555,10 @@ export default function Index() {
   const focusSnippet = (id: string) => {
     const idx = blocks.findIndex((b) => b.id === id);
     if (idx === -1) return;
+    setActiveWorkspaceId(id);
+    setActiveWorkspaceFile("request.py");
+    setActivePanelTab("code");
+    setExpandedWorkspaceIds((prev) => new Set(prev).add(id));
     const reqTab = allTabs.find((t) => t.kind === "request" && t.reqIdx === idx);
     if (reqTab) {
       setClosedTabIds((prev) => {
@@ -1382,7 +1390,17 @@ export default function Index() {
                       return (
                         <div
                           key={t.id}
-                          onClick={() => setActiveTabId(t.id)}
+                          onClick={() => {
+                            setActiveTabId(t.id);
+                            if (t.kind === "request" && t.reqIdx != null) {
+                              const workspace = blocks[t.reqIdx];
+                              if (workspace) {
+                                setActiveWorkspaceId(workspace.id);
+                                setActiveWorkspaceFile("request.py");
+                                setExpandedWorkspaceIds((prev) => new Set(prev).add(workspace.id));
+                              }
+                            }
+                          }}
                           onMouseEnter={() => {
                             if (t.kind === "request" && t.reqIdx != null) {
                               const b = blocks[t.reqIdx];
@@ -1456,9 +1474,7 @@ export default function Index() {
                 </div>
                 <div className="relative min-h-0 flex-1 overflow-auto">
                   {activeResponseJson ? (
-                    <pre className="px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground">
-                      {activeResponseJson}
-                    </pre>
+                    <ResponseBodyViewer source={activeResponseJson} />
                   ) : (
                     <div className="px-4 py-3 text-[11px] text-muted-foreground">No response yet</div>
                   )}
@@ -1518,6 +1534,259 @@ export default function Index() {
 }
 
 // ───────────────────── helpers ─────────────────────
+
+type ResponseMode =
+  | { kind: "json"; value: unknown }
+  | { kind: "html"; value: string };
+
+function detectResponseMode(source: string): ResponseMode {
+  try {
+    const parsed = JSON.parse(source);
+    if (typeof parsed === "string") {
+      const trimmed = parsed.trim();
+      try {
+        const nested = JSON.parse(trimmed);
+        return { kind: "json", value: nested };
+      } catch {
+        return { kind: "html", value: parsed };
+      }
+    }
+    return { kind: "json", value: parsed };
+  } catch {
+    return { kind: "html", value: source };
+  }
+}
+
+function jsonPath(namespace: Array<string | null>, name: string | null): string {
+  return [...namespace, name]
+    .filter((part): part is string => part !== null && part !== undefined && String(part).length > 0)
+    .map(String)
+    .join(".");
+}
+
+function stringifyJsonValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  return JSON.stringify(value, null, 2);
+}
+
+function toJsonViewSource(value: unknown): object {
+  if (value !== null && typeof value === "object") {
+    return value as object;
+  }
+  return { value };
+}
+
+async function copyText(value: string, label: string) {
+  await navigator.clipboard.writeText(value);
+  toast.success(label);
+}
+
+function xpathLiteral(value: string): string {
+  if (!value.includes("'")) return `'${value}'`;
+  if (!value.includes('"')) return `"${value}"`;
+  return `concat('${value.replace(/'/g, `', "'", '`)}')`;
+}
+
+function cssEscape(value: string): string {
+  const css = window.CSS as CSS & { escape?: (value: string) => string };
+  if (css?.escape) return css.escape(value);
+  return value.replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+}
+
+function getXPath(element: Element): string {
+  if (element.id) {
+    return `//*[@id=${xpathLiteral(element.id)}]`;
+  }
+
+  const parts: string[] = [];
+  let current: Element | null = element;
+  while (current && current.nodeType === Node.ELEMENT_NODE) {
+    let index = 1;
+    let sibling = current.previousElementSibling;
+    while (sibling) {
+      if (sibling.tagName === current.tagName) index += 1;
+      sibling = sibling.previousElementSibling;
+    }
+    parts.unshift(`${current.tagName.toLowerCase()}[${index}]`);
+    current = current.parentElement;
+  }
+
+  return `/${parts.join("/")}`;
+}
+
+function getCssSelector(element: Element): string {
+  if (element.id) {
+    return `#${cssEscape(element.id)}`;
+  }
+
+  const parts: string[] = [];
+  let current: Element | null = element;
+  while (current && current.nodeType === Node.ELEMENT_NODE && current.tagName.toLowerCase() !== "html") {
+    let selector = current.tagName.toLowerCase();
+    const className = current.getAttribute("class");
+    if (className) {
+      const firstClass = className.trim().split(/\s+/)[0];
+      if (firstClass) selector += `.${cssEscape(firstClass)}`;
+    }
+    const parent = current.parentElement;
+    if (parent) {
+      const sameTagSiblings = Array.from(parent.children).filter((child) => child.tagName === current?.tagName);
+      if (sameTagSiblings.length > 1) {
+        selector += `:nth-of-type(${sameTagSiblings.indexOf(current) + 1})`;
+      }
+    }
+    parts.unshift(selector);
+    current = parent;
+  }
+
+  return parts.join(" > ");
+}
+
+function ResponseBodyViewer({ source }: { source: string }) {
+  const mode = useMemo(() => detectResponseMode(source), [source]);
+
+  if (mode.kind === "json") {
+    return <JsonResponseViewer value={mode.value} />;
+  }
+
+  return <HtmlResponseViewer html={mode.value} />;
+}
+
+function JsonResponseViewer({ value }: { value: unknown }) {
+  const [selected, setSelected] = useState<{ path: string; value: unknown } | null>(null);
+
+  return (
+    <div className="px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground">
+      {selected && (
+        <div className="mb-2 flex items-center gap-2 text-[11px]">
+          <span className="max-w-[40ch] truncate text-muted-foreground">{selected.path || "root"}</span>
+          <button
+            onClick={() => void copyText(selected.path, "Copied key path")}
+            className="text-primary hover:text-foreground"
+          >
+            Copy path
+          </button>
+          <button
+            onClick={() => void copyText(stringifyJsonValue(selected.value), "Copied value")}
+            className="text-primary hover:text-foreground"
+          >
+            Copy value
+          </button>
+        </div>
+      )}
+      <ReactJson
+        src={toJsonViewSource(value)}
+        name={false}
+        theme="monokai"
+        style={{ backgroundColor: "transparent", fontFamily: "inherit", fontSize: "12px" }}
+        displayDataTypes={false}
+        displayObjectSize={false}
+        enableClipboard={false}
+        onSelect={(selection) => setSelected({
+          path: jsonPath(selection.namespace, selection.name),
+          value: selection.value,
+        })}
+      />
+    </div>
+  );
+}
+
+function HtmlResponseViewer({ html }: { html: string }) {
+  const documentNode = useMemo(() => new DOMParser().parseFromString(html, "text/html"), [html]);
+  const [selectedElement, setSelectedElement] = useState<Element | null>(null);
+  const root = documentNode.documentElement;
+  const xpath = selectedElement ? getXPath(selectedElement) : "";
+  const cssSelector = selectedElement ? getCssSelector(selectedElement) : "";
+
+  return (
+    <div className="px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground">
+      {selectedElement && (
+        <div className="mb-2 flex items-center gap-2 text-[11px]">
+          <span className="max-w-[32ch] truncate text-muted-foreground">{selectedElement.tagName.toLowerCase()}</span>
+          <button
+            onClick={() => void copyText(xpath, "Copied XPath")}
+            className="text-primary hover:text-foreground"
+          >
+            Copy XPath
+          </button>
+          <button
+            onClick={() => void copyText(cssSelector, "Copied CSS selector")}
+            className="text-primary hover:text-foreground"
+          >
+            Copy CSS selector
+          </button>
+        </div>
+      )}
+      {root ? (
+        <>
+          {documentNode.doctype && (
+            <div className="text-muted-foreground">
+              &lt;!DOCTYPE {documentNode.doctype.name}&gt;
+            </div>
+          )}
+          <HtmlTreeNode
+            element={root}
+            selectedElement={selectedElement}
+            onSelect={setSelectedElement}
+          />
+        </>
+      ) : (
+        <pre className="whitespace-pre-wrap">{html}</pre>
+      )}
+    </div>
+  );
+}
+
+function HtmlTreeNode({
+  element,
+  selectedElement,
+  onSelect,
+}: {
+  element: Element;
+  selectedElement: Element | null;
+  onSelect: (element: Element) => void;
+}) {
+  const children = Array.from(element.children);
+  const attrs = Array.from(element.attributes)
+    .slice(0, 3)
+    .map((attr) => `${attr.name}="${attr.value}"`)
+    .join(" ");
+  const directText = Array.from(element.childNodes)
+    .filter((node) => node.nodeType === Node.TEXT_NODE)
+    .map((node) => node.textContent?.trim())
+    .filter(Boolean)
+    .join(" ")
+    .slice(0, 80);
+  const isSelected = selectedElement === element;
+
+  return (
+    <div className="pl-3">
+      <button
+        onClick={() => onSelect(element)}
+        className={cn(
+          "block text-left font-mono text-[12px] leading-[1.6] hover:text-foreground",
+          isSelected ? "text-primary" : "text-muted-foreground"
+        )}
+      >
+        <span className="text-syntax-function">&lt;{element.tagName.toLowerCase()}</span>
+        {attrs && <span className="text-syntax-string"> {attrs}</span>}
+        <span className="text-syntax-function">&gt;</span>
+        {directText && <span className="text-foreground"> {directText}</span>}
+      </button>
+      {children.map((child, index) => (
+        <HtmlTreeNode
+          key={`${child.tagName}-${index}`}
+          element={child}
+          selectedElement={selectedElement}
+          onSelect={onSelect}
+        />
+      ))}
+      {children.length > 0 && (
+        <div className="text-muted-foreground">&lt;/{element.tagName.toLowerCase()}&gt;</div>
+      )}
+    </div>
+  );
+}
 
 function PanelHeader({ label, right }: { label: string; right?: React.ReactNode }) {
   return (
