@@ -54,6 +54,24 @@ export interface ConversionResponse {
   meta?: Record<string, unknown> | null;
 }
 
+export interface RunWorkspaceRequest {
+  workspace_name: string;
+  request_code: string;
+  parser_code: string;
+}
+
+export interface RunWorkspaceResponse {
+  success: boolean;
+  workspace_name: string;
+  status: number | null;
+  time_ms: number;
+  size: string;
+  response: unknown | null;
+  parsed: unknown | null;
+  logs: string;
+  error?: string | null;
+}
+
 export interface ConversionHistory {
   _id: string;
   user_id: string;
@@ -243,6 +261,13 @@ export async function convertWithBackend(payload: ConvertRequest, accessToken?: 
     method: "POST",
     body: JSON.stringify(payload),
   }, accessToken);
+}
+
+export async function runWorkspaceWithBackend(payload: RunWorkspaceRequest): Promise<RunWorkspaceResponse> {
+  return request<RunWorkspaceResponse>(apiRoutes.runWorkspace, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function getConversionHistory(accessToken: string, skip = 0, limit = 20): Promise<ConversionHistory[]> {

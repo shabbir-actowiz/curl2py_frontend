@@ -9,7 +9,7 @@ import {
   type ParsedCurl,
 } from "@/lib/curl-to-python";
 import { HighlightedPython } from "@/lib/python-highlight";
-import { convertWithBackend, extractApiErrorMessage } from "@/lib/api";
+import { convertWithBackend, extractApiErrorMessage, runWorkspaceWithBackend } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
 
 type Client = "requests" | "httpx";
@@ -68,10 +68,10 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024).toFixed(1)}kb`;
 }
 
-function readWorkspaceMeta(metaJson: string | null): { status: number; time: number; size: string } | null {
+function readWorkspaceMeta(metaJson: string | null): { status: number | null; time_ms?: number; time?: number; size: string } | null {
   if (!metaJson) return null;
   try {
-    return JSON.parse(metaJson) as { status: number; time: number; size: string };
+    return JSON.parse(metaJson) as { status: number | null; time_ms?: number; time?: number; size: string };
   } catch {
     return null;
   }
@@ -356,7 +356,6 @@ export default function Index() {
 
     setActiveWorkspaceId(workspaceId);
     setActiveWorkspaceFile("request.py");
-    setActivePanelTab("code");
     setExpandedWorkspaceIds((prev) => new Set(prev).add(workspaceId));
     setStatusKind("info");
     setStatusMsg(`Running ${workspaceName}...`);
@@ -378,42 +377,68 @@ export default function Index() {
       return;
     }
 
-    const simulatedTime = 120 + ((workspaceIndex * 37) % 80);
-    const responsePayload = {
-      workspace: workspaceName,
-      ok: true,
-      method: (parsed?.method || "GET").toUpperCase(),
-      url: parsed?.url || "",
-      executedAt: new Date().toISOString(),
-    };
-    const responseJson = JSON.stringify(responsePayload, null, 2);
-    const meta = {
-      status: 200,
-      time: simulatedTime,
-      size: formatSize(responseJson.length),
-    };
+    const requestCode = outputs[workspaceIndex] || "";
+    const parserCode = workspaceArtifacts[workspaceId]?.parserCode ?? buildParserStub(workspaceName);
 
-    await new Promise((resolve) => window.setTimeout(resolve, 180));
+    try {
+      const data = await runWorkspaceWithBackend({
+        workspace_name: workspaceName,
+        request_code: requestCode,
+        parser_code: parserCode,
+      });
 
-    setWorkspaceArtifacts((prev) => ({
-      ...prev,
-      [workspaceId]: {
-        responseJson,
-        metaJson: JSON.stringify(meta, null, 2),
-        logsTxt: [
-          `[info] Running ${workspaceName}...`,
-          `[info] request.py executed`,
-          `[info] response.json updated`,
-          `[info] parser.py executed`,
-          `[success] Completed in ${simulatedTime}ms`,
-        ].join("\n"),
-        parserCode: buildParserStub(workspaceName),
-      },
-    }));
+      const responsePayload = data.success
+        ? data.parsed ?? data.response
+        : { error: data.error || "Execution failed", logs: data.logs };
+      const responseJson = JSON.stringify(responsePayload, null, 2);
+      const meta = {
+        status: data.status,
+        time_ms: data.time_ms,
+        size: data.size,
+      };
 
-    setStatusKind("success");
-    setStatusMsg(`Completed in ${simulatedTime}ms`);
-    toast.success(`Ran ${workspaceName}`);
+      setWorkspaceArtifacts((prev) => ({
+        ...prev,
+        [workspaceId]: {
+          responseJson,
+          metaJson: JSON.stringify(meta, null, 2),
+          logsTxt: data.logs,
+          parserCode,
+        },
+      }));
+
+      setActivePanelTab("response");
+
+      if (data.success) {
+        setStatusKind("success");
+        setStatusMsg(`Completed ${workspaceName} in ${data.time_ms}ms`);
+        toast.success(`Ran ${workspaceName}`);
+      } else {
+        setStatusKind("error");
+        setStatusMsg(`Error in ${workspaceName}`);
+        toast.error(data.error || data.logs || "Execution failed");
+      }
+    } catch (error) {
+      const message = extractApiErrorMessage(error);
+      const meta = {
+        status: null,
+        time_ms: 0,
+        size: "0 KB",
+      };
+      setWorkspaceArtifacts((prev) => ({
+        ...prev,
+        [workspaceId]: {
+          responseJson: JSON.stringify({ error: message }, null, 2),
+          metaJson: JSON.stringify(meta, null, 2),
+          logsTxt: message,
+          parserCode,
+        },
+      }));
+      setActivePanelTab("response");
+      setStatusKind("error");
+      setStatusMsg(`Error in ${workspaceName}`);
+      toast.error(message);
+    }
   }
 
   // Load divider position from localStorage
@@ -990,7 +1015,7 @@ export default function Index() {
                   const isExpanded = expandedWorkspaceIds.has(b.id) || isActiveWorkspace;
                   const hasError = !b.raw.trim() || !!b.parsed.error;
                   const method = (b.parsed.method || "GET").toUpperCase();
-                  const files: WorkspaceFile[] = ["request.py", "parser.py", "response.json", "meta.json", "logs.txt"];
+                  const files: WorkspaceFile[] = ["request.py", "parser.py", "response.json"];
                   return (
                     <div key={b.id} className="border-l-2 border-transparent">
                       <button
@@ -1328,7 +1353,7 @@ export default function Index() {
            
 
             <div className="flex items-center gap-0 overflow-x-auto border-b border-border bg-surface scrollbar-thin">
-              {(["code", "response", "logs"] as WorkspacePanelTab[]).map((tab) => (
+              {(["code", "response"] as WorkspacePanelTab[]).map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setActivePanelTab(tab)}
@@ -1424,7 +1449,7 @@ export default function Index() {
                   <span className="text-muted-foreground">{activeMeta?.status ?? "—"}</span>
                   <span className="text-syntax-comment">|</span>
                   <span className="font-semibold text-primary">Time</span>
-                  <span className="text-muted-foreground">{activeMeta ? `${activeMeta.time}ms` : "—"}</span>
+                  <span className="text-muted-foreground">{activeMeta ? `${activeMeta.time_ms ?? activeMeta.time ?? 0}ms` : "—"}</span>
                   <span className="text-syntax-comment">|</span>
                   <span className="font-semibold text-primary">Size</span>
                   <span className="text-muted-foreground">{activeMeta?.size ?? "—"}</span>
