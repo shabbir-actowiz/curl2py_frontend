@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Check, Copy, ChevronDown, ChevronRight, ChevronUp, AlertCircle, Terminal, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut } from "lucide-react";
+import { Check,Code, Copy, ChevronDown, ChevronRight, ChevronUp, AlertCircle, Terminal, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut } from "lucide-react";
 import JSZip from "jszip";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -1008,7 +1008,7 @@ export default function Index() {
 
           {/* RIGHT — OUTPUT */}
           <section ref={outputRef} className="flex min-h-0 flex-col">
-            <PanelHeader label="</>" right={
+            <PanelHeader label="CODE" right={
               <span className="text-[10px] text-muted-foreground">
                 {activeTab?.filename || "—"}
               </span>
