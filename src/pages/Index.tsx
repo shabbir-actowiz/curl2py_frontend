@@ -49,6 +49,25 @@ interface WorkspaceArtifact {
   parserCode: string;
 }
 
+interface CollectionState {
+  id: string;
+  name: string;
+  expanded: boolean;
+  snippets: Snippet[];
+  workspaceArtifacts: Record<string, WorkspaceArtifact>;
+  backendOutputs: Record<string, string>;
+  backendMergedOutput: string | null;
+  backendParserOutput: string | null;
+}
+
+interface ResponseTab {
+  id: string;
+  collectionId: string;
+  workspaceId: string;
+  fileName: "response.json";
+  label: string;
+}
+
 const SESSION_KEY = "curl2py:session:v2";
 
 const SAMPLE_SNIPPETS: Snippet[] = [];
@@ -90,8 +109,44 @@ function newId(): string {
   return Math.random().toString(36).slice(2, 9);
 }
 
+function resolveEffectiveNames(snippets: Snippet[]): string[] {
+  const used = new Set<string>();
+  return snippets.map((s, i) => {
+    let base = (s.name || "").trim() || `request_${i + 1}`;
+    let n = base;
+    let k = 2;
+    while (used.has(n)) n = `${base}_${k++}`;
+    used.add(n);
+    return n;
+  });
+}
+
+function createDefaultSnippet(name = "request_1"): Snippet {
+  return {
+    id: newId(),
+    name,
+    raw: "",
+  };
+}
+
+function createCollection(id: string, name: string, snippets: Snippet[] = [createDefaultSnippet()], expanded = true): CollectionState {
+  return {
+    id,
+    name,
+    expanded,
+    snippets,
+    workspaceArtifacts: {},
+    backendOutputs: {},
+    backendMergedOutput: null,
+    backendParserOutput: null,
+  };
+}
+
 export default function Index() {
-  const [snippets, setSnippets] = useState<Snippet[]>(SAMPLE_SNIPPETS);
+  const [collections, setCollections] = useState<Record<string, CollectionState>>(() => ({
+    tmp: createCollection("tmp", "tmp", SAMPLE_SNIPPETS, true),
+  }));
+  const [activeCollectionId, setActiveCollectionId] = useState<string>("tmp");
   const [activeTabId, setActiveTabId] = useState<string>("");
   const [hoveredSnippetId, setHoveredSnippetId] = useState<string | null>(null);
   const [copiedAll, setCopiedAll] = useState(false);
@@ -107,14 +162,12 @@ export default function Index() {
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [isSyncingBackend, setIsSyncingBackend] = useState(false);
-  const [backendOutputs, setBackendOutputs] = useState<Record<string, string>>({});
-  const [backendMergedOutput, setBackendMergedOutput] = useState<string | null>(null);
-  const [backendParserOutput, setBackendParserOutput] = useState<string | null>(null);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>("");
   const [activeWorkspaceFile, setActiveWorkspaceFile] = useState<WorkspaceFile>("request.py");
   const [activePanelTab, setActivePanelTab] = useState<WorkspacePanelTab>("code");
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(new Set());
-  const [workspaceArtifacts, setWorkspaceArtifacts] = useState<Record<string, WorkspaceArtifact>>({});
+  const [openResponseTabs, setOpenResponseTabs] = useState<ResponseTab[]>([]);
+  const [activeResponseTabId, setActiveResponseTabId] = useState<string | null>(null);
   const [dividerPos, setDividerPos] = useState(50);
   const [isDraggingDivider, setIsDraggingDivider] = useState(false);
 
@@ -125,6 +178,59 @@ export default function Index() {
   const focusNameOnMountId = useRef<string | null>(null);
   const nameInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const mainRef = useRef<HTMLDivElement>(null);
+
+  const activeCollection = collections[activeCollectionId] ?? Object.values(collections)[0] ?? createCollection("tmp", "tmp", [], true);
+  const snippets = activeCollection.snippets;
+  const backendOutputs = activeCollection.backendOutputs;
+  const backendMergedOutput = activeCollection.backendMergedOutput;
+  const backendParserOutput = activeCollection.backendParserOutput;
+  const workspaceArtifacts = activeCollection.workspaceArtifacts;
+
+  const updateActiveCollection = (patcher: (collection: CollectionState) => CollectionState) => {
+    setCollections((prev) => {
+      const current = prev[activeCollectionId] ?? Object.values(prev)[0];
+      if (!current) return prev;
+      return {
+        ...prev,
+        [current.id]: patcher(current),
+      };
+    });
+  };
+
+  const setSnippets = (updater: Snippet[] | ((prev: Snippet[]) => Snippet[])) => {
+    updateActiveCollection((collection) => {
+      const nextSnippets = typeof updater === "function"
+        ? (updater as (prev: Snippet[]) => Snippet[])(collection.snippets)
+        : updater;
+      return { ...collection, snippets: nextSnippets };
+    });
+  };
+
+  const setBackendOutputs = (updater: Record<string, string> | ((prev: Record<string, string>) => Record<string, string>)) => {
+    updateActiveCollection((collection) => {
+      const nextOutputs = typeof updater === "function"
+        ? (updater as (prev: Record<string, string>) => Record<string, string>)(collection.backendOutputs)
+        : updater;
+      return { ...collection, backendOutputs: nextOutputs };
+    });
+  };
+
+  const setBackendMergedOutput = (value: string | null) => {
+    updateActiveCollection((collection) => ({ ...collection, backendMergedOutput: value }));
+  };
+
+  const setBackendParserOutput = (value: string | null) => {
+    updateActiveCollection((collection) => ({ ...collection, backendParserOutput: value }));
+  };
+
+  const setWorkspaceArtifacts = (updater: Record<string, WorkspaceArtifact> | ((prev: Record<string, WorkspaceArtifact>) => Record<string, WorkspaceArtifact>)) => {
+    updateActiveCollection((collection) => {
+      const nextArtifacts = typeof updater === "function"
+        ? (updater as (prev: Record<string, WorkspaceArtifact>) => Record<string, WorkspaceArtifact>)(collection.workspaceArtifacts)
+        : updater;
+      return { ...collection, workspaceArtifacts: nextArtifacts };
+    });
+  };
 
   // Build parsed blocks per snippet
   const blocks: SnippetBlock[] = useMemo(
@@ -155,17 +261,7 @@ export default function Index() {
   const isDuplicate = (name: string) => (nameCounts[name] || 0) > 1;
 
   // Resolve effective names (fallback request_N, dedupe)
-  const effectiveNames = useMemo(() => {
-    const used = new Set<string>();
-    return snippets.map((s, i) => {
-      let base = (s.name || "").trim() || `request_${i + 1}`;
-      let n = base;
-      let k = 2;
-      while (used.has(n)) n = `${base}_${k++}`;
-      used.add(n);
-      return n;
-    });
-  }, [snippets]);
+  const effectiveNames = useMemo(() => resolveEffectiveNames(snippets), [snippets]);
 
   const outputs = useMemo(
     () => blocks.map((b) => backendOutputs[b.id] ?? (b.raw.trim() ? BACKEND_PLACEHOLDER : "# Empty snippet — paste a curl command\n")),
@@ -215,13 +311,27 @@ export default function Index() {
   const activeCodeContent = activeWorkspaceFile === "parser.py"
     ? activeWorkspaceArtifact?.parserCode ?? buildParserStub(activeWorkspaceName || "request")
     : activeRequestCode;
-  const activeResponseJson = activeWorkspaceArtifact?.responseJson;
   const activeMetaJson = activeWorkspaceArtifact?.metaJson;
-  const activeMeta = readWorkspaceMeta(activeMetaJson);
   const activeLogsTxt = activeWorkspaceArtifact?.logsTxt ?? "";
   const activeWorkspaceDisplayName = activeWorkspaceName || "request";
+  const visibleResponseTabs = useMemo(
+    () => openResponseTabs.filter((tab) => tab.collectionId === activeCollection.id),
+    [openResponseTabs, activeCollection.id]
+  );
+  const activeResponseTab = visibleResponseTabs.find((tab) => tab.id === activeResponseTabId) || visibleResponseTabs[0] || null;
+  const activeResponseWorkspaceIdx = activeResponseTab
+    ? snippets.findIndex((snippet) => snippet.id === activeResponseTab.workspaceId)
+    : activeWorkspaceIdx;
+  const activeResponseWorkspaceName = activeResponseWorkspaceIdx >= 0
+    ? effectiveNames[activeResponseWorkspaceIdx]
+    : activeWorkspaceName;
+  const activeResponseArtifact = activeResponseTab
+    ? workspaceArtifacts[activeResponseTab.workspaceId]
+    : activeWorkspaceArtifact;
+  const activeResponseJson = activeResponseArtifact?.responseJson;
+  const activeResponseMeta = readWorkspaceMeta(activeResponseArtifact?.metaJson ?? null);
   const activePanelFilename = activePanelTab === "response"
-    ? (activeWorkspaceFile === "meta.json" ? "meta.json" : "response.json")
+    ? activeResponseTab?.label ?? (activeWorkspaceFile === "meta.json" ? "meta.json" : "response.json")
     : activePanelTab === "logs"
       ? "logs.txt"
       : activeCodeFilename;
@@ -230,7 +340,7 @@ export default function Index() {
     setBackendOutputs({});
     setBackendMergedOutput(null);
     setBackendParserOutput(null);
-  }, [snippets, client, isAsync, mergeMode, user, accessToken]);
+  }, [client, isAsync, user, accessToken]);
 
   // Auto-sync when snippets change
   useEffect(() => {
@@ -309,7 +419,26 @@ export default function Index() {
     }
   }, [snippets, effectiveNames, activeWorkspaceId]);
 
-  const openWorkspaceFile = (workspaceId: string, file: WorkspaceFile) => {
+  const openResponseFile = (collectionId: string, workspaceId: string) => {
+    const collection = collections[collectionId] ?? activeCollection;
+    const collectionNames = collection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(collection.snippets);
+    const workspaceIndex = collection.snippets.findIndex((snippet) => snippet.id === workspaceId);
+    const workspaceName = workspaceIndex >= 0 ? collectionNames[workspaceIndex] : workspaceId;
+    const tabId = `${collectionId}/${workspaceId}/response.json`;
+    const tab: ResponseTab = {
+      id: tabId,
+      collectionId,
+      workspaceId,
+      fileName: "response.json",
+      label: `${workspaceName}_response.json`,
+    };
+
+    setOpenResponseTabs((prev) => prev.some((item) => item.id === tabId) ? prev : [...prev, tab]);
+    setActiveResponseTabId(tabId);
+    setActivePanelTab("response");
+  };
+
+  const openWorkspaceFile = (workspaceId: string, file: WorkspaceFile, collectionId = activeCollection.id) => {
     setActiveWorkspaceId(workspaceId);
     setActiveWorkspaceFile(file);
     setExpandedWorkspaceIds((prev) => {
@@ -326,12 +455,12 @@ export default function Index() {
 
     if (file === "parser.py") {
       setActivePanelTab("code");
-      if (mergeMode) setActiveTabId("parser");
+      setActiveTabId(`req-${workspaceId}`);
       return;
     }
 
     if (file === "response.json" || file === "meta.json") {
-      setActivePanelTab("response");
+      openResponseFile(collectionId, workspaceId);
       return;
     }
 
@@ -348,6 +477,58 @@ export default function Index() {
       else next.add(workspaceId);
       return next;
     });
+  };
+
+  const selectCollection = (collectionId: string) => {
+    const collection = collections[collectionId];
+    if (!collection) return;
+    setActiveCollectionId(collectionId);
+    const existingSnippet = collection.snippets.find((snippet) => snippet.id === activeWorkspaceId);
+    const firstSnippet = existingSnippet ?? collection.snippets[0];
+    if (firstSnippet) {
+      setActiveWorkspaceId(firstSnippet.id);
+      setActiveWorkspaceFile("request.py");
+      setActiveTabId(`req-${firstSnippet.id}`);
+      setExpandedWorkspaceIds((prev) => new Set(prev).add(firstSnippet.id));
+    } else {
+      setActiveWorkspaceId("");
+      setActiveTabId("");
+    }
+  };
+
+  const toggleCollection = (collectionId: string) => {
+    selectCollection(collectionId);
+    setCollections((prev) => {
+      const collection = prev[collectionId];
+      if (!collection) return prev;
+      return {
+        ...prev,
+        [collectionId]: {
+          ...collection,
+          expanded: !collection.expanded,
+        },
+      };
+    });
+  };
+
+  const handleAddCollection = () => {
+    let index = Object.keys(collections).length + 1;
+    let id = `collection_${index}`;
+    while (collections[id]) {
+      index += 1;
+      id = `collection_${index}`;
+    }
+    const collection = createCollection(id, id, [createDefaultSnippet("request_1")], true);
+    const firstSnippet = collection.snippets[0];
+    setCollections((prev) => ({
+      ...prev,
+      [id]: collection,
+    }));
+    setActiveCollectionId(id);
+    setActiveWorkspaceId(firstSnippet.id);
+    setActiveWorkspaceFile("request.py");
+    setActiveTabId(`req-${firstSnippet.id}`);
+    setExpandedWorkspaceIds((workspaceIds) => new Set(workspaceIds).add(firstSnippet.id));
   };
 
   async function runWorkspace(workspaceId: string) {
@@ -386,6 +567,7 @@ export default function Index() {
 
     try {
       const data = await runWorkspaceWithBackend({
+        collection_name: activeCollection.name,
         workspace_name: workspaceName,
         request_code: requestCode,
         parser_code: parserCode,
@@ -412,6 +594,7 @@ export default function Index() {
       }));
 
       setActivePanelTab("response");
+      openResponseFile(activeCollection.id, workspaceId);
 
       if (data.success) {
         setStatusKind("success");
@@ -438,7 +621,7 @@ export default function Index() {
           parserCode,
         },
       }));
-      setActivePanelTab("response");
+      openResponseFile(activeCollection.id, workspaceId);
       setStatusKind("error");
       setStatusMsg(`Error in ${workspaceName}`);
       toast.error(message);
@@ -594,7 +777,7 @@ export default function Index() {
   const getActivePanelContent = () => {
     if (activePanelTab === "response") {
       return activeWorkspaceFile === "meta.json"
-        ? activeMetaJson || ""
+        ? activeResponseArtifact?.metaJson || activeMetaJson || ""
         : activeResponseJson || "";
     }
     if (activePanelTab === "logs") {
@@ -664,10 +847,32 @@ export default function Index() {
     }
   };
 
+  const handleCloseResponseTab = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setOpenResponseTabs((prev) => {
+      const next = prev.filter((tab) => tab.id !== id);
+      if (activeResponseTabId === id) {
+        const remaining = next.filter((tab) => tab.collectionId === activeCollection.id);
+        setActiveResponseTabId(remaining[0]?.id ?? null);
+      }
+      return next;
+    });
+  };
+
   // ─────────── Session ───────────
   const handleSaveSession = () => {
     try {
-      const payload = JSON.stringify({ snippets, client, isAsync, mergeMode });
+      const payload = JSON.stringify({
+        collections,
+        activeCollectionId,
+        activeWorkspaceId,
+        activeTabId,
+        openResponseTabs,
+        activeResponseTabId,
+        client,
+        isAsync,
+        mergeMode,
+      });
       localStorage.setItem(SESSION_KEY, payload);
       setSavedSession(true);
       setStatusKind("success");
@@ -688,15 +893,31 @@ export default function Index() {
         return;
       }
       const data = JSON.parse(raw);
-      if (Array.isArray(data.snippets)) {
-        setSnippets(
-          data.snippets.map((s: any) => ({
-            id: typeof s.id === "string" ? s.id : newId(),
-            name: typeof s.name === "string" ? sanitizeName(s.name) : "request_1",
-            raw: typeof s.raw === "string" ? s.raw : "",
-            collapsed: !!s.collapsed,
-          }))
-        );
+      if (data.collections && typeof data.collections === "object") {
+        setCollections(data.collections as Record<string, CollectionState>);
+        const nextActiveCollectionId = typeof data.activeCollectionId === "string" && data.collections[data.activeCollectionId]
+          ? data.activeCollectionId
+          : Object.keys(data.collections)[0] ?? "tmp";
+        setActiveCollectionId(nextActiveCollectionId);
+        const collection = data.collections[nextActiveCollectionId] as CollectionState | undefined;
+        const firstSnippet = collection?.snippets?.[0];
+        setActiveWorkspaceId(typeof data.activeWorkspaceId === "string" ? data.activeWorkspaceId : firstSnippet?.id ?? "");
+        setActiveTabId(typeof data.activeTabId === "string" ? data.activeTabId : firstSnippet ? `req-${firstSnippet.id}` : "");
+        setOpenResponseTabs(Array.isArray(data.openResponseTabs) ? data.openResponseTabs : []);
+        setActiveResponseTabId(typeof data.activeResponseTabId === "string" ? data.activeResponseTabId : null);
+      } else if (Array.isArray(data.snippets)) {
+        const migratedSnippets = data.snippets.map((s: any) => ({
+          id: typeof s.id === "string" ? s.id : newId(),
+          name: typeof s.name === "string" ? sanitizeName(s.name) : "request_1",
+          raw: typeof s.raw === "string" ? s.raw : "",
+          collapsed: !!s.collapsed,
+        }));
+        setCollections({
+          tmp: createCollection("tmp", "tmp", migratedSnippets, true),
+        });
+        setActiveCollectionId("tmp");
+        setActiveWorkspaceId(migratedSnippets[0]?.id ?? "");
+        setActiveTabId(migratedSnippets[0] ? `req-${migratedSnippets[0].id}` : "");
       }
       if (data.client === "httpx" || data.client === "requests") setClient(data.client);
       if (typeof data.isAsync === "boolean") setIsAsync(data.isAsync);
@@ -1009,105 +1230,158 @@ export default function Index() {
           <aside className="flex w-48 shrink-0 flex-col border-r border-border bg-surface">
             <div className="flex h-8 items-center justify-between border-b border-border px-3">
               <span className="label-eyebrow">COLLECTION</span>
-              <span className="text-[10px] text-muted-foreground">tmp</span>
+              <button
+                onClick={handleAddCollection}
+                className="flex items-center gap-1 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+                title="Add collection"
+              >
+                <Plus className="h-3 w-3" strokeWidth={2} />
+                Collection
+              </button>
             </div>
 
             <div className="flex-1 overflow-y-auto py-1.5 scrollbar-thin">
-              {blocks.length === 0 ? (
+              {Object.keys(collections).length === 0 ? (
                 <div className="px-3 py-2 text-[11px] text-muted-foreground">
-                  No snippets yet
+                  No collections yet
                 </div>
               ) : (
-                blocks.map((b, i) => {
-                  const isActiveWorkspace = activeWorkspaceId === b.id;
-                  const isExpanded = expandedWorkspaceIds.has(b.id) || isActiveWorkspace;
-                  const hasError = !b.raw.trim() || !!b.parsed.error;
-                  const method = (b.parsed.method || "GET").toUpperCase();
-                  const files: WorkspaceFile[] = ["request.py", "parser.py", "response.json"];
+                Object.values(collections).map((collection) => {
+                  const collectionBlocks = collection.id === activeCollection.id
+                    ? blocks
+                    : collection.snippets.map((s) => ({
+                        id: s.id,
+                        name: s.name,
+                        raw: s.raw,
+                        parsed: parseCurl(s.raw.trim() ? s.raw : "curl"),
+                      }));
+                  const collectionNames = collection.id === activeCollection.id
+                    ? effectiveNames
+                    : resolveEffectiveNames(collection.snippets);
+                  const isActiveCollection = collection.id === activeCollection.id;
                   return (
-                    <div key={b.id} className="border-l-2 border-transparent">
+                    <div key={collection.id} className="border-l-2 border-transparent">
                       <button
-                        onClick={() => toggleWorkspace(b.id)}
-                        onMouseEnter={() => setHoveredSnippetId(b.id)}
-                        onMouseLeave={() => setHoveredSnippetId(null)}
+                        onClick={() => toggleCollection(collection.id)}
                         className={cn(
                           "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] font-mono transition-colors",
-                          isActiveWorkspace
+                          isActiveCollection
                             ? "bg-primary/[0.07] text-foreground"
-                            : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground",
-                          hasError && "text-destructive"
+                            : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground"
                         )}
-                        title={b.parsed.url || "invalid"}
+                        title={collection.name}
                       >
-                        {isExpanded ? (
+                        {collection.expanded ? (
                           <ChevronDown className="h-3 w-3 shrink-0" strokeWidth={2} />
                         ) : (
                           <ChevronRight className="h-3 w-3 shrink-0" strokeWidth={2} />
                         )}
-                        <span className={cn(
-                          "shrink-0 text-[9px] font-semibold uppercase tracking-wider",
-                          hasError ? "text-destructive" : "text-syntax-function"
-                        )}>
-                          {method.slice(0, 4)}
-                        </span>
-                        <span className="truncate">{effectiveNames[i]}</span>
+                        <FolderOpen className="h-3 w-3 shrink-0" strokeWidth={2} />
+                        <span className="truncate">{collection.name}</span>
                       </button>
 
-                      {isExpanded && (
+                      {collection.expanded && (
                         <div className="ml-3 border-l border-border/70 py-1">
-                          {files.map((file) => {
-                            const isSelected = activeWorkspaceId === b.id && activeWorkspaceFile === file;
+                          {collectionBlocks.map((b, i) => {
+                            const isActiveWorkspace = isActiveCollection && activeWorkspaceId === b.id;
+                            const isExpanded = expandedWorkspaceIds.has(b.id) || isActiveWorkspace;
+                            const hasError = !b.raw.trim() || !!b.parsed.error;
+                            const method = (b.parsed.method || "GET").toUpperCase();
+                            const files: WorkspaceFile[] = ["request.py", "parser.py", "response.json"];
                             return (
+                              <div key={b.id}>
+                                <button
+                                  onClick={() => {
+                                    selectCollection(collection.id);
+                                    toggleWorkspace(b.id);
+                                  }}
+                                  onMouseEnter={() => setHoveredSnippetId(b.id)}
+                                  onMouseLeave={() => setHoveredSnippetId(null)}
+                                  className={cn(
+                                    "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] font-mono transition-colors",
+                                    isActiveWorkspace
+                                      ? "bg-primary/[0.07] text-foreground"
+                                      : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground",
+                                    hasError && "text-destructive"
+                                  )}
+                                  title={b.parsed.url || "invalid"}
+                                >
+                                  {isExpanded ? (
+                                    <ChevronDown className="h-3 w-3 shrink-0" strokeWidth={2} />
+                                  ) : (
+                                    <ChevronRight className="h-3 w-3 shrink-0" strokeWidth={2} />
+                                  )}
+                                  <span className={cn(
+                                    "shrink-0 text-[9px] font-semibold uppercase tracking-wider",
+                                    hasError ? "text-destructive" : "text-syntax-function"
+                                  )}>
+                                    {method.slice(0, 4)}
+                                  </span>
+                                  <span className="truncate">{collectionNames[i]}</span>
+                                </button>
+
+                                {isExpanded && (
+                                  <div className="ml-3 border-l border-border/70 py-1">
+                                    {files.map((file) => {
+                                      const isSelected = isActiveCollection && activeWorkspaceId === b.id && activeWorkspaceFile === file;
+                                      return (
+                                        <button
+                                          key={file}
+                                          onClick={() => {
+                                            if (activeCollection.id !== collection.id) selectCollection(collection.id);
+                                            openWorkspaceFile(b.id, file, collection.id);
+                                          }}
+                                          className={cn(
+                                            "flex w-full items-center gap-2 px-3 py-1 text-left font-mono transition-colors",
+                                            isSelected
+                                              ? "bg-primary/[0.07] text-foreground"
+                                              : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground"
+                                          )}
+                                        >
+                                          <FileCode className="h-3 w-3 shrink-0" strokeWidth={2} />
+                                          <span className="truncate text-[10px]">{file}</span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+
+                          {isActiveCollection && mergeMode && validBlocks.length > 0 && (
+                            <>
                               <button
-                                key={file}
-                                onClick={() => openWorkspaceFile(b.id, file)}
+                                onClick={() => { setActivePanelTab("code"); setActiveWorkspaceFile("request.py"); setActiveTabId("merged"); setClosedTabIds((p) => { const n = new Set(p); n.delete("merged"); return n; }); }}
                                 className={cn(
                                   "flex w-full items-center gap-2 px-3 py-1 text-left font-mono transition-colors",
-                                  isSelected
+                                  activeTab?.id === "merged"
                                     ? "bg-primary/[0.07] text-foreground"
                                     : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground"
                                 )}
                               >
                                 <FileCode className="h-3 w-3 shrink-0" strokeWidth={2} />
-                                <span className="truncate text-[10px]">{file}</span>
+                                <span className="truncate text-[10px]">generated_script.py</span>
                               </button>
-                            );
-                          })}
+                              <button
+                                onClick={() => { setActivePanelTab("code"); setActiveWorkspaceFile("request.py"); setActiveTabId("parser"); setClosedTabIds((p) => { const n = new Set(p); n.delete("parser"); return n; }); }}
+                                className={cn(
+                                  "flex w-full items-center gap-2 px-3 py-1 text-left font-mono transition-colors",
+                                  activeTab?.id === "parser"
+                                    ? "bg-primary/[0.07] text-foreground"
+                                    : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground"
+                                )}
+                              >
+                                <FileCode className="h-3 w-3 shrink-0" strokeWidth={2} />
+                                <span className="truncate text-[10px]">parser.py</span>
+                              </button>
+                            </>
+                          )}
                         </div>
                       )}
                     </div>
                   );
                 })
-              )}
-
-              {mergeMode && validBlocks.length > 0 && (
-                <>
-                  <div className="mt-3 px-3 py-1 text-[9px] uppercase tracking-[0.18em] text-muted-foreground/70">Merged</div>
-                  <button
-                    onClick={() => { setActiveTabId("merged"); setClosedTabIds((p) => { const n = new Set(p); n.delete("merged"); return n; }); }}
-                    className={cn(
-                      "flex w-full items-center gap-2 border-l-2 px-3 py-1.5 text-left text-[11px] font-mono transition-colors",
-                      activeTab?.id === "merged"
-                        ? "border-primary bg-primary/[0.07] text-foreground"
-                        : "border-transparent text-muted-foreground hover:bg-surface-elevated hover:text-foreground"
-                    )}
-                  >
-                    <FileCode className="h-3 w-3 shrink-0" strokeWidth={2} />
-                    <span className="truncate">generated_script.py</span>
-                  </button>
-                  <button
-                    onClick={() => { setActiveTabId("parser"); setClosedTabIds((p) => { const n = new Set(p); n.delete("parser"); return n; }); }}
-                    className={cn(
-                      "flex w-full items-center gap-2 border-l-2 px-3 py-1.5 text-left text-[11px] font-mono transition-colors",
-                      activeTab?.id === "parser"
-                        ? "border-primary bg-primary/[0.07] text-foreground"
-                        : "border-transparent text-muted-foreground hover:bg-surface-elevated hover:text-foreground"
-                    )}
-                  >
-                    <FileCode className="h-3 w-3 shrink-0" strokeWidth={2} />
-                    <span className="truncate">parser.py</span>
-                  </button>
-                </>
               )}
             </div>
 
@@ -1462,15 +1736,54 @@ export default function Index() {
               </div>
             ) : activePanelTab === "response" ? (
               <div className="flex min-h-0 flex-1 flex-col">
+                <div className="flex items-center gap-0 overflow-x-auto border-b border-border bg-surface scrollbar-thin">
+                  {visibleResponseTabs.length === 0 ? (
+                    <div className="px-3 py-2 text-[11px] text-muted-foreground">No response yet</div>
+                  ) : (
+                    visibleResponseTabs.map((tab) => {
+                      const isActive = tab.id === activeResponseTab?.id;
+                      return (
+                        <div
+                          key={tab.id}
+                          onClick={() => {
+                            setActiveResponseTabId(tab.id);
+                            setActiveWorkspaceId(tab.workspaceId);
+                            setActiveWorkspaceFile("response.json");
+                          }}
+                          className={cn(
+                            "group flex cursor-pointer items-center gap-1.5 border-r border-border px-3 py-2 text-[11px] font-mono transition-colors",
+                            isActive
+                              ? "bg-background text-foreground"
+                              : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground",
+                            isActive && "border-t border-t-primary"
+                          )}
+                        >
+                          <FileCode className={cn("h-3 w-3", isActive ? "text-primary" : "")} strokeWidth={2} />
+                          <span>{tab.label}</span>
+                          <button
+                            onClick={(e) => handleCloseResponseTab(tab.id, e)}
+                            className={cn(
+                              "ml-1 flex h-3.5 w-3.5 items-center justify-center rounded-sm opacity-0 transition-opacity hover:bg-border-strong hover:text-foreground group-hover:opacity-100",
+                              isActive && "opacity-60"
+                            )}
+                            aria-label={`Close ${tab.label}`}
+                          >
+                            <X className="h-2.5 w-2.5" strokeWidth={2.5} />
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
                 <div className="flex items-center gap-3 border-b border-border bg-background px-4 py-1.5 font-mono text-[11px]">
                   <span className="font-semibold text-primary">Status</span>
-                  <span className="text-muted-foreground">{activeMeta?.status ?? "—"}</span>
+                  <span className="text-muted-foreground">{activeResponseMeta?.status ?? "—"}</span>
                   <span className="text-syntax-comment">|</span>
                   <span className="font-semibold text-primary">Time</span>
-                  <span className="text-muted-foreground">{activeMeta ? `${activeMeta.time_ms ?? activeMeta.time ?? 0}ms` : "—"}</span>
+                  <span className="text-muted-foreground">{activeResponseMeta ? `${activeResponseMeta.time_ms ?? activeResponseMeta.time ?? 0}ms` : "—"}</span>
                   <span className="text-syntax-comment">|</span>
                   <span className="font-semibold text-primary">Size</span>
-                  <span className="text-muted-foreground">{activeMeta?.size ?? "—"}</span>
+                  <span className="text-muted-foreground">{activeResponseMeta?.size ?? "—"}</span>
                 </div>
                 <div className="relative min-h-0 flex-1 overflow-auto">
                   {activeResponseJson ? (

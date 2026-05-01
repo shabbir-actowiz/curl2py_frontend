@@ -55,6 +55,7 @@ export interface ConversionResponse {
 }
 
 export interface RunWorkspaceRequest {
+  collection_name?: string;
   workspace_name: string;
   request_code: string;
   parser_code: string;
