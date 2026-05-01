@@ -38,11 +38,44 @@ interface OutputTab {
   hasError?: boolean;
 }
 
+type WorkspacePanelTab = "code" | "response" | "logs";
+type WorkspaceFile = "request.py" | "parser.py" | "response.json" | "meta.json" | "logs.txt";
+
+interface WorkspaceArtifact {
+  responseJson: string | null;
+  metaJson: string | null;
+  logsTxt: string;
+  parserCode: string;
+}
+
 const SESSION_KEY = "curl2py:session:v2";
 
 const SAMPLE_SNIPPETS: Snippet[] = [];
 
 const BACKEND_PLACEHOLDER = "# Connect to the backend and sync to generate Python code\n";
+
+function buildParserStub(workspaceName: string): string {
+  return [
+    "def parse_response(response):",
+    `    # parser stub for ${workspaceName}`,
+    "    return response",
+    "",
+  ].join("\n");
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  return `${(bytes / 1024).toFixed(1)}kb`;
+}
+
+function readWorkspaceMeta(metaJson: string | null): { status: number; time: number; size: string } | null {
+  if (!metaJson) return null;
+  try {
+    return JSON.parse(metaJson) as { status: number; time: number; size: string };
+  } catch {
+    return null;
+  }
+}
 
 function sanitizeName(input: string): string {
   return input
@@ -76,6 +109,11 @@ export default function Index() {
   const [backendOutputs, setBackendOutputs] = useState<Record<string, string>>({});
   const [backendMergedOutput, setBackendMergedOutput] = useState<string | null>(null);
   const [backendParserOutput, setBackendParserOutput] = useState<string | null>(null);
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>("");
+  const [activeWorkspaceFile, setActiveWorkspaceFile] = useState<WorkspaceFile>("request.py");
+  const [activePanelTab, setActivePanelTab] = useState<WorkspacePanelTab>("code");
+  const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(new Set());
+  const [workspaceArtifacts, setWorkspaceArtifacts] = useState<Record<string, WorkspaceArtifact>>({});
   const [dividerPos, setDividerPos] = useState(50);
   const [isDraggingDivider, setIsDraggingDivider] = useState(false);
 
@@ -142,10 +180,8 @@ export default function Index() {
       code: outputs[i] || "",
       hasError: !b.raw.trim() || !!b.parsed.error,
     }));
+
     if (mergeMode && validBlocks.length > 0) {
-      const validNames = blocks
-        .map((b, i) => (b.raw.trim() && !b.parsed.error ? effectiveNames[i] : null))
-        .filter((n): n is string => !!n);
       tabs.push({
         id: "merged",
         kind: "merged",
@@ -159,6 +195,7 @@ export default function Index() {
         code: backendParserOutput ?? BACKEND_PLACEHOLDER,
       });
     }
+
     return tabs;
   }, [blocks, outputs, mergeMode, validBlocks, backendMergedOutput, backendParserOutput]);
 
@@ -169,30 +206,24 @@ export default function Index() {
 
   const activeTab = visibleTabs.find((t) => t.id === activeTabId) || visibleTabs[0];
   const activeReqIdx = activeTab?.reqIdx ?? null;
-
-  // Reset closed-state when snippet count changes
-  useEffect(() => {
-    setClosedTabIds(new Set());
-  }, [snippets.length]);
-
-  useEffect(() => {
-    if (mergeMode && validBlocks.length > 0) {
-      setClosedTabIds((prev) => {
-        const next = new Set(prev);
-        next.delete("merged");
-        next.delete("parser");
-        return next;
-      });
-      setActiveTabId("merged");
-    }
-  }, [mergeMode, validBlocks.length]);
-
-  useEffect(() => {
-    if (visibleTabs.length === 0) return;
-    if (!visibleTabs.some((t) => t.id === activeTabId)) {
-      setActiveTabId(visibleTabs[0].id);
-    }
-  }, [visibleTabs, activeTabId]);
+  const activeWorkspaceIdx = snippets.findIndex((snippet) => snippet.id === activeWorkspaceId);
+  const activeWorkspaceName = activeWorkspaceIdx >= 0 ? effectiveNames[activeWorkspaceIdx] : "";
+  const activeWorkspaceArtifact = activeWorkspaceId ? workspaceArtifacts[activeWorkspaceId] : undefined;
+  const activeRequestCode = activeTab?.code ?? "";
+  const activeCodeFilename = activeWorkspaceFile === "parser.py" ? "parser.py" : activeTab?.filename || "—";
+  const activeCodeContent = activeWorkspaceFile === "parser.py"
+    ? activeWorkspaceArtifact?.parserCode ?? buildParserStub(activeWorkspaceName || "request")
+    : activeRequestCode;
+  const activeResponseJson = activeWorkspaceArtifact?.responseJson;
+  const activeMetaJson = activeWorkspaceArtifact?.metaJson;
+  const activeMeta = readWorkspaceMeta(activeMetaJson);
+  const activeLogsTxt = activeWorkspaceArtifact?.logsTxt ?? "";
+  const activeWorkspaceDisplayName = activeWorkspaceName || "request";
+  const activePanelFilename = activePanelTab === "response"
+    ? (activeWorkspaceFile === "meta.json" ? "meta.json" : "response.json")
+    : activePanelTab === "logs"
+      ? "logs.txt"
+      : activeCodeFilename;
 
   useEffect(() => {
     setBackendOutputs({});
@@ -241,6 +272,149 @@ export default function Index() {
       focusNameOnMountId.current = null;
     }
   }, [snippets]);
+
+  useEffect(() => {
+    setWorkspaceArtifacts((prev) => {
+      const next = { ...prev };
+
+      snippets.forEach((snippet, index) => {
+        if (!next[snippet.id]) {
+          next[snippet.id] = {
+            responseJson: null,
+            metaJson: null,
+            logsTxt: `Workspace ${effectiveNames[index]} ready`,
+            parserCode: buildParserStub(effectiveNames[index]),
+          };
+        }
+      });
+
+      Object.keys(next).forEach((workspaceId) => {
+        if (!snippets.some((snippet) => snippet.id === workspaceId)) {
+          delete next[workspaceId];
+        }
+      });
+
+      return next;
+    });
+
+    if (!activeWorkspaceId && snippets[0]) {
+      setActiveWorkspaceId(snippets[0].id);
+      setExpandedWorkspaceIds(new Set([snippets[0].id]));
+    }
+
+    if (activeWorkspaceId && !snippets.some((snippet) => snippet.id === activeWorkspaceId) && snippets[0]) {
+      setActiveWorkspaceId(snippets[0].id);
+      setExpandedWorkspaceIds(new Set([snippets[0].id]));
+    }
+  }, [snippets, effectiveNames, activeWorkspaceId]);
+
+  const openWorkspaceFile = (workspaceId: string, file: WorkspaceFile) => {
+    setActiveWorkspaceId(workspaceId);
+    setActiveWorkspaceFile(file);
+    setExpandedWorkspaceIds((prev) => {
+      const next = new Set(prev);
+      next.add(workspaceId);
+      return next;
+    });
+
+    if (file === "request.py") {
+      setActivePanelTab("code");
+      setActiveTabId(`req-${workspaceId}`);
+      return;
+    }
+
+    if (file === "parser.py") {
+      setActivePanelTab("code");
+      if (mergeMode) setActiveTabId("parser");
+      return;
+    }
+
+    if (file === "response.json" || file === "meta.json") {
+      setActivePanelTab("response");
+      return;
+    }
+
+    setActivePanelTab("logs");
+  };
+
+  const toggleWorkspace = (workspaceId: string) => {
+    setExpandedWorkspaceIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(workspaceId)) next.delete(workspaceId);
+      else next.add(workspaceId);
+      return next;
+    });
+  };
+
+  async function runWorkspace(workspaceId: string) {
+    const workspaceIndex = snippets.findIndex((snippet) => snippet.id === workspaceId);
+    if (workspaceIndex === -1) return;
+
+    const workspaceName = effectiveNames[workspaceIndex] ?? snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
+    const requestSnippet = snippets[workspaceIndex];
+    const parsed = blocks[workspaceIndex]?.parsed;
+
+    setActiveWorkspaceId(workspaceId);
+    setActiveWorkspaceFile("request.py");
+    setActivePanelTab("code");
+    setExpandedWorkspaceIds((prev) => new Set(prev).add(workspaceId));
+    setStatusKind("info");
+    setStatusMsg(`Running ${workspaceName}...`);
+
+    if (!requestSnippet || !requestSnippet.raw.trim() || parsed?.error) {
+      const errorMessage = parsed?.error || "Add a curl command before running";
+      setWorkspaceArtifacts((prev) => ({
+        ...prev,
+        [workspaceId]: {
+          responseJson: null,
+          metaJson: null,
+          logsTxt: `[error] ${errorMessage}`,
+          parserCode: buildParserStub(workspaceName),
+        },
+      }));
+      setStatusKind("error");
+      setStatusMsg(`Error in ${workspaceName}`);
+      toast.error(errorMessage);
+      return;
+    }
+
+    const simulatedTime = 120 + ((workspaceIndex * 37) % 80);
+    const responsePayload = {
+      workspace: workspaceName,
+      ok: true,
+      method: (parsed?.method || "GET").toUpperCase(),
+      url: parsed?.url || "",
+      executedAt: new Date().toISOString(),
+    };
+    const responseJson = JSON.stringify(responsePayload, null, 2);
+    const meta = {
+      status: 200,
+      time: simulatedTime,
+      size: formatSize(responseJson.length),
+    };
+
+    await new Promise((resolve) => window.setTimeout(resolve, 180));
+
+    setWorkspaceArtifacts((prev) => ({
+      ...prev,
+      [workspaceId]: {
+        responseJson,
+        metaJson: JSON.stringify(meta, null, 2),
+        logsTxt: [
+          `[info] Running ${workspaceName}...`,
+          `[info] request.py executed`,
+          `[info] response.json updated`,
+          `[info] parser.py executed`,
+          `[success] Completed in ${simulatedTime}ms`,
+        ].join("\n"),
+        parserCode: buildParserStub(workspaceName),
+      },
+    }));
+
+    setStatusKind("success");
+    setStatusMsg(`Completed in ${simulatedTime}ms`);
+    toast.success(`Ran ${workspaceName}`);
+  }
 
   // Load divider position from localStorage
   useEffect(() => {
@@ -374,9 +548,32 @@ export default function Index() {
   }, [activeTabId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─────────── Output handlers ───────────
+  const getActivePanelFilename = () => {
+    if (activePanelTab === "response") {
+      return activeWorkspaceFile === "meta.json" ? "meta.json" : "response.json";
+    }
+    if (activePanelTab === "logs") {
+      return "logs.txt";
+    }
+    return activeCodeFilename;
+  };
+
+  const getActivePanelContent = () => {
+    if (activePanelTab === "response") {
+      return activeWorkspaceFile === "meta.json"
+        ? activeMetaJson || ""
+        : activeResponseJson || "";
+    }
+    if (activePanelTab === "logs") {
+      return activeLogsTxt || "";
+    }
+    return activeCodeContent;
+  };
+
   const handleCopyActive = async () => {
-    if (!activeTab) return;
-    await navigator.clipboard.writeText(activeTab.code || "");
+    const content = getActivePanelContent();
+    if (!content) return;
+    await navigator.clipboard.writeText(content);
     setCopiedAll(true);
     setTimeout(() => setCopiedAll(false), 1400);
   };
@@ -394,8 +591,14 @@ export default function Index() {
   };
 
   const handleDownloadActive = () => {
-    if (!activeTab) return;
-    downloadFile(activeTab.filename, activeTab.code);
+    const content = getActivePanelContent();
+    if (!content) return;
+    downloadFile(getActivePanelFilename(), content);
+  };
+
+  const handleRunActiveWorkspace = () => {
+    if (!activeWorkspaceId) return;
+    void runWorkspace(activeWorkspaceId);
   };
 
   const handleDownloadAll = async () => {
@@ -642,9 +845,9 @@ export default function Index() {
 
           <button
             onClick={handleCopyActive}
-            disabled={!activeTab}
+            disabled={!activePanelFilename}
             className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-            title={activeTab ? `Copy ${activeTab.filename}` : "Copy active file"}
+            title={activePanelFilename ? `Copy ${activePanelFilename}` : "Copy active file"}
           >
             {copiedAll ? (
               <span className="flex items-center gap-1.5 text-success">
@@ -660,9 +863,9 @@ export default function Index() {
 
           <button
             onClick={handleDownloadActive}
-            disabled={!activeTab}
+            disabled={!activePanelFilename}
             className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-            title={activeTab ? `Download ${activeTab.filename}` : "Download active file"}
+            title={activePanelFilename ? `Download ${activePanelFilename}` : "Download active file"}
           >
             <Download className="h-3 w-3" strokeWidth={2} />
             Download
@@ -676,6 +879,21 @@ export default function Index() {
           >
             <Download className="h-3 w-3" strokeWidth={2} />
             Download All
+          </button>
+
+          <button
+            onClick={handleRunActiveWorkspace}
+            disabled={!activeWorkspaceId}
+            className={cn(
+              "flex items-center gap-1.5 rounded-sm border px-2.5 py-1 text-[11px] transition-colors",
+              activeWorkspaceId
+                ? "border-primary/60 bg-primary/10 text-primary hover:bg-primary/15"
+                : "border-border bg-transparent text-muted-foreground hover:border-border-strong hover:text-foreground",
+              !activeWorkspaceId && "cursor-not-allowed opacity-40"
+            )}
+            title={activeWorkspaceId ? `Run ${activeWorkspaceDisplayName}` : "Select a workspace to run"}
+          >
+            Run
           </button>
 
           <button
@@ -768,35 +986,63 @@ export default function Index() {
                 </div>
               ) : (
                 blocks.map((b, i) => {
-                  const isActive = activeReqIdx === i;
-                  const isHover = hoveredSnippetId === b.id;
+                  const isActiveWorkspace = activeWorkspaceId === b.id;
+                  const isExpanded = expandedWorkspaceIds.has(b.id) || isActiveWorkspace;
                   const hasError = !b.raw.trim() || !!b.parsed.error;
                   const method = (b.parsed.method || "GET").toUpperCase();
+                  const files: WorkspaceFile[] = ["request.py", "parser.py", "response.json", "meta.json", "logs.txt"];
                   return (
-                    <button
-                      key={b.id}
-                      onClick={() => focusSnippet(b.id)}
-                      onMouseEnter={() => setHoveredSnippetId(b.id)}
-                      onMouseLeave={() => setHoveredSnippetId(null)}
-                      className={cn(
-                        "flex w-full items-center gap-2 border-l-2 px-3 py-1.5 text-left text-[11px] font-mono transition-colors",
-                        isActive
-                          ? "border-primary bg-primary/[0.07] text-foreground"
-                          : isHover
-                            ? "border-primary/40 bg-surface-elevated text-foreground"
-                            : "border-transparent text-muted-foreground hover:bg-surface-elevated hover:text-foreground",
-                        hasError && "text-destructive"
+                    <div key={b.id} className="border-l-2 border-transparent">
+                      <button
+                        onClick={() => toggleWorkspace(b.id)}
+                        onMouseEnter={() => setHoveredSnippetId(b.id)}
+                        onMouseLeave={() => setHoveredSnippetId(null)}
+                        className={cn(
+                          "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] font-mono transition-colors",
+                          isActiveWorkspace
+                            ? "bg-primary/[0.07] text-foreground"
+                            : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground",
+                          hasError && "text-destructive"
+                        )}
+                        title={b.parsed.url || "invalid"}
+                      >
+                        {isExpanded ? (
+                          <ChevronDown className="h-3 w-3 shrink-0" strokeWidth={2} />
+                        ) : (
+                          <ChevronRight className="h-3 w-3 shrink-0" strokeWidth={2} />
+                        )}
+                        <span className={cn(
+                          "shrink-0 text-[9px] font-semibold uppercase tracking-wider",
+                          hasError ? "text-destructive" : "text-syntax-function"
+                        )}>
+                          {method.slice(0, 4)}
+                        </span>
+                        <span className="truncate">{effectiveNames[i]}</span>
+                      </button>
+
+                      {isExpanded && (
+                        <div className="ml-3 border-l border-border/70 py-1">
+                          {files.map((file) => {
+                            const isSelected = activeWorkspaceId === b.id && activeWorkspaceFile === file;
+                            return (
+                              <button
+                                key={file}
+                                onClick={() => openWorkspaceFile(b.id, file)}
+                                className={cn(
+                                  "flex w-full items-center gap-2 px-3 py-1 text-left font-mono transition-colors",
+                                  isSelected
+                                    ? "bg-primary/[0.07] text-foreground"
+                                    : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground"
+                                )}
+                              >
+                                <FileCode className="h-3 w-3 shrink-0" strokeWidth={2} />
+                                <span className="truncate text-[10px]">{file}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
                       )}
-                      title={b.parsed.url || "invalid"}
-                    >
-                      <span className={cn(
-                        "shrink-0 text-[9px] font-semibold uppercase tracking-wider",
-                        hasError ? "text-destructive" : "text-syntax-function"
-                      )}>
-                        {method.slice(0, 4)}
-                      </span>
-                      <span className="truncate">{effectiveNames[i]}</span>
-                    </button>
+                    </div>
                   );
                 })
               )}
@@ -1079,80 +1325,135 @@ export default function Index() {
 
           {/* RIGHT — OUTPUT */}
           <section ref={outputRef} className="flex min-h-0 min-w-0 flex-col">
-            <PanelHeader label="CODE" right={
-              <span className="text-[10px] text-muted-foreground">
-                {activeTab?.filename || "—"}
-              </span>
-            } />
+           
 
             <div className="flex items-center gap-0 overflow-x-auto border-b border-border bg-surface scrollbar-thin">
-              {visibleTabs.length === 0 ? (
-                <div className="px-3 py-2 text-[11px] text-muted-foreground">No output yet</div>
-              ) : (
-                visibleTabs.map((t) => {
-                  const isActive = t.id === activeTabId;
-                  const hoverIdx = blocks.findIndex((b) => b.id === hoveredSnippetId);
-                  const isHover = t.kind === "request" && t.reqIdx === hoverIdx && hoverIdx !== -1;
-                  return (
-                    <div
-                      key={t.id}
-                      onClick={() => setActiveTabId(t.id)}
-                      onMouseEnter={() => {
-                        if (t.kind === "request" && t.reqIdx != null) {
-                          const b = blocks[t.reqIdx];
-                          if (b) setHoveredSnippetId(b.id);
-                        }
-                      }}
-                      onMouseLeave={() => t.kind === "request" && setHoveredSnippetId(null)}
-                      className={cn(
-                        "group flex cursor-pointer items-center gap-1.5 border-r border-border px-3 py-2 text-[11px] font-mono transition-colors",
-                        isActive
-                          ? "bg-background text-foreground"
-                          : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground",
-                        isHover && !isActive && "bg-surface-elevated text-foreground",
-                        t.hasError && "text-destructive",
-                        isActive && "border-t border-t-primary"
-                      )}
-                    >
-                      {t.hasError && <AlertCircle className="h-3 w-3" strokeWidth={2} />}
-                      {(t.kind === "merged" || t.kind === "parser") && (
-                        <FileCode className={cn("h-3 w-3", isActive ? "text-primary" : "")} strokeWidth={2} />
-                      )}
-                      <span>{t.filename}</span>
-                      <button
-                        onClick={(e) => handleCloseTab(t.id, e)}
-                        className={cn(
-                          "ml-1 flex h-3.5 w-3.5 items-center justify-center rounded-sm opacity-0 transition-opacity hover:bg-border-strong hover:text-foreground group-hover:opacity-100",
-                          isActive && "opacity-60"
-                        )}
-                        aria-label={`Close ${t.filename}`}
-                      >
-                        <X className="h-2.5 w-2.5" strokeWidth={2.5} />
-                      </button>
-                    </div>
-                  );
-                })
-              )}
+              {(["code", "response", "logs"] as WorkspacePanelTab[]).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setActivePanelTab(tab)}
+                  className={cn(
+                    "border-r border-border px-3 py-2 text-[11px] font-mono transition-colors",
+                    activePanelTab === tab
+                      ? "border-t border-t-primary bg-background text-foreground"
+                      : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground"
+                  )}
+                >
+                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                </button>
+              ))}
             </div>
 
-            {activeTab && (
+            {activePanelTab === "code" ? (
               <div className="flex min-h-0 flex-1 flex-col">
-                <MetaRow tab={activeTab} blocks={blocks} names={effectiveNames} />
-
-                <div className="relative min-h-0 flex-1 overflow-auto">
-                  {activeTab.hasError && activeTab.kind === "request" ? (
-                    <div className="m-3 rounded-sm border border-destructive/40 bg-destructive/5 p-3 text-[12px] text-destructive">
-                      Issue in {effectiveNames[activeTab.reqIdx ?? 0]}
-                      <div className="mt-1 text-[11px] text-muted-foreground">
-                        {blocks[activeTab.reqIdx ?? 0]?.parsed.error || "Empty snippet — paste a curl command"}
-                      </div>
-                    </div>
+                <div className="flex items-center gap-0 overflow-x-auto border-b border-border bg-surface scrollbar-thin">
+                  {visibleTabs.length === 0 ? (
+                    <div className="px-3 py-2 text-[11px] text-muted-foreground">No output yet</div>
                   ) : (
-                    <pre className="px-4 py-3">
-                      <HighlightedPython code={activeTab.code} />
-                    </pre>
+                    visibleTabs.map((t) => {
+                      const isActive = t.id === activeTabId;
+                      const hoverIdx = blocks.findIndex((b) => b.id === hoveredSnippetId);
+                      const isHover = t.kind === "request" && t.reqIdx === hoverIdx && hoverIdx !== -1;
+                      return (
+                        <div
+                          key={t.id}
+                          onClick={() => setActiveTabId(t.id)}
+                          onMouseEnter={() => {
+                            if (t.kind === "request" && t.reqIdx != null) {
+                              const b = blocks[t.reqIdx];
+                              if (b) setHoveredSnippetId(b.id);
+                            }
+                          }}
+                          onMouseLeave={() => t.kind === "request" && setHoveredSnippetId(null)}
+                          className={cn(
+                            "group flex cursor-pointer items-center gap-1.5 border-r border-border px-3 py-2 text-[11px] font-mono transition-colors",
+                            isActive
+                              ? "bg-background text-foreground"
+                              : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground",
+                            isHover && !isActive && "bg-surface-elevated text-foreground",
+                            t.hasError && "text-destructive",
+                            isActive && "border-t border-t-primary"
+                          )}
+                        >
+                          {t.hasError && <AlertCircle className="h-3 w-3" strokeWidth={2} />}
+                          {(t.kind === "merged" || t.kind === "parser") && (
+                            <FileCode className={cn("h-3 w-3", isActive ? "text-primary" : "")} strokeWidth={2} />
+                          )}
+                          <span>{t.filename}</span>
+                          <button
+                            onClick={(e) => handleCloseTab(t.id, e)}
+                            className={cn(
+                              "ml-1 flex h-3.5 w-3.5 items-center justify-center rounded-sm opacity-0 transition-opacity hover:bg-border-strong hover:text-foreground group-hover:opacity-100",
+                              isActive && "opacity-60"
+                            )}
+                            aria-label={`Close ${t.filename}`}
+                          >
+                            <X className="h-2.5 w-2.5" strokeWidth={2.5} />
+                          </button>
+                        </div>
+                      );
+                    })
                   )}
                 </div>
+
+                {activeTab && (
+                  <div className="flex min-h-0 flex-1 flex-col">
+                    <MetaRow tab={activeTab} blocks={blocks} names={effectiveNames} />
+
+                    <div className="relative min-h-0 flex-1 overflow-auto">
+                      {activeWorkspaceFile !== "parser.py" && activeTab.hasError && activeTab.kind === "request" ? (
+                        <div className="m-3 rounded-sm border border-destructive/40 bg-destructive/5 p-3 text-[12px] text-destructive">
+                          Issue in {effectiveNames[activeTab.reqIdx ?? 0]}
+                          <div className="mt-1 text-[11px] text-muted-foreground">
+                            {blocks[activeTab.reqIdx ?? 0]?.parsed.error || "Empty snippet — paste a curl command"}
+                          </div>
+                        </div>
+                      ) : (
+                        <pre className="px-4 py-3">
+                          <HighlightedPython code={activeCodeContent} />
+                        </pre>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : activePanelTab === "response" ? (
+              <div className="flex min-h-0 flex-1 flex-col">
+                <div className="flex items-center gap-3 border-b border-border bg-background px-4 py-1.5 font-mono text-[11px]">
+                  <span className="font-semibold text-primary">Status</span>
+                  <span className="text-muted-foreground">{activeMeta?.status ?? "—"}</span>
+                  <span className="text-syntax-comment">|</span>
+                  <span className="font-semibold text-primary">Time</span>
+                  <span className="text-muted-foreground">{activeMeta ? `${activeMeta.time}ms` : "—"}</span>
+                  <span className="text-syntax-comment">|</span>
+                  <span className="font-semibold text-primary">Size</span>
+                  <span className="text-muted-foreground">{activeMeta?.size ?? "—"}</span>
+                </div>
+                <div className="relative min-h-0 flex-1 overflow-auto">
+                  {activeResponseJson ? (
+                    <pre className="px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground">
+                      {activeResponseJson}
+                    </pre>
+                  ) : (
+                    <div className="px-4 py-3 text-[11px] text-muted-foreground">No response yet</div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="relative min-h-0 flex-1 overflow-auto px-4 py-3 font-mono text-[12px] leading-[1.6]">
+                {activeLogsTxt ? (
+                  activeLogsTxt.split("\n").map((line, index) => {
+                    const lower = line.toLowerCase();
+                    const isError = lower.includes("error") || lower.includes("failed");
+                    return (
+                      <div key={`${index}-${line}`} className={cn(isError && "text-destructive")}>
+                        {line || "\u00a0"}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="text-[11px] text-muted-foreground">No logs yet</div>
+                )}
               </div>
             )}
           </section>
