@@ -967,10 +967,11 @@ export default function Index() {
     const zip = new JSZip();
     for (const t of visibleTabs) zip.file(t.filename, t.code);
     const blob = await zip.generateAsync({ type: "blob" });
+    const zipName = `${sanitizeName(activeCollection.name || activeCollection.id) || "collection"}.zip`;
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "curl2py.zip";
+    a.download = zipName;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
