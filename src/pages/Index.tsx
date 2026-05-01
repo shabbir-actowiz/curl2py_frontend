@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Check,Code, Copy, ChevronDown, ChevronRight, ChevronUp, AlertCircle, Terminal, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut } from "lucide-react";
+import { Check,Code, Copy, ChevronDown, ChevronRight, ChevronUp, AlertCircle, Terminal, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil } from "lucide-react";
 import JSZip from "jszip";
 import ReactJson from "react-json-view";
 import { toast } from "sonner";
@@ -40,10 +40,13 @@ interface OutputTab {
 }
 
 type WorkspacePanelTab = "code" | "response" | "logs";
-type WorkspaceFile = "request.py" | "parser.py" | "response.json" | "meta.json" | "logs.txt";
+type WorkspaceFile = string;
 
 interface WorkspaceArtifact {
   responseJson: string | null;
+  responseFileName?: string;
+  responseContentType?: string;
+  responseExtension?: string;
   metaJson: string | null;
   logsTxt: string;
   parserCode: string;
@@ -64,7 +67,7 @@ interface ResponseTab {
   id: string;
   collectionId: string;
   workspaceId: string;
-  fileName: "response.json";
+  fileName: string;
   label: string;
 }
 
@@ -142,6 +145,14 @@ function createCollection(id: string, name: string, snippets: Snippet[] = [creat
   };
 }
 
+function defaultResponseFileName(workspaceName: string): string {
+  return `${workspaceName}_response.json`;
+}
+
+function isResponseFile(file: string): boolean {
+  return /_response\.(json|txt)$/i.test(file);
+}
+
 export default function Index() {
   const [collections, setCollections] = useState<Record<string, CollectionState>>(() => ({
     tmp: createCollection("tmp", "tmp", SAMPLE_SNIPPETS, true),
@@ -168,6 +179,8 @@ export default function Index() {
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(new Set());
   const [openResponseTabs, setOpenResponseTabs] = useState<ResponseTab[]>([]);
   const [activeResponseTabId, setActiveResponseTabId] = useState<string | null>(null);
+  const [editingCollectionId, setEditingCollectionId] = useState<string | null>(null);
+  const [editingCollectionName, setEditingCollectionName] = useState("");
   const [dividerPos, setDividerPos] = useState(50);
   const [isDraggingDivider, setIsDraggingDivider] = useState(false);
 
@@ -311,6 +324,12 @@ export default function Index() {
   const activeCodeContent = activeWorkspaceFile === "parser.py"
     ? activeWorkspaceArtifact?.parserCode ?? buildParserStub(activeWorkspaceName || "request")
     : activeRequestCode;
+  const panelCodeFilename = activeTab?.kind === "merged" || activeTab?.kind === "parser"
+    ? activeTab.filename
+    : activeCodeFilename;
+  const panelCodeContent = activeTab?.kind === "merged" || activeTab?.kind === "parser"
+    ? activeTab.code
+    : activeCodeContent;
   const activeMetaJson = activeWorkspaceArtifact?.metaJson;
   const activeLogsTxt = activeWorkspaceArtifact?.logsTxt ?? "";
   const activeWorkspaceDisplayName = activeWorkspaceName || "request";
@@ -331,10 +350,10 @@ export default function Index() {
   const activeResponseJson = activeResponseArtifact?.responseJson;
   const activeResponseMeta = readWorkspaceMeta(activeResponseArtifact?.metaJson ?? null);
   const activePanelFilename = activePanelTab === "response"
-    ? activeResponseTab?.label ?? (activeWorkspaceFile === "meta.json" ? "meta.json" : "response.json")
+    ? activeResponseTab?.label ?? (activeWorkspaceFile === "meta.json" ? "meta.json" : defaultResponseFileName(activeWorkspaceName || "request"))
     : activePanelTab === "logs"
       ? "logs.txt"
-      : activeCodeFilename;
+      : panelCodeFilename;
 
   useEffect(() => {
     setBackendOutputs({});
@@ -392,6 +411,9 @@ export default function Index() {
         if (!next[snippet.id]) {
           next[snippet.id] = {
             responseJson: null,
+            responseFileName: defaultResponseFileName(effectiveNames[index]),
+            responseContentType: "application/json",
+            responseExtension: "json",
             metaJson: null,
             logsTxt: `Workspace ${effectiveNames[index]} ready`,
             parserCode: buildParserStub(effectiveNames[index]),
@@ -419,21 +441,26 @@ export default function Index() {
     }
   }, [snippets, effectiveNames, activeWorkspaceId]);
 
-  const openResponseFile = (collectionId: string, workspaceId: string) => {
+  const openResponseFile = (collectionId: string, workspaceId: string, fileNameOverride?: string) => {
     const collection = collections[collectionId] ?? activeCollection;
     const collectionNames = collection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(collection.snippets);
     const workspaceIndex = collection.snippets.findIndex((snippet) => snippet.id === workspaceId);
     const workspaceName = workspaceIndex >= 0 ? collectionNames[workspaceIndex] : workspaceId;
-    const tabId = `${collectionId}/${workspaceId}/response.json`;
+    const artifact = collection.workspaceArtifacts[workspaceId];
+    const fileName = fileNameOverride ?? artifact?.responseFileName ?? defaultResponseFileName(workspaceName);
+    const tabId = `${collectionId}/${workspaceId}/${fileName}`;
     const tab: ResponseTab = {
       id: tabId,
       collectionId,
       workspaceId,
-      fileName: "response.json",
-      label: `${workspaceName}_response.json`,
+      fileName,
+      label: fileName,
     };
 
-    setOpenResponseTabs((prev) => prev.some((item) => item.id === tabId) ? prev : [...prev, tab]);
+    setOpenResponseTabs((prev) => {
+      const withoutWorkspace = prev.filter((item) => !(item.collectionId === collectionId && item.workspaceId === workspaceId));
+      return withoutWorkspace.some((item) => item.id === tabId) ? withoutWorkspace : [...withoutWorkspace, tab];
+    });
     setActiveResponseTabId(tabId);
     setActivePanelTab("response");
   };
@@ -459,7 +486,7 @@ export default function Index() {
       return;
     }
 
-    if (file === "response.json" || file === "meta.json") {
+    if (isResponseFile(file) || file === "meta.json") {
       openResponseFile(collectionId, workspaceId);
       return;
     }
@@ -531,6 +558,95 @@ export default function Index() {
     setExpandedWorkspaceIds((workspaceIds) => new Set(workspaceIds).add(firstSnippet.id));
   };
 
+  const startRenameCollection = (collectionId: string) => {
+    const collection = collections[collectionId];
+    if (!collection) return;
+    setEditingCollectionId(collectionId);
+    setEditingCollectionName(collection.name);
+  };
+
+  const commitRenameCollection = () => {
+    if (!editingCollectionId) return;
+    const current = collections[editingCollectionId];
+    if (!current) {
+      setEditingCollectionId(null);
+      return;
+    }
+
+    const nextName = sanitizeName(editingCollectionName) || current.name;
+    const duplicate = Object.values(collections).some((collection) => collection.id !== editingCollectionId && collection.name === nextName);
+    if (!nextName || duplicate) {
+      setEditingCollectionName(current.name);
+      setEditingCollectionId(null);
+      if (duplicate) toast.error("Collection name already exists");
+      return;
+    }
+
+    setCollections((prev) => {
+      const oldCollection = prev[editingCollectionId];
+      if (!oldCollection) return prev;
+      const next = { ...prev };
+      delete next[editingCollectionId];
+      next[nextName] = {
+        ...oldCollection,
+        id: nextName,
+        name: nextName,
+      };
+      return next;
+    });
+
+    setOpenResponseTabs((prev) => prev.map((tab) => tab.collectionId === editingCollectionId ? {
+      ...tab,
+      id: `${nextName}/${tab.workspaceId}/${tab.fileName}`,
+      collectionId: nextName,
+    } : tab));
+
+    if (activeCollectionId === editingCollectionId) {
+      setActiveCollectionId(nextName);
+    }
+    if (activeResponseTabId?.startsWith(`${editingCollectionId}/`)) {
+      setActiveResponseTabId(activeResponseTabId.replace(`${editingCollectionId}/`, `${nextName}/`));
+    }
+    setEditingCollectionId(null);
+  };
+
+  const handleDeleteCollection = (collectionId: string) => {
+    const remainingCollections = Object.values(collections).filter((collection) => collection.id !== collectionId);
+    if (remainingCollections.length === 0) {
+      const fallback = createCollection("tmp", "tmp", [], true);
+      setCollections({ tmp: fallback });
+      setActiveCollectionId("tmp");
+      setActiveWorkspaceId("");
+      setActiveTabId("");
+      setOpenResponseTabs([]);
+      setActiveResponseTabId(null);
+      setStatusKind("info");
+      setStatusMsg("Collection deleted");
+      return;
+    }
+
+    const nextActiveCollection = activeCollectionId === collectionId
+      ? remainingCollections[0]
+      : collections[activeCollectionId] ?? remainingCollections[0];
+    const firstSnippet = nextActiveCollection.snippets[0];
+
+    setCollections((prev) => {
+      const next = { ...prev };
+      delete next[collectionId];
+      return next;
+    });
+    setOpenResponseTabs((prev) => prev.filter((tab) => tab.collectionId !== collectionId));
+    if (activeResponseTabId?.startsWith(`${collectionId}/`)) {
+      const nextResponseTab = openResponseTabs.find((tab) => tab.collectionId !== collectionId);
+      setActiveResponseTabId(nextResponseTab?.id ?? null);
+    }
+    setActiveCollectionId(nextActiveCollection.id);
+    setActiveWorkspaceId(firstSnippet?.id ?? "");
+    setActiveTabId(firstSnippet ? `req-${firstSnippet.id}` : "");
+    setStatusKind("info");
+    setStatusMsg("Collection deleted");
+  };
+
   async function runWorkspace(workspaceId: string) {
     const workspaceIndex = snippets.findIndex((snippet) => snippet.id === workspaceId);
     if (workspaceIndex === -1) return;
@@ -573,20 +689,25 @@ export default function Index() {
         parser_code: parserCode,
       });
 
-      const responsePayload = data.success
-        ? data.parsed ?? data.response
-        : { error: data.error || "Execution failed", logs: data.logs };
-      const responseJson = JSON.stringify(responsePayload, null, 2);
+      const responsePayload = data.parsed ?? data.response ?? { error: data.error || "Execution failed", logs: data.logs };
+      const responseJson = data.extension === "txt" && typeof responsePayload === "string"
+        ? responsePayload
+        : JSON.stringify(responsePayload, null, 2);
       const meta = {
         status: data.status,
         time_ms: data.time_ms,
         size: data.size,
+        content_type: data.content_type,
       };
+      const responseFileName = data.response_file_name ?? data.file_name ?? `${workspaceName}_response.${data.extension || "json"}`;
 
       setWorkspaceArtifacts((prev) => ({
         ...prev,
         [workspaceId]: {
           responseJson,
+          responseFileName,
+          responseContentType: data.content_type,
+          responseExtension: data.extension,
           metaJson: JSON.stringify(meta, null, 2),
           logsTxt: data.logs,
           parserCode,
@@ -594,7 +715,7 @@ export default function Index() {
       }));
 
       setActivePanelTab("response");
-      openResponseFile(activeCollection.id, workspaceId);
+      openResponseFile(activeCollection.id, workspaceId, responseFileName);
 
       if (data.success) {
         setStatusKind("success");
@@ -616,6 +737,9 @@ export default function Index() {
         ...prev,
         [workspaceId]: {
           responseJson: JSON.stringify({ error: message }, null, 2),
+          responseFileName: defaultResponseFileName(workspaceName),
+          responseContentType: "application/json",
+          responseExtension: "json",
           metaJson: JSON.stringify(meta, null, 2),
           logsTxt: message,
           parserCode,
@@ -766,7 +890,7 @@ export default function Index() {
   // ─────────── Output handlers ───────────
   const getActivePanelFilename = () => {
     if (activePanelTab === "response") {
-      return activeWorkspaceFile === "meta.json" ? "meta.json" : "response.json";
+      return activeResponseTab?.label ?? activeWorkspaceFile;
     }
     if (activePanelTab === "logs") {
       return "logs.txt";
@@ -783,7 +907,7 @@ export default function Index() {
     if (activePanelTab === "logs") {
       return activeLogsTxt || "";
     }
-    return activeCodeContent;
+    return panelCodeContent;
   };
 
   const handleCopyActive = async () => {
@@ -1232,11 +1356,11 @@ export default function Index() {
               <span className="label-eyebrow">COLLECTION</span>
               <button
                 onClick={handleAddCollection}
-                className="flex items-center gap-1 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+                className="flex h-5 w-5 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
                 title="Add collection"
+                aria-label="Add collection"
               >
                 <Plus className="h-3 w-3" strokeWidth={2} />
-                Collection
               </button>
             </div>
 
@@ -1260,9 +1384,8 @@ export default function Index() {
                     : resolveEffectiveNames(collection.snippets);
                   const isActiveCollection = collection.id === activeCollection.id;
                   return (
-                    <div key={collection.id} className="border-l-2 border-transparent">
-                      <button
-                        onClick={() => toggleCollection(collection.id)}
+                    <div key={collection.id} className="group border-l-2 border-transparent">
+                      <div
                         className={cn(
                           "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] font-mono transition-colors",
                           isActiveCollection
@@ -1271,14 +1394,57 @@ export default function Index() {
                         )}
                         title={collection.name}
                       >
-                        {collection.expanded ? (
-                          <ChevronDown className="h-3 w-3 shrink-0" strokeWidth={2} />
-                        ) : (
-                          <ChevronRight className="h-3 w-3 shrink-0" strokeWidth={2} />
-                        )}
+                        <button
+                          onClick={() => toggleCollection(collection.id)}
+                          className="flex h-3 w-3 shrink-0 items-center justify-center"
+                          aria-label={collection.expanded ? "Collapse collection" : "Expand collection"}
+                        >
+                          {collection.expanded ? (
+                            <ChevronDown className="h-3 w-3 shrink-0" strokeWidth={2} />
+                          ) : (
+                            <ChevronRight className="h-3 w-3 shrink-0" strokeWidth={2} />
+                          )}
+                        </button>
                         <FolderOpen className="h-3 w-3 shrink-0" strokeWidth={2} />
-                        <span className="truncate">{collection.name}</span>
-                      </button>
+                        {editingCollectionId === collection.id ? (
+                          <input
+                            value={editingCollectionName}
+                            onChange={(e) => setEditingCollectionName(e.target.value)}
+                            onBlur={commitRenameCollection}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") commitRenameCollection();
+                              if (e.key === "Escape") setEditingCollectionId(null);
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            autoFocus
+                            className="min-w-0 flex-1 bg-transparent font-mono text-[11px] text-foreground outline-none"
+                          />
+                        ) : (
+                          <button
+                            onClick={() => startRenameCollection(collection.id)}
+                            className="min-w-0 flex-1 truncate text-left"
+                            title="Rename collection"
+                          >
+                            {collection.name}
+                          </button>
+                        )}
+                        <button
+                          onClick={() => startRenameCollection(collection.id)}
+                          className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+                          title="Rename collection"
+                          aria-label="Rename collection"
+                        >
+                          <Pencil className="h-3 w-3" strokeWidth={2} />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteCollection(collection.id)}
+                          className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+                          title="Delete collection"
+                          aria-label="Delete collection"
+                        >
+                          <Trash2 className="h-3 w-3" strokeWidth={2} />
+                        </button>
+                      </div>
 
                       {collection.expanded && (
                         <div className="ml-3 border-l border-border/70 py-1">
@@ -1287,7 +1453,8 @@ export default function Index() {
                             const isExpanded = expandedWorkspaceIds.has(b.id) || isActiveWorkspace;
                             const hasError = !b.raw.trim() || !!b.parsed.error;
                             const method = (b.parsed.method || "GET").toUpperCase();
-                            const files: WorkspaceFile[] = ["request.py", "parser.py", "response.json"];
+                            const artifact = collection.workspaceArtifacts[b.id];
+                            const files: WorkspaceFile[] = ["request.py", "parser.py", artifact?.responseFileName ?? defaultResponseFileName(collectionNames[i])];
                             return (
                               <div key={b.id}>
                                 <button
@@ -1727,7 +1894,7 @@ export default function Index() {
                         </div>
                       ) : (
                         <pre className="px-4 py-3">
-                          <HighlightedPython code={activeCodeContent} />
+                          <HighlightedPython code={panelCodeContent} />
                         </pre>
                       )}
                     </div>
@@ -1748,7 +1915,7 @@ export default function Index() {
                           onClick={() => {
                             setActiveResponseTabId(tab.id);
                             setActiveWorkspaceId(tab.workspaceId);
-                            setActiveWorkspaceFile("response.json");
+                            setActiveWorkspaceFile(tab.fileName);
                           }}
                           className={cn(
                             "group flex cursor-pointer items-center gap-1.5 border-r border-border px-3 py-2 text-[11px] font-mono transition-colors",
@@ -1966,12 +2133,32 @@ function ResponseBodyViewer({ source }: { source: string }) {
 }
 
 function JsonResponseViewer({ value }: { value: unknown }) {
-  const [selected, setSelected] = useState<{ path: string; value: unknown } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [selected, setSelected] = useState<{ path: string; value: unknown; x: number; y: number } | null>(null);
+  const clickPositionRef = useRef({ x: 12, y: 12 });
+  useEffect(() => setSelected(null), [value]);
 
   return (
-    <div className="px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground">
+    <div
+      ref={containerRef}
+      className="relative px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground"
+      onClickCapture={(e) => {
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        clickPositionRef.current = {
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+        };
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) setSelected(null);
+      }}
+    >
       {selected && (
-        <div className="mb-2 flex items-center gap-2 text-[11px]">
+        <div
+          className="absolute z-20 flex items-center gap-2 bg-background text-[11px]"
+          style={{ left: selected.x, top: selected.y + 18 }}
+        >
           <span className="max-w-[40ch] truncate text-muted-foreground">{selected.path || "root"}</span>
           <button
             onClick={() => void copyText(selected.path, "Copied key path")}
@@ -1998,6 +2185,8 @@ function JsonResponseViewer({ value }: { value: unknown }) {
         onSelect={(selection) => setSelected({
           path: jsonPath(selection.namespace, selection.name),
           value: selection.value,
+          x: clickPositionRef.current.x,
+          y: clickPositionRef.current.y,
         })}
       />
     </div>
@@ -2005,17 +2194,28 @@ function JsonResponseViewer({ value }: { value: unknown }) {
 }
 
 function HtmlResponseViewer({ html }: { html: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const documentNode = useMemo(() => new DOMParser().parseFromString(html, "text/html"), [html]);
-  const [selectedElement, setSelectedElement] = useState<Element | null>(null);
+  const [selectedElement, setSelectedElement] = useState<{ element: Element; x: number; y: number } | null>(null);
   const root = documentNode.documentElement;
-  const xpath = selectedElement ? getXPath(selectedElement) : "";
-  const cssSelector = selectedElement ? getCssSelector(selectedElement) : "";
+  const xpath = selectedElement ? getXPath(selectedElement.element) : "";
+  const cssSelector = selectedElement ? getCssSelector(selectedElement.element) : "";
+  useEffect(() => setSelectedElement(null), [html]);
 
   return (
-    <div className="px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground">
+    <div
+      ref={containerRef}
+      className="relative px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) setSelectedElement(null);
+      }}
+    >
       {selectedElement && (
-        <div className="mb-2 flex items-center gap-2 text-[11px]">
-          <span className="max-w-[32ch] truncate text-muted-foreground">{selectedElement.tagName.toLowerCase()}</span>
+        <div
+          className="absolute z-20 flex items-center gap-2 bg-background text-[11px]"
+          style={{ left: selectedElement.x, top: selectedElement.y + 18 }}
+        >
+          <span className="max-w-[32ch] truncate text-muted-foreground">{selectedElement.element.tagName.toLowerCase()}</span>
           <button
             onClick={() => void copyText(xpath, "Copied XPath")}
             className="text-primary hover:text-foreground"
@@ -2028,6 +2228,12 @@ function HtmlResponseViewer({ html }: { html: string }) {
           >
             Copy CSS selector
           </button>
+          <button
+            onClick={() => void copyText(selectedElement.element.textContent || "", "Copied value")}
+            className="text-primary hover:text-foreground"
+          >
+            Copy Value
+          </button>
         </div>
       )}
       {root ? (
@@ -2039,8 +2245,15 @@ function HtmlResponseViewer({ html }: { html: string }) {
           )}
           <HtmlTreeNode
             element={root}
-            selectedElement={selectedElement}
-            onSelect={setSelectedElement}
+            selectedElement={selectedElement?.element ?? null}
+            onSelect={(element, event) => {
+              const rect = containerRef.current?.getBoundingClientRect();
+              setSelectedElement({
+                element,
+                x: rect ? event.clientX - rect.left : 12,
+                y: rect ? event.clientY - rect.top : 12,
+              });
+            }}
           />
         </>
       ) : (
@@ -2057,7 +2270,7 @@ function HtmlTreeNode({
 }: {
   element: Element;
   selectedElement: Element | null;
-  onSelect: (element: Element) => void;
+  onSelect: (element: Element, event: React.MouseEvent) => void;
 }) {
   const children = Array.from(element.children);
   const attrs = Array.from(element.attributes)
@@ -2075,7 +2288,10 @@ function HtmlTreeNode({
   return (
     <div className="pl-3">
       <button
-        onClick={() => onSelect(element)}
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect(element, e);
+        }}
         className={cn(
           "block text-left font-mono text-[12px] leading-[1.6] hover:text-foreground",
           isSelected ? "text-primary" : "text-muted-foreground"

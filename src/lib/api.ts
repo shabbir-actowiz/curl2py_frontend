@@ -67,6 +67,10 @@ export interface RunWorkspaceResponse {
   status: number | null;
   time_ms: number;
   size: string;
+  content_type: string;
+  extension: string;
+  response_file_name?: string | null;
+  file_name?: string | null;
   response: unknown | null;
   parsed: unknown | null;
   logs: string;
