@@ -150,7 +150,7 @@ function defaultResponseFileName(workspaceName: string): string {
 }
 
 function isResponseFile(file: string): boolean {
-  return /_response\.(json|txt)$/i.test(file);
+  return /_response\.(json|txt|html)$/i.test(file);
 }
 
 export default function Index() {
@@ -475,14 +475,28 @@ export default function Index() {
     });
 
     if (file === "request.py") {
+      const tabId = `req-${workspaceId}`;
       setActivePanelTab("code");
-      setActiveTabId(`req-${workspaceId}`);
+      setClosedTabIds((prev) => {
+        if (!prev.has(tabId)) return prev;
+        const next = new Set(prev);
+        next.delete(tabId);
+        return next;
+      });
+      setActiveTabId(tabId);
       return;
     }
 
     if (file === "parser.py") {
+      const tabId = `req-${workspaceId}`;
       setActivePanelTab("code");
-      setActiveTabId(`req-${workspaceId}`);
+      setClosedTabIds((prev) => {
+        if (!prev.has(tabId)) return prev;
+        const next = new Set(prev);
+        next.delete(tabId);
+        return next;
+      });
+      setActiveTabId(tabId);
       return;
     }
 
@@ -495,9 +509,16 @@ export default function Index() {
   };
 
   const toggleWorkspace = (workspaceId: string) => {
+    const tabId = `req-${workspaceId}`;
     setActiveWorkspaceId(workspaceId);
     setActiveWorkspaceFile("request.py");
-    setActiveTabId(`req-${workspaceId}`);
+    setClosedTabIds((prev) => {
+      if (!prev.has(tabId)) return prev;
+      const next = new Set(prev);
+      next.delete(tabId);
+      return next;
+    });
+    setActiveTabId(tabId);
     setExpandedWorkspaceIds((prev) => {
       const next = new Set(prev);
       if (next.has(workspaceId)) next.delete(workspaceId);
@@ -967,7 +988,7 @@ export default function Index() {
     });
     if (activeTabId === id) {
       const remaining = visibleTabs.filter((t) => t.id !== id);
-      if (remaining.length > 0) setActiveTabId(remaining[0].id);
+      setActiveTabId(remaining[0]?.id ?? "");
     }
   };
 
