@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Check,Code, Copy, ChevronDown, ChevronRight, ChevronUp, AlertCircle, Terminal, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil } from "lucide-react";
 import JSZip from "jszip";
-import ReactJson from "react-json-view";
+import JsonView from "@uiw/react-json-view";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
@@ -2195,20 +2195,12 @@ function JsonResponseViewer({ value }: { value: unknown }) {
           </button>
         </div>
       )}
-      <ReactJson
-        src={toJsonViewSource(value)}
-        name={false}
-        theme="monokai"
+      <JsonView
+        value={toJsonViewSource(value)}
         style={{ backgroundColor: "transparent", fontFamily: "inherit", fontSize: "12px" }}
         displayDataTypes={false}
         displayObjectSize={false}
         enableClipboard={false}
-        onSelect={(selection) => setSelected({
-          path: jsonPath(selection.namespace, selection.name),
-          value: selection.value,
-          x: clickPositionRef.current.x,
-          y: clickPositionRef.current.y,
-        })}
       />
     </div>
   );
