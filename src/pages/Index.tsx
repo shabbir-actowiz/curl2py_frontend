@@ -1238,6 +1238,17 @@ export default function Index() {
 
   const handleLogout = () => {
     logout();
+    const fallback = createCollection("tmp", "tmp", SAMPLE_SNIPPETS, true);
+    setCollections({ tmp: fallback });
+    setActiveCollectionId("tmp");
+    setActiveWorkspaceId("");
+    setActiveWorkspaceFile("request.py");
+    setActiveTabId("");
+    setClosedTabIds(new Set());
+    setOpenResponseTabs([]);
+    setActiveResponseTabId(null);
+    setExpandedWorkspaceIds(new Set());
+    setHasLoadedRemoteWorkspace(false);
     setStatusKind("info");
     setStatusMsg("Signed out");
     toast.success("Signed out");
