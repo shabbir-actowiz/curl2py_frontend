@@ -1,5 +1,5 @@
 import { ShieldCheck } from "lucide-react";
-import { ReactNode } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 
 export function BrandLogo() {
   return (
@@ -42,22 +42,83 @@ export function Divider({ label }: { label: string }) {
   );
 }
 
-export function SocialButtons({ onClick }: { onClick?: (provider: "google") => void }) {
+export function SocialButtons({
+  onCredential,
+  onError,
+}: {
+  onCredential?: (credential: string) => void;
+  onError?: (message: string) => void;
+}) {
+  const buttonRef = useRef<HTMLDivElement>(null);
+  const [isReady, setIsReady] = useState(false);
+
+  useEffect(() => {
+    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
+    if (!clientId) {
+      onError?.("Google login is not configured.");
+      return;
+    }
+
+    const renderButton = () => {
+      const google = (window as any).google;
+      if (!buttonRef.current || !google?.accounts?.id) {
+        onError?.("Google login could not load.");
+        return;
+      }
+
+      buttonRef.current.innerHTML = "";
+      google.accounts.id.initialize({
+        client_id: clientId,
+        callback: (response: { credential?: string }) => {
+          if (response.credential) onCredential?.(response.credential);
+        },
+      });
+      const width = Math.max(220, Math.min(400, buttonRef.current.getBoundingClientRect().width || 400));
+      google.accounts.id.renderButton(buttonRef.current, {
+        type: "standard",
+        theme: "outline",
+        size: "large",
+        text: "continue_with",
+        shape: "rectangular",
+        width,
+      });
+      setIsReady(true);
+    };
+
+    window.addEventListener("resize", renderButton);
+
+    if ((window as any).google?.accounts?.id) {
+      renderButton();
+      return () => window.removeEventListener("resize", renderButton);
+    }
+
+    const existingScript = document.querySelector<HTMLScriptElement>('script[src="https://accounts.google.com/gsi/client"]');
+    if (existingScript) {
+      existingScript.addEventListener("load", renderButton, { once: true });
+      return () => {
+        existingScript.removeEventListener("load", renderButton);
+        window.removeEventListener("resize", renderButton);
+      };
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.defer = true;
+    script.onload = renderButton;
+    script.onerror = () => onError?.("Google login could not load.");
+    document.head.appendChild(script);
+    return () => window.removeEventListener("resize", renderButton);
+  }, [onCredential, onError]);
+
   return (
     <div className="grid grid-cols-1 gap-2.5">
-      <button
-        type="button"
-        onClick={() => onClick?.("google")}
-        className="flex h-10 items-center justify-center gap-2 rounded-md border border-border bg-transparent text-[13px] text-foreground transition-colors hover:border-border-strong hover:bg-surface-elevated"
-      >
-        <svg className="h-4 w-4" viewBox="0 0 24 24" aria-hidden>
-          <path fill="#EA4335" d="M12 10.2v3.9h5.5c-.24 1.4-1.7 4.1-5.5 4.1-3.3 0-6-2.74-6-6.1S8.7 6 12 6c1.88 0 3.14.8 3.86 1.49l2.63-2.54C16.84 3.43 14.62 2.5 12 2.5 6.76 2.5 2.5 6.76 2.5 12S6.76 21.5 12 21.5c6.93 0 9.5-4.86 9.5-7.4 0-.5-.05-.88-.12-1.27H12z" />
-          <path fill="#34A853" d="M3.88 7.55l3.2 2.35C7.97 7.94 9.83 6 12 6c1.88 0 3.14.8 3.86 1.49l2.63-2.54C16.84 3.43 14.62 2.5 12 2.5 8.24 2.5 5 4.66 3.88 7.55z" opacity=".0" />
-          <path fill="#FBBC05" d="M12 21.5c2.57 0 4.73-.85 6.3-2.31l-2.99-2.46c-.83.58-1.93.97-3.31.97-2.55 0-4.71-1.7-5.49-4.04l-3.16 2.44C4.86 19.4 8.13 21.5 12 21.5z" opacity=".0" />
-          <path fill="#4285F4" d="M21.38 12.1c0-.5-.05-.88-.12-1.27H12v3.9h5.5c-.24 1.4-1.7 4.1-5.5 4.1v3.27c3.87 0 7.14-2.1 9.38-5.4-.05-1.6 0-3.1 0-4.6z" opacity=".0" />
-        </svg>
-        Google
-      </button>
+      <div ref={buttonRef} className="flex min-h-10 w-full items-center justify-center overflow-hidden" />
+      {!isReady && (
+        <div className="flex h-10 items-center justify-center rounded-md border border-border bg-transparent text-[13px] text-muted-foreground">
+          Loading Google login
+        </div>
+      )}
     </div>
   );
 }

@@ -6,49 +6,6 @@ import { AuthShell, Divider, SocialButtons } from "@/components/auth/AuthShell";
 import { extractApiErrorMessage, forgotPassword } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
 
-function requestGoogleCredential(onCredential: (credential: string) => void, onError: (message: string) => void) {
-  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
-  if (!clientId) {
-    onError("Google login is not configured.");
-    return;
-  }
-  const start = () => {
-    const google = (window as any).google;
-    if (!google?.accounts?.id) {
-      onError("Google login could not load.");
-      return;
-    }
-    google.accounts.id.initialize({
-      client_id: clientId,
-      callback: (response: { credential?: string }) => {
-        if (response.credential) onCredential(response.credential);
-      },
-    });
-    google.accounts.id.prompt((notification: {
-      isNotDisplayed?: () => boolean;
-      isSkippedMoment?: () => boolean;
-      getNotDisplayedReason?: () => string;
-      getSkippedReason?: () => string;
-    }) => {
-      if (notification.isNotDisplayed?.() || notification.isSkippedMoment?.()) {
-        const reason = notification.getNotDisplayedReason?.() || notification.getSkippedReason?.() || "origin_not_allowed";
-        onError(`Google login blocked for ${window.location.origin}. Add this origin in Google Cloud OAuth settings. Reason: ${reason}`);
-      }
-    });
-  };
-  if ((window as any).google?.accounts?.id) {
-    start();
-    return;
-  }
-  const script = document.createElement("script");
-  script.src = "https://accounts.google.com/gsi/client";
-  script.async = true;
-  script.defer = true;
-  script.onload = start;
-  script.onerror = () => onError("Google login could not load.");
-  document.head.appendChild(script);
-}
-
 export default function Login() {
   const navigate = useNavigate();
   const { login, loginGoogle, user, isLoading } = useAuth();
@@ -202,20 +159,18 @@ export default function Login() {
         </form>
 
         <Divider label="or continue with" />
-        <SocialButtons onClick={() => {
-          requestGoogleCredential(
-            async (credential) => {
-              try {
-                const signedIn = await loginGoogle(credential, { remember });
-                toast.success(`Signed in as ${signedIn.username}`);
-                navigate("/");
-              } catch (googleError) {
-                toast.error(extractApiErrorMessage(googleError));
-              }
-            },
-            (message) => toast.error(message),
-          );
-        }} />
+        <SocialButtons
+          onCredential={async (credential) => {
+            try {
+              const signedIn = await loginGoogle(credential, { remember });
+              toast.success(`Signed in as ${signedIn.username}`);
+              navigate("/");
+            } catch (googleError) {
+              toast.error(extractApiErrorMessage(googleError));
+            }
+          }}
+          onError={(message) => toast.error(message)}
+        />
 
         <p className="mt-5 text-center text-[12px] text-muted-foreground">
           Don't have an account?{" "}
