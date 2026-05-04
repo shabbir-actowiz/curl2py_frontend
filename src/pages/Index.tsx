@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Check,Code, Copy, ChevronDown, ChevronRight, ChevronUp, AlertCircle, Terminal, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil } from "lucide-react";
+import { Check,Code, Copy, ChevronDown, ChevronRight, ChevronUp, AlertCircle, Terminal, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil, Moon, Sun } from "lucide-react";
 import JSZip from "jszip";
-import JsonView from "@uiw/react-json-view";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
@@ -10,7 +9,7 @@ import {
   type ParsedCurl,
 } from "@/lib/curl-to-python";
 import { HighlightedPython } from "@/lib/python-highlight";
-import { convertWithBackend, extractApiErrorMessage, runWorkspaceWithBackend } from "@/lib/api";
+import { convertWithBackend, extractApiErrorMessage, getUserWorkspace, runWorkspaceWithBackend, saveUserWorkspace } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
 
 type Client = "requests" | "httpx";
@@ -41,6 +40,7 @@ interface OutputTab {
 
 type WorkspacePanelTab = "code" | "response" | "logs";
 type InputPanelTab = "input" | "proxy";
+type ThemeMode = "dark" | "light";
 type WorkspaceFile = string;
 
 interface ProxyConfig {
@@ -80,6 +80,7 @@ interface ResponseTab {
 }
 
 const SESSION_KEY = "curl2py:session:v2";
+const THEME_KEY = "curl2py:theme:v1";
 
 const SAMPLE_SNIPPETS: Snippet[] = [];
 
@@ -172,6 +173,27 @@ function withCollectionDefaults(collection: CollectionState): CollectionState {
   };
 }
 
+function sanitizeCollectionsForStorage(collections: Record<string, CollectionState>): Record<string, CollectionState> {
+  return Object.fromEntries(
+    Object.entries(collections).map(([id, collection]) => [
+      id,
+      {
+        ...withCollectionDefaults(collection),
+        workspaceArtifacts: Object.fromEntries(
+          Object.entries(collection.workspaceArtifacts || {}).map(([workspaceId, artifact]) => [
+            workspaceId,
+            {
+              ...artifact,
+              responseJson: null,
+              logsTxt: "",
+            },
+          ])
+        ),
+      },
+    ])
+  ) as Record<string, CollectionState>;
+}
+
 function defaultResponseFileName(workspaceName: string): string {
   return `${workspaceName}_response.json`;
 }
@@ -204,6 +226,13 @@ export default function Index() {
   const [activeWorkspaceFile, setActiveWorkspaceFile] = useState<WorkspaceFile>("request.py");
   const [activeInputTab, setActiveInputTab] = useState<InputPanelTab>("input");
   const [activePanelTab, setActivePanelTab] = useState<WorkspacePanelTab>("code");
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    try {
+      return window.localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark";
+    } catch {
+      return "dark";
+    }
+  });
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(new Set());
   const [openResponseTabs, setOpenResponseTabs] = useState<ResponseTab[]>([]);
   const [activeResponseTabId, setActiveResponseTabId] = useState<string | null>(null);
@@ -211,6 +240,7 @@ export default function Index() {
   const [editingCollectionName, setEditingCollectionName] = useState("");
   const [dividerPos, setDividerPos] = useState(50);
   const [isDraggingDivider, setIsDraggingDivider] = useState(false);
+  const [hasLoadedRemoteWorkspace, setHasLoadedRemoteWorkspace] = useState(false);
 
   const { user, accessToken, logout } = useAuth();
 
@@ -227,6 +257,16 @@ export default function Index() {
   const backendMergedOutput = activeCollection.backendMergedOutput;
   const backendParserOutput = activeCollection.backendParserOutput;
   const workspaceArtifacts = activeCollection.workspaceArtifacts;
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("light", theme === "light");
+    document.documentElement.classList.toggle("dark", theme === "dark");
+    try {
+      window.localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // Keep the in-memory theme if storage is unavailable.
+    }
+  }, [theme]);
 
   const updateActiveCollection = (patcher: (collection: CollectionState) => CollectionState) => {
     setCollections((prev) => {
@@ -328,7 +368,7 @@ export default function Index() {
   const effectiveNames = useMemo(() => resolveEffectiveNames(snippets), [snippets]);
 
   const outputs = useMemo(
-    () => blocks.map((b) => backendOutputs[b.id] ?? (b.raw.trim() ? BACKEND_PLACEHOLDER : "# Empty snippet — paste a curl command\n")),
+    () => blocks.map((b) => backendOutputs[b.id] ?? (b.raw.trim() ? BACKEND_PLACEHOLDER : "# Empty snippet - paste a curl command\n")),
     [blocks, backendOutputs]
   );
 
@@ -371,7 +411,7 @@ export default function Index() {
   const activeWorkspaceName = activeWorkspaceIdx >= 0 ? effectiveNames[activeWorkspaceIdx] : "";
   const activeWorkspaceArtifact = activeWorkspaceId ? workspaceArtifacts[activeWorkspaceId] : undefined;
   const activeRequestCode = activeTab?.code ?? "";
-  const activeCodeFilename = activeWorkspaceFile === "parser.py" ? "parser.py" : activeTab?.filename || "—";
+  const activeCodeFilename = activeWorkspaceFile === "parser.py" ? "parser.py" : activeTab?.filename || "-";
   const activeCodeContent = activeWorkspaceFile === "parser.py"
     ? activeWorkspaceArtifact?.parserCode ?? buildParserStub(activeWorkspaceName || "request")
     : activeRequestCode;
@@ -412,12 +452,67 @@ export default function Index() {
     setBackendParserOutput(null);
   }, [client, isAsync, user, accessToken]);
 
+  useEffect(() => {
+    if (!user || !accessToken) {
+      setHasLoadedRemoteWorkspace(false);
+      return;
+    }
+
+    let active = true;
+    getUserWorkspace(accessToken)
+      .then((workspace) => {
+        if (!active) return;
+        if (workspace.collections && Object.keys(workspace.collections).length > 0) {
+          const loadedCollections = Object.fromEntries(
+            Object.entries(workspace.collections as Record<string, CollectionState>).map(([id, collection]) => [
+              id,
+              withCollectionDefaults(collection),
+            ])
+          ) as Record<string, CollectionState>;
+          setCollections(loadedCollections);
+          if (workspace.activeCollectionId && loadedCollections[workspace.activeCollectionId]) {
+            setActiveCollectionId(workspace.activeCollectionId);
+          }
+          setOpenResponseTabs((workspace.openResponseTabs as ResponseTab[]) || []);
+          setActiveResponseTabId(workspace.activeResponseTabId || null);
+        }
+        if (workspace.theme === "light" || workspace.theme === "dark") {
+          setTheme(workspace.theme);
+        }
+        setHasLoadedRemoteWorkspace(true);
+      })
+      .catch(() => {
+        if (active) setHasLoadedRemoteWorkspace(true);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [user, accessToken]);
+
+  useEffect(() => {
+    if (!user || !accessToken || !hasLoadedRemoteWorkspace) return;
+    const timeout = window.setTimeout(() => {
+      void saveUserWorkspace({
+        collections: sanitizeCollectionsForStorage(collections),
+        activeCollectionId,
+        theme,
+        openResponseTabs,
+        activeResponseTabId,
+      }, accessToken).catch(() => {
+        setStatusKind("error");
+        setStatusMsg("Could not save workspace");
+      });
+    }, 800);
+    return () => window.clearTimeout(timeout);
+  }, [user, accessToken, hasLoadedRemoteWorkspace, collections, activeCollectionId, theme, openResponseTabs, activeResponseTabId]);
+
   // Auto-sync when snippets change
   useEffect(() => {
     handleSyncBackend({ silent: true });
   }, [snippets, client, isAsync, mergeMode, proxyConfig.enabled, proxyConfig.http, proxyConfig.https]);
 
-  // Status bar — uses "snippets ready"
+  // Status bar uses "snippets ready"
   useEffect(() => {
     const n = snippets.length;
     if (n === 0) {
@@ -431,16 +526,16 @@ export default function Index() {
       setStatusKind("error");
       const firstErr = blocks.findIndex((b) => !b.raw.trim() || b.parsed.error);
       const sn = effectiveNames[firstErr] ?? "snippet";
-      setStatusMsg(`Issue in ${sn} — others generated`);
+      setStatusMsg(`Issue in ${sn} - others generated`);
     } else if (dupes > 0) {
       setStatusKind("error");
-      setStatusMsg("Duplicate snippet name — auto-suffixed in output");
+      setStatusMsg("Duplicate snippet name - auto-suffixed in output");
     } else if (mergeMode) {
       setStatusKind("success");
-      setStatusMsg(`✓ ${n} snippet${n === 1 ? "" : "s"} ready · Merged into 2 files`);
+      setStatusMsg(`${n} snippet${n === 1 ? "" : "s"} ready - Merged into 2 files`);
     } else {
       setStatusKind("success");
-      setStatusMsg(`✓ ${n} snippet${n === 1 ? "" : "s"} ready`);
+      setStatusMsg(`${n} snippet${n === 1 ? "" : "s"} ready`);
     }
   }, [snippets, blocks, errorCount, mergeMode, nameCounts, effectiveNames]);
 
@@ -873,7 +968,7 @@ export default function Index() {
     };
   }, [isDraggingDivider]);
 
-  // ─────────── Snippet handlers ───────────
+  // Snippet handlers
   const updateSnippet = (id: string, patch: Partial<Snippet>) => {
     setSnippets((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
   };
@@ -955,7 +1050,7 @@ export default function Index() {
     }
   };
 
-  // Click output tab → scroll to snippet
+  // Click output tab to scroll to snippet
   useEffect(() => {
     if (!activeTab || activeTab.kind !== "request" || activeReqIdx == null) return;
     const block = blocks[activeReqIdx];
@@ -964,7 +1059,7 @@ export default function Index() {
     if (el) el.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [activeTabId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ─────────── Output handlers ───────────
+  // Output handlers
   const getActivePanelFilename = () => {
     if (activePanelTab === "response") {
       return activeResponseTab?.label ?? activeWorkspaceFile;
@@ -1033,7 +1128,7 @@ export default function Index() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
     setStatusKind("success");
-    setStatusMsg(`✓ Downloaded ${visibleTabs.length} file${visibleTabs.length === 1 ? "" : "s"} as ZIP`);
+    setStatusMsg(`Downloaded ${visibleTabs.length} file${visibleTabs.length === 1 ? "" : "s"} as ZIP`);
   };
 
   const handleCloseTab = (id: string, e: React.MouseEvent) => {
@@ -1061,7 +1156,7 @@ export default function Index() {
     });
   };
 
-  // ─────────── Session ───────────
+  // Session
   const handleSaveSession = () => {
     try {
       const payload = JSON.stringify({
@@ -1074,11 +1169,12 @@ export default function Index() {
         client,
         isAsync,
         mergeMode,
+        theme,
       });
       localStorage.setItem(SESSION_KEY, payload);
       setSavedSession(true);
       setStatusKind("success");
-      setStatusMsg("✓ Session saved");
+      setStatusMsg("Session saved");
       setTimeout(() => setSavedSession(false), 1400);
     } catch {
       setStatusKind("error");
@@ -1130,9 +1226,10 @@ export default function Index() {
       if (data.client === "httpx" || data.client === "requests") setClient(data.client);
       if (typeof data.isAsync === "boolean") setIsAsync(data.isAsync);
       if (typeof data.mergeMode === "boolean") setMergeMode(data.mergeMode);
+      if (data.theme === "light" || data.theme === "dark") setTheme(data.theme);
       setClosedTabIds(new Set());
       setStatusKind("success");
-      setStatusMsg("✓ Session loaded");
+      setStatusMsg("Session loaded");
     } catch {
       setStatusKind("error");
       setStatusMsg("Could not load session");
@@ -1226,7 +1323,7 @@ export default function Index() {
 
       const label = `${singleResults.length} snippet${singleResults.length === 1 ? "" : "s"}`;
       setStatusKind("success");
-      setStatusMsg(`✓ Synced to backend · ${label}`);
+      setStatusMsg(`Synced to backend - ${label}`);
       if (!silent) {
         toast.success("Generated code via backend");
       }
@@ -1279,7 +1376,7 @@ export default function Index() {
             <span className="text-foreground">py</span>
           </h1>
           <span className="ml-3 hidden text-[11px] text-muted-foreground sm:inline">
-            cURL → Python
+            cURL to Python
           </span>
         </div>
 
@@ -1306,11 +1403,20 @@ export default function Index() {
             )}
             aria-expanded={optionsOpen}
           >
-            <span>{client}{isAsync ? " · async" : ""}</span>
+            <span>{client}{isAsync ? " - async" : ""}</span>
             <ChevronDown
               className={cn("h-3 w-3 transition-transform", optionsOpen && "rotate-180")}
               strokeWidth={2}
             />
+          </button>
+
+          <button
+            onClick={() => setTheme((value) => value === "dark" ? "light" : "dark")}
+            className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
+            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          >
+            {theme === "dark" ? <Sun className="h-3 w-3" strokeWidth={2} /> : <Moon className="h-3 w-3" strokeWidth={2} />}
+            {theme === "dark" ? "Light" : "Dark"}
           </button>
 
           <button
@@ -1677,7 +1783,7 @@ export default function Index() {
           style={{ ["--split-left" as any]: `${dividerPos}%` }}
           className="relative grid flex-1 min-h-0 grid-cols-1 overflow-hidden md:[grid-template-columns:var(--split-left)_1px_minmax(0,1fr)]"
         >
-          {/* LEFT — SNIPPET INPUT */}
+          {/* LEFT - SNIPPET INPUT */}
           <section
             className="flex min-h-0 min-w-0 flex-col border-b border-border md:border-b-0"
           >
@@ -1698,7 +1804,7 @@ export default function Index() {
               </div>
             } right={
               <span className="text-[10px] text-muted-foreground">
-                {snippets.length > 0 ? `${snippets.length} snippet${snippets.length === 1 ? "" : "s"}` : "—"}
+                {snippets.length > 0 ? `${snippets.length} snippet${snippets.length === 1 ? "" : "s"}` : "-"}
               </span>
             } />
 
@@ -1882,7 +1988,7 @@ export default function Index() {
                           </div>
                         ) : (
                           <>
-                            {/* Curl textarea — auto-expand, auto-collapse on paste */}
+                            {/* Curl textarea - auto-expand, auto-collapse on paste */}
                             <AutoTextarea
                               value={s.raw}
                               onChange={(v) => updateSnippet(s.id, { raw: v })}
@@ -1941,7 +2047,7 @@ export default function Index() {
             aria-label="Resize panels"
           />
 
-          {/* RIGHT — OUTPUT */}
+          {/* RIGHT - OUTPUT */}
           <section ref={outputRef} className="flex min-h-0 min-w-0 flex-col">
            
 
@@ -2033,7 +2139,7 @@ export default function Index() {
                         <div className="m-3 rounded-sm border border-destructive/40 bg-destructive/5 p-3 text-[12px] text-destructive">
                           Issue in {effectiveNames[activeTab.reqIdx ?? 0]}
                           <div className="mt-1 text-[11px] text-muted-foreground">
-                            {blocks[activeTab.reqIdx ?? 0]?.parsed.error || "Empty snippet — paste a curl command"}
+                            {blocks[activeTab.reqIdx ?? 0]?.parsed.error || "Empty snippet - paste a curl command"}
                           </div>
                         </div>
                       ) : (
@@ -2088,13 +2194,13 @@ export default function Index() {
                 </div>
                 <div className="flex items-center gap-3 border-b border-border bg-background px-4 py-1.5 font-mono text-[11px]">
                   <span className="font-semibold text-primary">Status</span>
-                  <span className="text-muted-foreground">{activeResponseMeta?.status ?? "—"}</span>
+                  <span className="text-muted-foreground">{activeResponseMeta?.status ?? "-"}</span>
                   <span className="text-syntax-comment">|</span>
                   <span className="font-semibold text-primary">Time</span>
-                  <span className="text-muted-foreground">{activeResponseMeta ? `${activeResponseMeta.time_ms ?? activeResponseMeta.time ?? 0}ms` : "—"}</span>
+                  <span className="text-muted-foreground">{activeResponseMeta ? `${activeResponseMeta.time_ms ?? activeResponseMeta.time ?? 0}ms` : "-"}</span>
                   <span className="text-syntax-comment">|</span>
                   <span className="font-semibold text-primary">Size</span>
-                  <span className="text-muted-foreground">{activeResponseMeta?.size ?? "—"}</span>
+                  <span className="text-muted-foreground">{activeResponseMeta?.size ?? "-"}</span>
                 </div>
                 <div className="relative min-h-0 flex-1 overflow-auto">
                   {activeResponseJson ? (
@@ -2157,7 +2263,7 @@ export default function Index() {
   );
 }
 
-// ───────────────────── helpers ─────────────────────
+// Helpers
 
 type ResponseMode =
   | { kind: "json"; value: unknown }
@@ -2181,23 +2287,17 @@ function detectResponseMode(source: string): ResponseMode {
   }
 }
 
-function jsonPath(namespace: Array<string | null>, name: string | null): string {
-  return [...namespace, name]
-    .filter((part): part is string => part !== null && part !== undefined && String(part).length > 0)
-    .map(String)
-    .join(".");
-}
-
 function stringifyJsonValue(value: unknown): string {
   if (typeof value === "string") return value;
   return JSON.stringify(value, null, 2);
 }
 
-function toJsonViewSource(value: unknown): object {
-  if (value !== null && typeof value === "object") {
-    return value as object;
-  }
-  return { value };
+function formatJsonPath(path: Array<string | number>): string {
+  return path.reduce((acc, part) => {
+    if (typeof part === "number") return `${acc}[${part}]`;
+    if (!acc) return part;
+    return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(part) ? `${acc}.${part}` : `${acc}[${JSON.stringify(part)}]`;
+  }, "");
 }
 
 async function copyText(value: string, label: string) {
@@ -2279,21 +2379,12 @@ function ResponseBodyViewer({ source }: { source: string }) {
 function JsonResponseViewer({ value }: { value: unknown }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<{ path: string; value: unknown; x: number; y: number } | null>(null);
-  const clickPositionRef = useRef({ x: 12, y: 12 });
   useEffect(() => setSelected(null), [value]);
 
   return (
     <div
       ref={containerRef}
       className="relative px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground"
-      onClickCapture={(e) => {
-        const rect = containerRef.current?.getBoundingClientRect();
-        if (!rect) return;
-        clickPositionRef.current = {
-          x: e.clientX - rect.left,
-          y: e.clientY - rect.top,
-        };
-      }}
       onClick={(e) => {
         if (e.target === e.currentTarget) setSelected(null);
       }}
@@ -2305,10 +2396,10 @@ function JsonResponseViewer({ value }: { value: unknown }) {
         >
           <span className="max-w-[40ch] truncate text-muted-foreground">{selected.path || "root"}</span>
           <button
-            onClick={() => void copyText(selected.path, "Copied key path")}
+            onClick={() => void copyText(selected.path, "Copied JSON path")}
             className="text-primary hover:text-foreground"
           >
-            Copy path
+            Copy Path
           </button>
           <button
             onClick={() => void copyText(stringifyJsonValue(selected.value), "Copied value")}
@@ -2318,13 +2409,92 @@ function JsonResponseViewer({ value }: { value: unknown }) {
           </button>
         </div>
       )}
-      <JsonView
-        value={toJsonViewSource(value)}
-        style={{ backgroundColor: "transparent", fontFamily: "inherit", fontSize: "12px" }}
-        displayDataTypes={false}
-        displayObjectSize={false}
-        enableClipboard={false}
+      <JsonTreeNode
+        value={value}
+        path={["response"]}
+        name="response"
+        onSelect={(path, nodeValue, event) => {
+          const rect = containerRef.current?.getBoundingClientRect();
+          setSelected({
+            path: formatJsonPath(path),
+            value: nodeValue,
+            x: rect ? event.clientX - rect.left : 12,
+            y: rect ? event.clientY - rect.top : 12,
+          });
+        }}
       />
+    </div>
+  );
+}
+
+function JsonTreeNode({
+  value,
+  path,
+  name,
+  onSelect,
+}: {
+  value: unknown;
+  path: Array<string | number>;
+  name?: string | number;
+  onSelect: (path: Array<string | number>, value: unknown, event: React.MouseEvent) => void;
+}) {
+  const isArray = Array.isArray(value);
+  const isObject = value !== null && typeof value === "object";
+  const entries = isObject ? Object.entries(value as Record<string, unknown>) : [];
+  const displayName = name !== undefined ? String(name) : "";
+
+  if (!isObject) {
+    const valueClass =
+      typeof value === "string"
+        ? "text-syntax-string"
+        : typeof value === "number"
+          ? "text-syntax-number"
+          : typeof value === "boolean"
+            ? "text-syntax-function"
+            : "text-syntax-keyword";
+    return (
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect(path, value, e);
+        }}
+        className="block text-left hover:text-foreground"
+      >
+        {displayName && <span className="text-syntax-function">"{displayName}": </span>}
+        <span className={valueClass}>{typeof value === "string" ? JSON.stringify(value) : String(value)}</span>
+      </button>
+    );
+  }
+
+  return (
+    <div className="text-foreground">
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect(path, value, e);
+        }}
+        className="text-left hover:text-foreground"
+      >
+        {displayName && <span className="text-syntax-function">"{displayName}": </span>}
+        <span className="text-syntax-punct">{isArray ? "[" : "{"}</span>
+      </button>
+      <div className="pl-4">
+        {entries.map(([key, child], index) => {
+          const childPath = [...path, isArray ? Number(key) : key];
+          return (
+            <div key={`${key}-${index}`} className="flex items-start gap-1">
+              <JsonTreeNode
+                value={child}
+                path={childPath}
+                name={isArray ? Number(key) : key}
+                onSelect={onSelect}
+              />
+              {index < entries.length - 1 && <span className="text-syntax-punct">,</span>}
+            </div>
+          );
+        })}
+      </div>
+      <span className="text-syntax-punct">{isArray ? "]" : "}"}</span>
     </div>
   );
 }
@@ -2362,13 +2532,13 @@ function HtmlResponseViewer({ html }: { html: string }) {
             onClick={() => void copyText(cssSelector, "Copied CSS selector")}
             className="text-primary hover:text-foreground"
           >
-            Copy CSS selector
+            Copy CSS
           </button>
           <button
-            onClick={() => void copyText(selectedElement.element.textContent || "", "Copied value")}
+            onClick={() => void copyText(selectedElement.element.textContent || "", "Copied text")}
             className="text-primary hover:text-foreground"
           >
-            Copy Value
+            Copy Text
           </button>
         </div>
       )}

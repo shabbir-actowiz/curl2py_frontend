@@ -2,11 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
-/* curl2py design system — warm dark, terminal green, monospace everywhere */
+/* curl2py design system - warm dark, terminal green, monospace everywhere */
 
 @layer base {
   :root {
-    /* Warm dark base — deep charcoal with subtle olive/brown tint */
+    /* Warm dark base - deep charcoal with subtle olive/brown tint */
     --background: 80 6% 9%;
     --foreground: 60 12% 86%;
 
@@ -78,6 +78,39 @@
     --input: 80 5% 16%;
     --ring: 95 32% 45%;
   }
+
+  .light {
+    --background: 60 18% 96%;
+    --foreground: 80 10% 12%;
+    --surface: 60 18% 94%;
+    --surface-elevated: 60 16% 90%;
+    --card: 60 18% 96%;
+    --card-foreground: 80 10% 12%;
+    --popover: 60 18% 96%;
+    --popover-foreground: 80 10% 12%;
+    --primary: 95 28% 36%;
+    --primary-foreground: 60 18% 96%;
+    --secondary: 60 12% 88%;
+    --secondary-foreground: 80 10% 18%;
+    --muted: 60 12% 90%;
+    --muted-foreground: 80 6% 38%;
+    --accent: 95 22% 86%;
+    --accent-foreground: 95 28% 25%;
+    --destructive: 4 62% 45%;
+    --destructive-foreground: 60 18% 96%;
+    --success: 95 32% 34%;
+    --border: 60 10% 82%;
+    --border-strong: 60 8% 70%;
+    --input: 60 12% 88%;
+    --ring: 95 28% 36%;
+    --syntax-keyword: 95 36% 32%;
+    --syntax-string: 28 52% 38%;
+    --syntax-number: 20 58% 42%;
+    --syntax-comment: 80 6% 45%;
+    --syntax-function: 205 42% 36%;
+    --syntax-variable: 80 10% 18%;
+    --syntax-punct: 80 8% 35%;
+  }
 }
 
 @layer base {
@@ -102,7 +135,7 @@
     color: hsl(var(--foreground));
   }
 
-  /* Scrollbar — subtle */
+  /* Scrollbar - subtle */
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;

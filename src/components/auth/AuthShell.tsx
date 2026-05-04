@@ -1,4 +1,4 @@
-import { ShieldCheck, TerminalSquare } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 import { ReactNode } from "react";
 
 export function BrandLogo() {
@@ -42,19 +42,9 @@ export function Divider({ label }: { label: string }) {
   );
 }
 
-export function SocialButtons({ onClick }: { onClick?: (provider: "github" | "google") => void }) {
+export function SocialButtons({ onClick }: { onClick?: (provider: "google") => void }) {
   return (
-    <div className="grid grid-cols-2 gap-2.5">
-      <button
-        type="button"
-        onClick={() => onClick?.("github")}
-        className="flex h-10 items-center justify-center gap-2 rounded-md border border-border bg-transparent text-[13px] text-foreground transition-colors hover:border-border-strong hover:bg-surface-elevated"
-      >
-        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-          <path d="M12 .5C5.73.5.75 5.48.75 11.75c0 4.99 3.23 9.22 7.71 10.71.56.1.77-.24.77-.54 0-.27-.01-1.16-.02-2.11-3.14.68-3.8-1.34-3.8-1.34-.51-1.31-1.25-1.66-1.25-1.66-1.02-.7.08-.69.08-.69 1.13.08 1.72 1.16 1.72 1.16 1 1.72 2.63 1.22 3.27.93.1-.73.39-1.22.71-1.5-2.5-.29-5.13-1.25-5.13-5.57 0-1.23.44-2.24 1.16-3.03-.12-.29-.5-1.43.11-2.99 0 0 .95-.3 3.1 1.16.9-.25 1.86-.38 2.82-.38.96 0 1.92.13 2.82.38 2.15-1.46 3.1-1.16 3.1-1.16.61 1.56.23 2.7.11 2.99.72.79 1.16 1.8 1.16 3.03 0 4.33-2.64 5.28-5.15 5.56.4.35.76 1.03.76 2.08 0 1.5-.01 2.71-.01 3.08 0 .3.2.65.78.54 4.47-1.49 7.7-5.72 7.7-10.71C23.25 5.48 18.27.5 12 .5z" />
-        </svg>
-        GitHub
-      </button>
+    <div className="grid grid-cols-1 gap-2.5">
       <button
         type="button"
         onClick={() => onClick?.("google")}

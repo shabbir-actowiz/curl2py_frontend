@@ -1,4 +1,4 @@
-// Lightweight cURL parser → structured request, then Python code generator.
+// Lightweight cURL parser -> structured request, then Python code generator.
 // Supports multiple curl blocks separated by newlines/&&/;.
 
 export interface ParsedCurl {
@@ -216,7 +216,7 @@ export function parseCurl(raw: string): ParsedCurl {
   return result;
 }
 
-// ───────────────────── Python generation ─────────────────────
+// Python generation
 
 interface GenOptions {
   client: "requests" | "httpx";

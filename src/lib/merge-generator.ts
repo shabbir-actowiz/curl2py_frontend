@@ -90,7 +90,7 @@ function buildRequestFunction(req: NamedRequest, opts: MergeOptions): string {
 
   if (parsed.error) {
     lines.push(`def ${fnName}():`);
-    lines.push(`    # Skipped — invalid curl: ${parsed.error}`);
+    lines.push(`    # Skipped - invalid curl: ${parsed.error}`);
     lines.push(`    return None`);
     return lines.join("\n");
   }
@@ -145,7 +145,7 @@ export function buildGeneratedScript(blocks: ParsedCurl[], opts: MergeOptions, c
   const { client, async: isAsync } = opts;
   const out: string[] = [];
 
-  out.push(`# generated_script.py — combined requests from curl2py`);
+  out.push(`# generated_script.py - combined requests from curl2py`);
   if (client === "requests") {
     out.push(`import requests`);
   } else {
@@ -196,12 +196,12 @@ export function buildGeneratedScript(blocks: ParsedCurl[], opts: MergeOptions, c
 export function buildParserStub(blocks: ParsedCurl[], customNames?: (string | undefined)[]): string {
   const reqs = buildNamedRequests(blocks, customNames);
   const out: string[] = [];
-  out.push(`# parser.py — auto-generated parser stubs`);
+  out.push(`# parser.py - auto-generated parser stubs`);
   out.push(`# Fill in the body of each function to parse the response.`);
   out.push("");
   for (const r of reqs) {
     const dt = r.parsed.dataType;
-    const domain = r.parsed.domain || "—";
+    const domain = r.parsed.domain || "-";
     out.push(`def ${r.fnName}_parser(response):`);
     out.push(`    """Parse response from ${r.parsed.method.toUpperCase()} ${domain} (${dt})."""`);
     out.push(`    # TODO: implement parser`);
@@ -210,4 +210,3 @@ export function buildParserStub(blocks: ParsedCurl[], customNames?: (string | un
   }
   return out.join("\n").trimEnd() + "\n";
 }
-

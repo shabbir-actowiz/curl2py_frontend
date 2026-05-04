@@ -6,6 +6,49 @@ import { AuthShell, Divider, SocialButtons } from "@/components/auth/AuthShell";
 import { extractApiErrorMessage } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
 
+function requestGoogleCredential(onCredential: (credential: string) => void, onError: (message: string) => void) {
+  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
+  if (!clientId) {
+    onError("Google login is not configured.");
+    return;
+  }
+  const start = () => {
+    const google = (window as any).google;
+    if (!google?.accounts?.id) {
+      onError("Google login could not load.");
+      return;
+    }
+    google.accounts.id.initialize({
+      client_id: clientId,
+      callback: (response: { credential?: string }) => {
+        if (response.credential) onCredential(response.credential);
+      },
+    });
+    google.accounts.id.prompt((notification: {
+      isNotDisplayed?: () => boolean;
+      isSkippedMoment?: () => boolean;
+      getNotDisplayedReason?: () => string;
+      getSkippedReason?: () => string;
+    }) => {
+      if (notification.isNotDisplayed?.() || notification.isSkippedMoment?.()) {
+        const reason = notification.getNotDisplayedReason?.() || notification.getSkippedReason?.() || "origin_not_allowed";
+        onError(`Google login blocked for ${window.location.origin}. Add this origin in Google Cloud OAuth settings. Reason: ${reason}`);
+      }
+    });
+  };
+  if ((window as any).google?.accounts?.id) {
+    start();
+    return;
+  }
+  const script = document.createElement("script");
+  script.src = "https://accounts.google.com/gsi/client";
+  script.async = true;
+  script.defer = true;
+  script.onload = start;
+  script.onerror = () => onError("Google login could not load.");
+  document.head.appendChild(script);
+}
+
 function scorePassword(pw: string): { score: 0 | 1 | 2 | 3; label: string } {
   let s = 0;
   if (pw.length >= 8) s++;
@@ -19,7 +62,7 @@ function scorePassword(pw: string): { score: 0 | 1 | 2 | 3; label: string } {
 
 export default function Register() {
   const navigate = useNavigate();
-  const { register, user, isLoading } = useAuth();
+  const { register, loginGoogle, user, isLoading } = useAuth();
   const [showPwd, setShowPwd] = useState(false);
   const [agreed, setAgreed] = useState(false);
   const [username, setUsername] = useState("");
@@ -128,7 +171,7 @@ export default function Register() {
                 type={showPwd ? "text" : "password"}
                 value={pwd}
                 onChange={(e) => setPwd(e.target.value)}
-                placeholder="••••••••"
+                placeholder="********"
                 className="h-10 w-full rounded-md border border-border bg-background pl-9 pr-10 text-[13px] outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/60 focus:ring-1 focus:ring-primary/30"
               />
               <button
@@ -200,7 +243,20 @@ export default function Register() {
         </form>
 
         <Divider label="or continue with" />
-        <SocialButtons />
+        <SocialButtons onClick={() => {
+          requestGoogleCredential(
+            async (credential) => {
+              try {
+                const signedIn = await loginGoogle(credential, { remember: true });
+                toast.success(`Signed in as ${signedIn.username}`);
+                navigate("/");
+              } catch (googleError) {
+                toast.error(extractApiErrorMessage(googleError));
+              }
+            },
+            (message) => toast.error(message),
+          );
+        }} />
 
         <p className="mt-5 text-center text-[12px] text-muted-foreground">
           Already have an account?{" "}

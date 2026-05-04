@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import {
   ApiError,
   getCurrentUser,
+  loginWithGoogle,
   loginUser,
   refreshUserSession,
   registerUser,
@@ -29,6 +30,7 @@ type AuthContextValue = {
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (payload: UserLogin, options?: LoginOptions) => Promise<UserResponse>;
+  loginGoogle: (credential: string, options?: LoginOptions) => Promise<UserResponse>;
   register: (payload: UserCreate, options?: LoginOptions) => Promise<UserResponse>;
   refreshSession: () => Promise<UserResponse | null>;
   logout: () => void;
@@ -165,6 +167,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return user;
   };
 
+  const loginGoogle = async (credential: string, options: LoginOptions = {}) => {
+    const remember = options.remember ?? true;
+    const tokens = await loginWithGoogle({ credential });
+    const user = await getCurrentUser(tokens.access_token);
+    const nextSession: StoredSession = {
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+      user,
+      remember,
+    };
+
+    setSession(nextSession);
+    persistStoredSession(nextSession);
+
+    return user;
+  };
+
   const register = async (payload: UserCreate, options: LoginOptions = {}) => {
     await registerUser(payload);
     return login(
@@ -213,10 +232,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isAuthenticated: !!session,
     isLoading,
     login,
+    loginGoogle,
     register,
     refreshSession,
     logout,
-  }), [session, isLoading, login, register, refreshSession, logout]);
+  }), [session, isLoading, login, loginGoogle, register, refreshSession, logout]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

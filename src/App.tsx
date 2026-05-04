@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
@@ -11,10 +12,20 @@ import Register from "./pages/Register.tsx";
 
 const queryClient = new QueryClient();
 
+function ThemeBootstrap() {
+  useEffect(() => {
+    const theme = window.localStorage.getItem("curl2py:theme:v1") === "light" ? "light" : "dark";
+    document.documentElement.classList.toggle("light", theme === "light");
+    document.documentElement.classList.toggle("dark", theme === "dark");
+  }, []);
+  return null;
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <AuthProvider>
       <TooltipProvider>
+        <ThemeBootstrap />
         <Toaster />
         <Sonner />
         <BrowserRouter>

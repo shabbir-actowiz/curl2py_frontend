@@ -1,8 +1,12 @@
 export const apiRoutes = {
   register: "/api/v1/auth/register",
   login: "/api/v1/auth/login",
+  googleLogin: "/api/v1/auth/google",
+  forgotPassword: "/api/v1/auth/forgot-password",
+  resetPassword: "/api/v1/auth/reset-password",
   refresh: "/api/v1/auth/refresh",
   me: "/api/v1/auth/me",
+  workspace: "/api/v1/workspace",
   convert: "/api/v1/convert",
   runWorkspace: "/run-workspace",
   history: "/api/v1/history",

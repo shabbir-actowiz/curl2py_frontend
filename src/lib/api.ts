@@ -19,6 +19,10 @@ export interface UserResponse {
   created_at: string;
 }
 
+export interface MessageResponse {
+  message: string;
+}
+
 export interface Token {
   access_token: string;
   refresh_token: string;
@@ -28,6 +32,19 @@ export interface Token {
 
 export interface TokenRefresh {
   refresh_token: string;
+}
+
+export interface GoogleLoginRequest {
+  credential: string;
+}
+
+export interface ForgotPasswordRequest {
+  email: string;
+}
+
+export interface ResetPasswordRequest {
+  token: string;
+  password: string;
 }
 
 export interface CurlRequest {
@@ -68,6 +85,15 @@ export interface ProxyConfig {
   enabled: boolean;
   http: string;
   https: string;
+}
+
+export interface UserWorkspaceState {
+  collections: Record<string, unknown>;
+  activeCollectionId?: string | null;
+  theme: string;
+  openResponseTabs?: Array<Record<string, unknown>>;
+  activeResponseTabId?: string | null;
+  updatedAt?: string | null;
 }
 
 export interface RunWorkspaceResponse {
@@ -257,6 +283,27 @@ export async function loginUser(payload: UserLogin): Promise<Token> {
   });
 }
 
+export async function loginWithGoogle(payload: GoogleLoginRequest): Promise<Token> {
+  return request<Token>(apiRoutes.googleLogin, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function forgotPassword(payload: ForgotPasswordRequest): Promise<MessageResponse> {
+  return request<MessageResponse>(apiRoutes.forgotPassword, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function resetPassword(payload: ResetPasswordRequest): Promise<MessageResponse> {
+  return request<MessageResponse>(apiRoutes.resetPassword, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function refreshUserSession(payload: TokenRefresh): Promise<Token> {
   return request<Token>(apiRoutes.refresh, {
     method: "POST",
@@ -267,6 +314,19 @@ export async function refreshUserSession(payload: TokenRefresh): Promise<Token> 
 export async function getCurrentUser(accessToken: string): Promise<UserResponse> {
   return request<UserResponse>(apiRoutes.me, {
     method: "GET",
+  }, accessToken);
+}
+
+export async function getUserWorkspace(accessToken: string): Promise<UserWorkspaceState> {
+  return request<UserWorkspaceState>(apiRoutes.workspace, {
+    method: "GET",
+  }, accessToken);
+}
+
+export async function saveUserWorkspace(payload: UserWorkspaceState, accessToken: string): Promise<UserWorkspaceState> {
+  return request<UserWorkspaceState>(apiRoutes.workspace, {
+    method: "PUT",
+    body: JSON.stringify(payload),
   }, accessToken);
 }
 
