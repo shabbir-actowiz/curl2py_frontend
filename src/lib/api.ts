@@ -36,9 +36,11 @@ export interface CurlRequest {
 }
 
 export interface ConvertRequest {
+  collection_name?: string;
   curl?: string | CurlRequest | null;
   commands?: Array<string | CurlRequest> | null;
   function_name_prefix?: string | null;
+  proxy?: ProxyConfig | null;
 }
 
 export interface ConversionResponse {
@@ -59,6 +61,13 @@ export interface RunWorkspaceRequest {
   workspace_name: string;
   request_code: string;
   parser_code: string;
+  proxy?: ProxyConfig | null;
+}
+
+export interface ProxyConfig {
+  enabled: boolean;
+  http: string;
+  https: string;
 }
 
 export interface RunWorkspaceResponse {

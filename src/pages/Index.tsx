@@ -40,7 +40,14 @@ interface OutputTab {
 }
 
 type WorkspacePanelTab = "code" | "response" | "logs";
+type InputPanelTab = "input" | "proxy";
 type WorkspaceFile = string;
+
+interface ProxyConfig {
+  enabled: boolean;
+  http: string;
+  https: string;
+}
 
 interface WorkspaceArtifact {
   responseJson: string | null;
@@ -57,6 +64,7 @@ interface CollectionState {
   name: string;
   expanded: boolean;
   snippets: Snippet[];
+  proxyConfig: ProxyConfig;
   workspaceArtifacts: Record<string, WorkspaceArtifact>;
   backendOutputs: Record<string, string>;
   backendMergedOutput: string | null;
@@ -76,6 +84,7 @@ const SESSION_KEY = "curl2py:session:v2";
 const SAMPLE_SNIPPETS: Snippet[] = [];
 
 const BACKEND_PLACEHOLDER = "# Connect to the backend and sync to generate Python code\n";
+const DEFAULT_PROXY_CONFIG: ProxyConfig = { enabled: false, http: "", https: "" };
 
 function buildParserStub(workspaceName: string): string {
   return [
@@ -138,10 +147,28 @@ function createCollection(id: string, name: string, snippets: Snippet[] = [creat
     name,
     expanded,
     snippets,
+    proxyConfig: { ...DEFAULT_PROXY_CONFIG },
     workspaceArtifacts: {},
     backendOutputs: {},
     backendMergedOutput: null,
     backendParserOutput: null,
+  };
+}
+
+function normalizeProxyConfig(value: unknown): ProxyConfig {
+  if (!value || typeof value !== "object") return { ...DEFAULT_PROXY_CONFIG };
+  const proxy = value as Partial<ProxyConfig>;
+  return {
+    enabled: !!proxy.enabled,
+    http: typeof proxy.http === "string" ? proxy.http : "",
+    https: typeof proxy.https === "string" ? proxy.https : "",
+  };
+}
+
+function withCollectionDefaults(collection: CollectionState): CollectionState {
+  return {
+    ...collection,
+    proxyConfig: normalizeProxyConfig(collection.proxyConfig),
   };
 }
 
@@ -175,6 +202,7 @@ export default function Index() {
   const [isSyncingBackend, setIsSyncingBackend] = useState(false);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>("");
   const [activeWorkspaceFile, setActiveWorkspaceFile] = useState<WorkspaceFile>("request.py");
+  const [activeInputTab, setActiveInputTab] = useState<InputPanelTab>("input");
   const [activePanelTab, setActivePanelTab] = useState<WorkspacePanelTab>("code");
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(new Set());
   const [openResponseTabs, setOpenResponseTabs] = useState<ResponseTab[]>([]);
@@ -194,6 +222,7 @@ export default function Index() {
 
   const activeCollection = collections[activeCollectionId] ?? Object.values(collections)[0] ?? createCollection("tmp", "tmp", [], true);
   const snippets = activeCollection.snippets;
+  const proxyConfig = activeCollection.proxyConfig ?? DEFAULT_PROXY_CONFIG;
   const backendOutputs = activeCollection.backendOutputs;
   const backendMergedOutput = activeCollection.backendMergedOutput;
   const backendParserOutput = activeCollection.backendParserOutput;
@@ -243,6 +272,28 @@ export default function Index() {
         : updater;
       return { ...collection, workspaceArtifacts: nextArtifacts };
     });
+  };
+
+  const setProxyConfig = (updater: ProxyConfig | ((prev: ProxyConfig) => ProxyConfig)) => {
+    updateActiveCollection((collection) => {
+      const currentProxy = normalizeProxyConfig(collection.proxyConfig);
+      const nextProxy = typeof updater === "function"
+        ? (updater as (prev: ProxyConfig) => ProxyConfig)(currentProxy)
+        : updater;
+      return { ...collection, proxyConfig: normalizeProxyConfig(nextProxy) };
+    });
+  };
+
+  const validateProxyConfig = (silent = false) => {
+    if (!proxyConfig.enabled) return true;
+    if (proxyConfig.http.trim() || proxyConfig.https.trim()) return true;
+    const message = "Proxy is enabled but no proxy URL provided";
+    if (!silent) {
+      setStatusKind("error");
+      setStatusMsg(message);
+      toast.error(message);
+    }
+    return false;
   };
 
   // Build parsed blocks per snippet
@@ -364,7 +415,7 @@ export default function Index() {
   // Auto-sync when snippets change
   useEffect(() => {
     handleSyncBackend({ silent: true });
-  }, [snippets, client, isAsync, mergeMode]);
+  }, [snippets, client, isAsync, mergeMode, proxyConfig.enabled, proxyConfig.http, proxyConfig.https]);
 
   // Status bar — uses "snippets ready"
   useEffect(() => {
@@ -682,6 +733,10 @@ export default function Index() {
     setStatusKind("info");
     setStatusMsg(`Running ${workspaceName}...`);
 
+    if (!validateProxyConfig()) {
+      return;
+    }
+
     if (!requestSnippet || !requestSnippet.raw.trim() || parsed?.error) {
       const errorMessage = parsed?.error || "Add a curl command before running";
       setWorkspaceArtifacts((prev) => ({
@@ -708,6 +763,7 @@ export default function Index() {
         workspace_name: workspaceName,
         request_code: requestCode,
         parser_code: parserCode,
+        proxy: proxyConfig,
       });
 
       const responsePayload = data.parsed ?? data.response ?? { error: data.error || "Execution failed", logs: data.logs };
@@ -1040,12 +1096,18 @@ export default function Index() {
       }
       const data = JSON.parse(raw);
       if (data.collections && typeof data.collections === "object") {
-        setCollections(data.collections as Record<string, CollectionState>);
-        const nextActiveCollectionId = typeof data.activeCollectionId === "string" && data.collections[data.activeCollectionId]
+        const loadedCollections = Object.fromEntries(
+          Object.entries(data.collections as Record<string, CollectionState>).map(([id, collection]) => [
+            id,
+            withCollectionDefaults(collection),
+          ])
+        ) as Record<string, CollectionState>;
+        setCollections(loadedCollections);
+        const nextActiveCollectionId = typeof data.activeCollectionId === "string" && loadedCollections[data.activeCollectionId]
           ? data.activeCollectionId
-          : Object.keys(data.collections)[0] ?? "tmp";
+          : Object.keys(loadedCollections)[0] ?? "tmp";
         setActiveCollectionId(nextActiveCollectionId);
-        const collection = data.collections[nextActiveCollectionId] as CollectionState | undefined;
+        const collection = loadedCollections[nextActiveCollectionId] as CollectionState | undefined;
         const firstSnippet = collection?.snippets?.[0];
         setActiveWorkspaceId(typeof data.activeWorkspaceId === "string" ? data.activeWorkspaceId : firstSnippet?.id ?? "");
         setActiveTabId(typeof data.activeTabId === "string" ? data.activeTabId : firstSnippet ? `req-${firstSnippet.id}` : "");
@@ -1100,16 +1162,22 @@ export default function Index() {
       return;
     }
 
+    if (!validateProxyConfig(silent)) {
+      return;
+    }
+
     try {
       setIsSyncingBackend(true);
       const singleResults = await Promise.all(
         conversionTargets.map(async ({ block, index }) => {
           const response = await convertWithBackend(
             {
+              collection_name: activeCollection.name,
               curl: {
                 curl: block.raw,
                 function_name: effectiveNames[index],
               },
+              proxy: proxyConfig,
             },
             accessToken,
           );
@@ -1135,10 +1203,12 @@ export default function Index() {
       if (mergeMode) {
         const batchResponse = await convertWithBackend(
           {
+            collection_name: activeCollection.name,
             commands: conversionTargets.map(({ block, index }) => ({
               curl: block.raw,
               function_name: effectiveNames[index],
             })),
+            proxy: proxyConfig,
           },
           accessToken,
         );
@@ -1611,13 +1681,64 @@ export default function Index() {
           <section
             className="flex min-h-0 min-w-0 flex-col border-b border-border md:border-b-0"
           >
-            <PanelHeader label="INPUT" right={
+            <PanelHeader label={
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setActiveInputTab("input")}
+                  className={cn("label-eyebrow transition-colors", activeInputTab === "input" ? "text-foreground" : "text-muted-foreground hover:text-foreground")}
+                >
+                  Input
+                </button>
+                <button
+                  onClick={() => setActiveInputTab("proxy")}
+                  className={cn("label-eyebrow transition-colors", activeInputTab === "proxy" ? "text-foreground" : "text-muted-foreground hover:text-foreground")}
+                >
+                  Proxy
+                </button>
+              </div>
+            } right={
               <span className="text-[10px] text-muted-foreground">
                 {snippets.length > 0 ? `${snippets.length} snippet${snippets.length === 1 ? "" : "s"}` : "—"}
               </span>
             } />
 
             <div className="flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-thin">
+              {activeInputTab === "proxy" ? (
+                <div className="flex flex-col gap-3 p-3 font-mono text-[11px]">
+                  <label className="flex items-center gap-2 text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={proxyConfig.enabled}
+                      onChange={(e) => setProxyConfig((prev) => ({ ...prev, enabled: e.target.checked }))}
+                      className="h-3 w-3"
+                    />
+                    Enable Proxy
+                  </label>
+                  <label className="flex flex-col gap-1 text-muted-foreground">
+                    HTTP Proxy
+                    <input
+                      value={proxyConfig.http}
+                      onChange={(e) => setProxyConfig((prev) => ({ ...prev, http: e.target.value }))}
+                      placeholder="http://username:password@host:port"
+                      spellCheck={false}
+                      className="w-full rounded-sm border border-border bg-transparent px-2 py-1.5 font-mono text-[11px] text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-border-strong"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-muted-foreground">
+                    HTTPS Proxy
+                    <input
+                      value={proxyConfig.https}
+                      onChange={(e) => setProxyConfig((prev) => ({ ...prev, https: e.target.value }))}
+                      placeholder="http://username:password@host:port"
+                      spellCheck={false}
+                      className="w-full rounded-sm border border-border bg-transparent px-2 py-1.5 font-mono text-[11px] text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-border-strong"
+                    />
+                  </label>
+                  <p className="text-[10px] text-muted-foreground/70">
+                    Used in generated Python requests code.
+                  </p>
+                </div>
+              ) : (
               <div className="flex flex-col">
                 {snippets.length === 0 ? (
                   <div className="flex flex-col items-center justify-center gap-2 px-6 py-10 text-center">
@@ -1798,6 +1919,7 @@ export default function Index() {
                   </button>
                 </div>
               </div>
+              )}
             </div>
           </section>
 
@@ -2331,10 +2453,10 @@ function HtmlTreeNode({
   );
 }
 
-function PanelHeader({ label, right }: { label: string; right?: React.ReactNode }) {
+function PanelHeader({ label, right }: { label: React.ReactNode; right?: React.ReactNode }) {
   return (
     <div className="flex h-8 items-center justify-between border-b border-border bg-surface px-3">
-      <span className="label-eyebrow">{label}</span>
+      {typeof label === "string" ? <span className="label-eyebrow">{label}</span> : label}
       {right}
     </div>
   );
