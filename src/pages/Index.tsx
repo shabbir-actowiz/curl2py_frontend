@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Check,Code, Copy, ChevronDown, ChevronRight, ChevronUp, AlertCircle, Terminal, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil, Moon, Sun } from "lucide-react";
+import { Check, Copy, ChevronDown, ChevronRight, ChevronUp, AlertCircle, Terminal, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil, Moon, Sun } from "lucide-react";
 import JSZip from "jszip";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -9,7 +9,16 @@ import {
   type ParsedCurl,
 } from "@/lib/curl-to-python";
 import { HighlightedPython } from "@/lib/python-highlight";
-import { convertWithBackend, extractApiErrorMessage, getUserWorkspace, runWorkspaceWithBackend, saveUserWorkspace } from "@/lib/api";
+import {
+  convertWithBackend,
+  deleteConversionCollection,
+  deleteConversionSnippet,
+  extractApiErrorMessage,
+  getUserWorkspace,
+  renameConversionCollection,
+  runWorkspaceWithBackend,
+  saveUserWorkspace,
+} from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
 
 type Client = "requests" | "httpx";
@@ -45,8 +54,7 @@ type WorkspaceFile = string;
 
 interface ProxyConfig {
   enabled: boolean;
-  http: string;
-  https: string;
+  url: string;
 }
 
 interface WorkspaceArtifact {
@@ -85,7 +93,7 @@ const THEME_KEY = "curl2py:theme:v1";
 const SAMPLE_SNIPPETS: Snippet[] = [];
 
 const BACKEND_PLACEHOLDER = "# Connect to the backend and sync to generate Python code\n";
-const DEFAULT_PROXY_CONFIG: ProxyConfig = { enabled: false, http: "", https: "" };
+const DEFAULT_PROXY_CONFIG: ProxyConfig = { enabled: false, url: "" };
 
 function buildParserStub(workspaceName: string): string {
   return [
@@ -119,7 +127,10 @@ function sanitizeName(input: string): string {
 }
 
 function newId(): string {
-  return Math.random().toString(36).slice(2, 9);
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `id_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
 }
 
 function resolveEffectiveNames(snippets: Snippet[]): string[] {
@@ -158,39 +169,103 @@ function createCollection(id: string, name: string, snippets: Snippet[] = [creat
 
 function normalizeProxyConfig(value: unknown): ProxyConfig {
   if (!value || typeof value !== "object") return { ...DEFAULT_PROXY_CONFIG };
-  const proxy = value as Partial<ProxyConfig>;
+  const proxy = value as Partial<ProxyConfig> & { http?: string; https?: string };
+  const legacyUrl = typeof proxy.http === "string" && proxy.http.trim()
+    ? proxy.http
+    : typeof proxy.https === "string"
+      ? proxy.https
+      : "";
   return {
     enabled: !!proxy.enabled,
-    http: typeof proxy.http === "string" ? proxy.http : "",
-    https: typeof proxy.https === "string" ? proxy.https : "",
+    url: typeof proxy.url === "string" ? proxy.url : legacyUrl,
+  };
+}
+
+function normalizeSnippet(snippet: Partial<Snippet>, fallbackName = "request_1"): Snippet {
+  return {
+    id: typeof snippet.id === "string" && snippet.id.trim() ? snippet.id : newId(),
+    name: typeof snippet.name === "string" ? sanitizeName(snippet.name) || fallbackName : fallbackName,
+    raw: typeof snippet.raw === "string" ? snippet.raw : "",
+    collapsed: !!snippet.collapsed,
   };
 }
 
 function withCollectionDefaults(collection: CollectionState): CollectionState {
+  const normalizedId = typeof collection.id === "string" && collection.id.trim() ? collection.id : newId();
   return {
     ...collection,
+    id: normalizedId,
+    name: typeof collection.name === "string" && collection.name.trim() ? collection.name : "collection",
+    snippets: (collection.snippets || []).map((snippet, index) => normalizeSnippet(snippet, `request_${index + 1}`)),
     proxyConfig: normalizeProxyConfig(collection.proxyConfig),
+    workspaceArtifacts: collection.workspaceArtifacts || {},
+    backendOutputs: collection.backendOutputs || {},
+    backendMergedOutput: collection.backendMergedOutput ?? null,
+    backendParserOutput: collection.backendParserOutput ?? null,
   };
+}
+
+function normalizeCollections(collections: Record<string, CollectionState>): Record<string, CollectionState> {
+  return Object.fromEntries(
+    Object.values(collections).map((collection) => {
+      const normalized = withCollectionDefaults(collection);
+      return [normalized.id, normalized];
+    })
+  ) as Record<string, CollectionState>;
+}
+
+function stableHash(value: unknown): string {
+  const text = JSON.stringify(value);
+  let hash = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = ((hash << 5) - hash + text.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash).toString(36);
+}
+
+function getFriendlyErrorMessage(error: unknown): string {
+  const rawMessage = extractApiErrorMessage(error);
+  const message = rawMessage.trim() || "Conversion failed. Please try again.";
+  const normalized = message.toLowerCase();
+  if (normalized.includes("e11000") || normalized.includes("duplicate key")) {
+    return "Could not save conversion. Please refresh and try again.";
+  }
+  if (normalized.includes("failed to fetch") || normalized.includes("networkerror") || normalized.includes("network error")) {
+    return "Backend connection failed.";
+  }
+  if (normalized.includes("missing collection_id") || normalized.includes("missing snippet_id")) {
+    return "Missing collection or snippet identity.";
+  }
+  if (normalized.startsWith("body.") || normalized.includes("validation")) {
+    return message;
+  }
+  if (normalized.startsWith("internal error")) {
+    return "Conversion failed. Please try again.";
+  }
+  return message;
 }
 
 function sanitizeCollectionsForStorage(collections: Record<string, CollectionState>): Record<string, CollectionState> {
   return Object.fromEntries(
-    Object.entries(collections).map(([id, collection]) => [
-      id,
-      {
-        ...withCollectionDefaults(collection),
-        workspaceArtifacts: Object.fromEntries(
-          Object.entries(collection.workspaceArtifacts || {}).map(([workspaceId, artifact]) => [
-            workspaceId,
-            {
-              ...artifact,
-              responseJson: null,
-              logsTxt: "",
-            },
-          ])
-        ),
-      },
-    ])
+    Object.values(collections).map((collection) => {
+      const normalized = withCollectionDefaults(collection);
+      return [
+        normalized.id,
+        {
+          ...normalized,
+          workspaceArtifacts: Object.fromEntries(
+            Object.entries(collection.workspaceArtifacts || {}).map(([workspaceId, artifact]) => [
+              workspaceId,
+              {
+                ...artifact,
+                responseJson: null,
+                logsTxt: "",
+              },
+            ])
+          ),
+        },
+      ];
+    })
   ) as Record<string, CollectionState>;
 }
 
@@ -249,6 +324,10 @@ export default function Index() {
   const focusNameOnMountId = useRef<string | null>(null);
   const nameInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const mainRef = useRef<HTMLDivElement>(null);
+  const syncAbortRef = useRef<AbortController | null>(null);
+  const inFlightSyncKeyRef = useRef<string | null>(null);
+  const lastSuccessfulSyncKeyRef = useRef<string | null>(null);
+  const lastSyncedSnippetHashesRef = useRef<Record<string, string>>({});
 
   const activeCollection = collections[activeCollectionId] ?? Object.values(collections)[0] ?? createCollection("tmp", "tmp", [], true);
   const snippets = activeCollection.snippets;
@@ -326,7 +405,7 @@ export default function Index() {
 
   const validateProxyConfig = (silent = false) => {
     if (!proxyConfig.enabled) return true;
-    if (proxyConfig.http.trim() || proxyConfig.https.trim()) return true;
+    if (proxyConfig.url.trim()) return true;
     const message = "Proxy is enabled but no proxy URL provided";
     if (!silent) {
       setStatusKind("error");
@@ -445,6 +524,30 @@ export default function Index() {
     : activePanelTab === "logs"
       ? "logs.txt"
       : panelCodeFilename;
+  const snippetSyncHashes = useMemo(() => Object.fromEntries(
+    snippets.map((snippet, index) => [
+      snippet.id,
+      stableHash({
+        collectionId: activeCollection.id,
+        snippetId: snippet.id,
+        name: effectiveNames[index],
+        raw: snippet.raw,
+        client,
+        isAsync,
+        mergeMode,
+        shouldPersist: !!(user && accessToken),
+        proxyConfig,
+      }),
+    ])
+  ) as Record<string, string>, [activeCollection.id, snippets, effectiveNames, client, isAsync, mergeMode, user, accessToken, proxyConfig]);
+  const syncKey = useMemo(() => JSON.stringify({
+    collectionId: activeCollection.id,
+    snippetSyncHashes,
+    mergeMode,
+    client,
+    isAsync,
+    proxyConfig,
+  }), [activeCollection.id, snippetSyncHashes, mergeMode, client, isAsync, proxyConfig]);
 
   useEffect(() => {
     setBackendOutputs({});
@@ -463,12 +566,7 @@ export default function Index() {
       .then((workspace) => {
         if (!active) return;
         if (workspace.collections && Object.keys(workspace.collections).length > 0) {
-          const loadedCollections = Object.fromEntries(
-            Object.entries(workspace.collections as Record<string, CollectionState>).map(([id, collection]) => [
-              id,
-              withCollectionDefaults(collection),
-            ])
-          ) as Record<string, CollectionState>;
+          const loadedCollections = normalizeCollections(workspace.collections as Record<string, CollectionState>);
           setCollections(loadedCollections);
           if (workspace.activeCollectionId && loadedCollections[workspace.activeCollectionId]) {
             setActiveCollectionId(workspace.activeCollectionId);
@@ -506,11 +604,6 @@ export default function Index() {
     }, 800);
     return () => window.clearTimeout(timeout);
   }, [user, accessToken, hasLoadedRemoteWorkspace, collections, activeCollectionId, theme, openResponseTabs, activeResponseTabId]);
-
-  // Auto-sync when snippets change
-  useEffect(() => {
-    handleSyncBackend({ silent: true });
-  }, [snippets, client, isAsync, mergeMode, proxyConfig.enabled, proxyConfig.http, proxyConfig.https]);
 
   // Status bar uses "snippets ready"
   useEffect(() => {
@@ -707,12 +800,13 @@ export default function Index() {
 
   const handleAddCollection = () => {
     let index = Object.keys(collections).length + 1;
-    let id = `collection_${index}`;
-    while (collections[id]) {
+    let name = `collection_${index}`;
+    while (Object.values(collections).some((collection) => collection.name === name)) {
       index += 1;
-      id = `collection_${index}`;
+      name = `collection_${index}`;
     }
-    const collection = createCollection(id, id, [createDefaultSnippet("request_1")], true);
+    const id = newId();
+    const collection = createCollection(id, name, [createDefaultSnippet("request_1")], true);
     const firstSnippet = collection.snippets[0];
     setCollections((prev) => ({
       ...prev,
@@ -752,33 +846,32 @@ export default function Index() {
     setCollections((prev) => {
       const oldCollection = prev[editingCollectionId];
       if (!oldCollection) return prev;
-      const next = { ...prev };
-      delete next[editingCollectionId];
-      next[nextName] = {
-        ...oldCollection,
-        id: nextName,
-        name: nextName,
+      return {
+        ...prev,
+        [editingCollectionId]: {
+          ...oldCollection,
+          name: nextName,
+        },
       };
-      return next;
     });
 
-    setOpenResponseTabs((prev) => prev.map((tab) => tab.collectionId === editingCollectionId ? {
-      ...tab,
-      id: `${nextName}/${tab.workspaceId}/${tab.fileName}`,
-      collectionId: nextName,
-    } : tab));
-
-    if (activeCollectionId === editingCollectionId) {
-      setActiveCollectionId(nextName);
-    }
-    if (activeResponseTabId?.startsWith(`${editingCollectionId}/`)) {
-      setActiveResponseTabId(activeResponseTabId.replace(`${editingCollectionId}/`, `${nextName}/`));
+    if (user && accessToken) {
+      void renameConversionCollection(accessToken, editingCollectionId, { collection_name: nextName }).catch(() => {
+        setStatusKind("error");
+        setStatusMsg("Could not update collection history");
+      });
     }
     setEditingCollectionId(null);
   };
 
   const handleDeleteCollection = (collectionId: string) => {
     const remainingCollections = Object.values(collections).filter((collection) => collection.id !== collectionId);
+    if (user && accessToken) {
+      void deleteConversionCollection(accessToken, collectionId).catch(() => {
+        setStatusKind("error");
+        setStatusMsg("Could not delete collection history");
+      });
+    }
     if (remainingCollections.length === 0) {
       const fallback = createCollection("tmp", "tmp", [], true);
       setCollections({ tmp: fallback });
@@ -999,6 +1092,13 @@ export default function Index() {
   };
 
   const handleRemoveSnippet = (id: string) => {
+    delete lastSyncedSnippetHashesRef.current[id];
+    if (user && accessToken) {
+      void deleteConversionSnippet(accessToken, activeCollection.id, id).catch(() => {
+        setStatusKind("error");
+        setStatusMsg("Could not delete snippet history");
+      });
+    }
     setSnippets((prev) => prev.filter((s) => s.id !== id));
   };
 
@@ -1192,12 +1292,7 @@ export default function Index() {
       }
       const data = JSON.parse(raw);
       if (data.collections && typeof data.collections === "object") {
-        const loadedCollections = Object.fromEntries(
-          Object.entries(data.collections as Record<string, CollectionState>).map(([id, collection]) => [
-            id,
-            withCollectionDefaults(collection),
-          ])
-        ) as Record<string, CollectionState>;
+        const loadedCollections = normalizeCollections(data.collections as Record<string, CollectionState>);
         setCollections(loadedCollections);
         const nextActiveCollectionId = typeof data.activeCollectionId === "string" && loadedCollections[data.activeCollectionId]
           ? data.activeCollectionId
@@ -1210,12 +1305,7 @@ export default function Index() {
         setOpenResponseTabs(Array.isArray(data.openResponseTabs) ? data.openResponseTabs : []);
         setActiveResponseTabId(typeof data.activeResponseTabId === "string" ? data.activeResponseTabId : null);
       } else if (Array.isArray(data.snippets)) {
-        const migratedSnippets = data.snippets.map((s: any) => ({
-          id: typeof s.id === "string" ? s.id : newId(),
-          name: typeof s.name === "string" ? sanitizeName(s.name) : "request_1",
-          raw: typeof s.raw === "string" ? s.raw : "",
-          collapsed: !!s.collapsed,
-        }));
+        const migratedSnippets = data.snippets.map((s: any, index: number) => normalizeSnippet(s, `request_${index + 1}`));
         setCollections({
           tmp: createCollection("tmp", "tmp", migratedSnippets, true),
         });
@@ -1254,12 +1344,22 @@ export default function Index() {
     toast.success("Signed out");
   };
 
-  async function handleSyncBackend(options: { silent?: boolean } = {}) {
+  async function handleSyncBackend(options: { silent?: boolean; force?: boolean } = {}) {
     const silent = options.silent ?? false;
+    const force = options.force ?? false;
+    const currentSyncKey = syncKey;
+
+    if (!force) {
+      if (inFlightSyncKeyRef.current === currentSyncKey) return;
+      if (lastSuccessfulSyncKeyRef.current === currentSyncKey) return;
+    }
 
     const conversionTargets = blocks
       .map((block, index) => ({ block, index }))
       .filter(({ block }) => block.raw.trim().length > 0 && !block.parsed.error);
+    const changedConversionTargets = force
+      ? conversionTargets
+      : conversionTargets.filter(({ block }) => lastSyncedSnippetHashesRef.current[block.id] !== snippetSyncHashes[block.id]);
 
     if (conversionTargets.length === 0) {
       setStatusKind("error");
@@ -1270,24 +1370,39 @@ export default function Index() {
       return;
     }
 
+    if (changedConversionTargets.length === 0 && !mergeMode) {
+      lastSuccessfulSyncKeyRef.current = currentSyncKey;
+      return;
+    }
+
     if (!validateProxyConfig(silent)) {
       return;
     }
 
+    syncAbortRef.current?.abort();
+    const abortController = new AbortController();
+    syncAbortRef.current = abortController;
+    inFlightSyncKeyRef.current = currentSyncKey;
+
     try {
       setIsSyncingBackend(true);
       const singleResults = await Promise.all(
-        conversionTargets.map(async ({ block, index }) => {
+        changedConversionTargets.map(async ({ block, index }) => {
           const response = await convertWithBackend(
             {
+              collection_id: activeCollection.id,
               collection_name: activeCollection.name,
+              library: client,
               curl: {
                 curl: block.raw,
                 function_name: effectiveNames[index],
+                snippet_id: block.id,
+                name: effectiveNames[index],
               },
               proxy: proxyConfig,
             },
-            accessToken,
+            accessToken || undefined,
+            abortController.signal,
           );
 
           if (!response.success) {
@@ -1298,6 +1413,7 @@ export default function Index() {
             id: block.id,
             code: response.python_code ?? response.request_script ?? "",
             functionName: response.function_name ?? effectiveNames[index],
+            hash: snippetSyncHashes[block.id],
           };
         })
       );
@@ -1305,20 +1421,27 @@ export default function Index() {
       const nextOutputs: Record<string, string> = {};
       singleResults.forEach((entry) => {
         nextOutputs[entry.id] = entry.code || "# Backend conversion returned no code\n";
+        lastSyncedSnippetHashesRef.current[entry.id] = entry.hash;
       });
-      setBackendOutputs(nextOutputs);
+      setBackendOutputs((prev) => ({ ...prev, ...nextOutputs }));
 
       if (mergeMode) {
         const batchResponse = await convertWithBackend(
           {
+            collection_id: activeCollection.id,
             collection_name: activeCollection.name,
+            library: client,
+            persist: false,
             commands: conversionTargets.map(({ block, index }) => ({
               curl: block.raw,
               function_name: effectiveNames[index],
+              snippet_id: block.id,
+              name: effectiveNames[index],
             })),
             proxy: proxyConfig,
           },
-          accessToken,
+          accessToken || undefined,
+          abortController.signal,
         );
 
         if (!batchResponse.success) {
@@ -1332,29 +1455,37 @@ export default function Index() {
         setBackendParserOutput(null);
       }
 
-      const label = `${singleResults.length} snippet${singleResults.length === 1 ? "" : "s"}`;
+      const label = `${singleResults.length} changed snippet${singleResults.length === 1 ? "" : "s"}`;
+      const actionLabel = user && accessToken ? "Synced to backend" : "Converted";
+      lastSuccessfulSyncKeyRef.current = currentSyncKey;
       setStatusKind("success");
-      setStatusMsg(`Synced to backend - ${label}`);
+      setStatusMsg(`${actionLabel} - ${label}`);
       if (!silent) {
-        toast.success("Generated code via backend");
+        toast.success(user && accessToken ? "Generated code via backend" : "Converted curl");
       }
     } catch (error) {
-      const message = extractApiErrorMessage(error);
-      setStatusKind("error");
-      setStatusMsg(message);
-      if (!silent) {
-        toast.error(message);
+      if ((error as { name?: string })?.name === "AbortError") {
+        return;
       }
+      const message = getFriendlyErrorMessage(error);
+      const statusMessage = message.includes("Could not save conversion") || message.includes("Missing collection")
+        ? "Save failed"
+        : message;
+      setStatusKind("error");
+      setStatusMsg(statusMessage);
+      toast.error(message);
     } finally {
+      if (inFlightSyncKeyRef.current === currentSyncKey) {
+        inFlightSyncKeyRef.current = null;
+      }
+      if (syncAbortRef.current === abortController) {
+        syncAbortRef.current = null;
+      }
       setIsSyncingBackend(false);
     }
   }
 
   useEffect(() => {
-    if (!user || !accessToken) {
-      return;
-    }
-
     const hasRenderableSnippet = snippets.some((snippet) => snippet.raw.trim().length > 0);
     if (!hasRenderableSnippet) {
       return;
@@ -1365,7 +1496,7 @@ export default function Index() {
     }, 650);
 
     return () => window.clearTimeout(timer);
-  }, [snippets, user, accessToken, mergeMode]);
+  }, [syncKey, snippets, user, accessToken]);
 
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
@@ -1484,7 +1615,7 @@ export default function Index() {
           </button>
 
           <button
-            onClick={() => void handleSyncBackend()}
+            onClick={() => void handleSyncBackend({ force: true })}
             disabled={isSyncingBackend || !user || !accessToken || snippets.length === 0}
             className={cn(
               "flex items-center gap-1.5 rounded-sm border px-2.5 py-1 text-[11px] transition-colors",
@@ -1832,20 +1963,10 @@ export default function Index() {
                     Enable Proxy
                   </label>
                   <label className="flex flex-col gap-1 text-muted-foreground">
-                    HTTP Proxy
+                    Proxy URL
                     <input
-                      value={proxyConfig.http}
-                      onChange={(e) => setProxyConfig((prev) => ({ ...prev, http: e.target.value }))}
-                      placeholder="http://username:password@host:port"
-                      spellCheck={false}
-                      className="w-full rounded-sm border border-border bg-transparent px-2 py-1.5 font-mono text-[11px] text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-border-strong"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1 text-muted-foreground">
-                    HTTPS Proxy
-                    <input
-                      value={proxyConfig.https}
-                      onChange={(e) => setProxyConfig((prev) => ({ ...prev, https: e.target.value }))}
+                      value={proxyConfig.url}
+                      onChange={(e) => setProxyConfig((prev) => ({ ...prev, url: e.target.value }))}
                       placeholder="http://username:password@host:port"
                       spellCheck={false}
                       className="w-full rounded-sm border border-border bg-transparent px-2 py-1.5 font-mono text-[11px] text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-border-strong"

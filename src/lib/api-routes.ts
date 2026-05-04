@@ -11,5 +11,8 @@ export const apiRoutes = {
   runWorkspace: "/run-workspace",
   history: "/api/v1/history",
   deleteHistory: (id: string) => `/api/v1/history/${id}`,
+  deleteConversionSnippet: (collectionId: string, snippetId: string) => `/api/v1/conversions/snippet/${encodeURIComponent(collectionId)}/${encodeURIComponent(snippetId)}`,
+  deleteConversionCollection: (collectionId: string) => `/api/v1/conversions/collection/${encodeURIComponent(collectionId)}`,
+  renameConversionCollection: (collectionId: string) => `/api/v1/conversions/collection/${encodeURIComponent(collectionId)}/name`,
   health: "/health",
 } as const;

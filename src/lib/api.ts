@@ -50,14 +50,20 @@ export interface ResetPasswordRequest {
 export interface CurlRequest {
   curl: string;
   function_name?: string | null;
+  snippet_id?: string | null;
+  name?: string | null;
 }
 
 export interface ConvertRequest {
+  collection_id?: string;
   collection_name?: string;
+  library?: string;
   curl?: string | CurlRequest | null;
   commands?: Array<string | CurlRequest> | null;
   function_name_prefix?: string | null;
   proxy?: ProxyConfig | null;
+  idempotency_key?: string | null;
+  persist?: boolean | null;
 }
 
 export interface ConversionResponse {
@@ -83,8 +89,7 @@ export interface RunWorkspaceRequest {
 
 export interface ProxyConfig {
   enabled: boolean;
-  http: string;
-  https: string;
+  url: string;
 }
 
 export interface UserWorkspaceState {
@@ -94,6 +99,10 @@ export interface UserWorkspaceState {
   openResponseTabs?: Array<Record<string, unknown>>;
   activeResponseTabId?: string | null;
   updatedAt?: string | null;
+}
+
+export interface RenameCollectionConversionsRequest {
+  collection_name: string;
 }
 
 export interface RunWorkspaceResponse {
@@ -206,7 +215,7 @@ function extractErrorMessage(payload: unknown, fallback: string): string {
   return fallback;
 }
 
-async function request<T>(path: string, init: RequestInit = {}, accessToken?: string): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, accessToken?: string, signal?: AbortSignal): Promise<T> {
   const headers = new Headers(init.headers);
 
   if (!headers.has("Accept")) {
@@ -229,6 +238,7 @@ async function request<T>(path: string, init: RequestInit = {}, accessToken?: st
   const response = await fetch(buildUrl(path), {
     ...init,
     headers,
+    signal,
   });
 
   const contentType = response.headers.get("content-type") ?? "";
@@ -330,11 +340,11 @@ export async function saveUserWorkspace(payload: UserWorkspaceState, accessToken
   }, accessToken);
 }
 
-export async function convertWithBackend(payload: ConvertRequest, accessToken?: string): Promise<ConversionResponse> {
+export async function convertWithBackend(payload: ConvertRequest, accessToken?: string, signal?: AbortSignal): Promise<ConversionResponse> {
   return request<ConversionResponse>(apiRoutes.convert, {
     method: "POST",
     body: JSON.stringify(payload),
-  }, accessToken);
+  }, accessToken, signal);
 }
 
 export async function runWorkspaceWithBackend(payload: RunWorkspaceRequest): Promise<RunWorkspaceResponse> {
@@ -358,6 +368,25 @@ export async function getConversionHistory(accessToken: string, skip = 0, limit 
 export async function deleteConversionHistory(accessToken: string, historyId: string): Promise<void> {
   await request<void>(apiRoutes.deleteHistory(historyId), {
     method: "DELETE",
+  }, accessToken);
+}
+
+export async function deleteConversionSnippet(accessToken: string, collectionId: string, snippetId: string): Promise<void> {
+  await request<void>(apiRoutes.deleteConversionSnippet(collectionId, snippetId), {
+    method: "DELETE",
+  }, accessToken);
+}
+
+export async function deleteConversionCollection(accessToken: string, collectionId: string): Promise<void> {
+  await request<void>(apiRoutes.deleteConversionCollection(collectionId), {
+    method: "DELETE",
+  }, accessToken);
+}
+
+export async function renameConversionCollection(accessToken: string, collectionId: string, payload: RenameCollectionConversionsRequest): Promise<void> {
+  await request<void>(apiRoutes.renameConversionCollection(collectionId), {
+    method: "PATCH",
+    body: JSON.stringify(payload),
   }, accessToken);
 }
 
