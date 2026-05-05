@@ -1536,12 +1536,20 @@ export default function Index() {
             <span className="text-muted-foreground">2</span>
             <span className="text-foreground">py</span>
           </h1>
-          <span className="ml-3 hidden text-[11px] text-muted-foreground sm:inline">
-            cURL to Python
-          </span>
+          
         </div>
 
         <div className="flex items-center gap-2">
+
+          <button
+            onClick={() => setTheme((value) => value === "dark" ? "light" : "dark")}
+            className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
+            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          >
+            {theme === "dark" ? <Sun className="h-3 w-3" strokeWidth={2} /> : <Moon className="h-3 w-3" strokeWidth={2} />}
+            {theme === "dark" ? "Light" : "Dark"}
+          </button>
+
           <button
             onClick={() => setMergeMode((s) => !s)}
             className={cn(
@@ -1556,29 +1564,22 @@ export default function Index() {
             Merge Scripts
           </button>
 
-          <button
+          {/* <button
             onClick={() => setOptionsOpen((s) => !s)}
             className={cn(
               "flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground",
               optionsOpen && "border-border-strong text-foreground"
             )}
             aria-expanded={optionsOpen}
-          >
-            <span>{client}{isAsync ? " - async" : ""}</span>
+          > */}
+            {/* <span>{client}{isAsync ? " - async" : ""}</span>
             <ChevronDown
               className={cn("h-3 w-3 transition-transform", optionsOpen && "rotate-180")}
               strokeWidth={2}
             />
-          </button>
+          </button> */}
 
-          <button
-            onClick={() => setTheme((value) => value === "dark" ? "light" : "dark")}
-            className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
-            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-          >
-            {theme === "dark" ? <Sun className="h-3 w-3" strokeWidth={2} /> : <Moon className="h-3 w-3" strokeWidth={2} />}
-            {theme === "dark" ? "Light" : "Dark"}
-          </button>
+          
 
           <button
             onClick={handleDownloadAll}
@@ -1636,7 +1637,7 @@ export default function Index() {
       </header>
 
       {/* OPTIONS */}
-      {optionsOpen && (
+      {/* {optionsOpen && (
         <div className="flex animate-fade-in items-center gap-6 border-b border-border bg-surface px-4 py-2 text-[11px]">
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground">client</span>
@@ -1661,7 +1662,7 @@ export default function Index() {
             </span>
           )}
         </div>
-      )}
+      )} */}
 
       {/* MAIN */}
       <div className="flex flex-1 min-h-0">
@@ -1874,7 +1875,7 @@ export default function Index() {
               )}
             </div>
 
-            <div className="flex items-center gap-1 border-t border-border p-2">
+            {/* <div className="flex items-center gap-1 border-t border-border p-2">
               <button
                 onClick={handleSaveSession}
                 className="flex flex-1 items-center justify-center gap-1 rounded-sm border border-border bg-transparent px-2 py-1 text-[10px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
@@ -1897,7 +1898,7 @@ export default function Index() {
               >
                 <FolderOpen className="h-3 w-3" strokeWidth={2} /> Load
               </button>
-            </div>
+            </div> */}
           </aside>
         )}
 
