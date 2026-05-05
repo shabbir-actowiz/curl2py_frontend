@@ -1591,21 +1591,6 @@ export default function Index() {
           </button>
 
           <button
-            onClick={handleRunActiveWorkspace}
-            disabled={!activeWorkspaceId}
-            className={cn(
-              "flex items-center gap-1.5 rounded-sm border px-2.5 py-1 text-[11px] transition-colors",
-              activeWorkspaceId
-                ? "border-primary/60 bg-primary/10 text-primary hover:bg-primary/15"
-                : "border-border bg-transparent text-muted-foreground hover:border-border-strong hover:text-foreground",
-              !activeWorkspaceId && "cursor-not-allowed opacity-40"
-            )}
-            title={activeWorkspaceId ? `Run ${activeWorkspaceDisplayName}` : "Select a workspace to run"}
-          >
-            Run
-          </button>
-
-          <button
             onClick={() => void handleSyncBackend({ force: true })}
             disabled={isSyncingBackend || !user || !accessToken || snippets.length === 0}
             className={cn(
@@ -1644,7 +1629,7 @@ export default function Index() {
               title="Login or sign up to save your collections"
             >
               <LogIn className="h-3 w-3" strokeWidth={2} />
-              Login / Signup
+              Login
             </Link>
           )}
         </div>
@@ -2180,21 +2165,39 @@ export default function Index() {
           <section ref={outputRef} className="flex min-h-0 min-w-0 flex-col">
            
 
-            <div className="flex items-center gap-0 overflow-x-auto border-b border-border bg-surface scrollbar-thin">
-              {(["code", "response"] as WorkspacePanelTab[]).map((tab) => (
+            <div className="flex items-center justify-between border-b border-border bg-surface">
+              <div className="flex min-w-0 flex-1 items-center gap-0 overflow-x-auto scrollbar-thin">
+                {(["code", "response"] as WorkspacePanelTab[]).map((tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setActivePanelTab(tab)}
+                    className={cn(
+                      "border-r border-border px-3 py-2 text-[11px] font-mono transition-colors",
+                      activePanelTab === tab
+                        ? "border-t border-t-primary bg-background text-foreground"
+                        : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground"
+                    )}
+                  >
+                    {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-2 pr-3">
                 <button
-                  key={tab}
-                  onClick={() => setActivePanelTab(tab)}
+                  onClick={handleRunActiveWorkspace}
+                  disabled={!activeWorkspaceId}
                   className={cn(
-                    "border-r border-border px-3 py-2 text-[11px] font-mono transition-colors",
-                    activePanelTab === tab
-                      ? "border-t border-t-primary bg-background text-foreground"
-                      : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground"
+                    "flex items-center gap-1.5 rounded-sm border px-2.5 py-1 text-[11px] transition-colors",
+                    activeWorkspaceId
+                      ? "border-primary/60 bg-primary/10 text-primary hover:bg-primary/15"
+                      : "border-border bg-transparent text-muted-foreground hover:border-border-strong hover:text-foreground",
+                    !activeWorkspaceId && "cursor-not-allowed opacity-40"
                   )}
+                  title={activeWorkspaceId ? `Run ${activeWorkspaceDisplayName}` : "Select a workspace to run"}
                 >
-                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                  Run
                 </button>
-              ))}
+              </div>
             </div>
 
             {activePanelTab === "code" ? (
