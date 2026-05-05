@@ -1304,7 +1304,6 @@ export default function Index() {
 
     setActiveWorkspaceId(workspaceId);
     setActiveWorkspaceFile("parser.py");
-    setActivePanelTab("parser");
   };
 
   const optimizeActiveParser = () => {
