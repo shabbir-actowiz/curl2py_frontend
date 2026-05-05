@@ -1,8 +1,9 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Check, Copy, ChevronDown, ChevronRight, ChevronUp, AlertCircle, Terminal, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil, Moon, Sun, Play, Loader2 } from "lucide-react";
+import { Check, Copy, ChevronDown, ChevronRight, ChevronUp, AlertCircle, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil, Moon, Sun, Play, Loader2 } from "lucide-react";
 import JSZip from "jszip";
 import { toast } from "sonner";
+import favicon from "/favicon-32x32.png";
 import { cn } from "@/lib/utils";
 import {
   parseCurl,
@@ -1542,7 +1543,7 @@ export default function Index() {
     <div className="flex h-screen flex-col bg-background text-foreground">
       {/* TOP BAR */}
       <header className="flex h-12 items-center justify-between border-b border-border px-4">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-0">
           <button
             onClick={() => setSidebarOpen((s) => !s)}
             className="mr-1 flex h-6 w-6 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-surface-elevated hover:text-foreground"
@@ -1551,8 +1552,8 @@ export default function Index() {
           >
             <PanelLeft className="h-3.5 w-3.5" strokeWidth={1.75} />
           </button>
-          <Terminal className="h-4 w-4 text-primary" strokeWidth={1.75} />
-          <h1 className="text-[13px] font-semibold tracking-tight">
+          <img src={favicon} alt="logo" className="mr-0 h-5 w-5" />
+          <h1 className="m-0 p-0 text-[13px] font-semibold leading-none tracking-tight">
             <span className="text-primary">curl</span>
             <span className="text-muted-foreground">2</span>
             <span className="text-foreground">py</span>
