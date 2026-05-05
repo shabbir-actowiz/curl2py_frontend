@@ -48,10 +48,15 @@ interface OutputTab {
   hasError?: boolean;
 }
 
-type WorkspacePanelTab = "code" | "response" | "logs";
+type WorkspacePanelTab = "code" | "response" | "parser" | "logs";
 type InputPanelTab = "input" | "proxy";
 type ThemeMode = "dark" | "light";
 type WorkspaceFile = string;
+
+interface ParserSelection {
+  path: string;
+  outputKey: string;
+}
 
 interface ProxyConfig {
   enabled: boolean;
@@ -66,6 +71,8 @@ interface WorkspaceArtifact {
   metaJson: string | null;
   logsTxt: string;
   parserCode: string;
+  parserSelections?: ParserSelection[];
+  parserGenerated?: boolean;
 }
 
 interface CollectionState {
@@ -520,6 +527,11 @@ export default function Index() {
     ? workspaceArtifacts[activeResponseTab.workspaceId]
     : activeWorkspaceArtifact;
   const activeResponseJson = activeResponseArtifact?.responseJson;
+  const activeResponseMode = useMemo(
+    () => activeResponseJson ? detectResponseMode(activeResponseJson) : null,
+    [activeResponseJson]
+  );
+  const activeResponseIsJson = activeResponseMode?.kind === "json";
   const activeResponseMeta = readWorkspaceMeta(activeResponseArtifact?.metaJson ?? null);
   const snippetSyncHashes = useMemo(() => Object.fromEntries(
     snippets.map((snippet, index) => [
@@ -653,6 +665,8 @@ export default function Index() {
             metaJson: null,
             logsTxt: `Workspace ${effectiveNames[index]} ready`,
             parserCode: buildParserStub(effectiveNames[index]),
+            parserSelections: [],
+            parserGenerated: true,
           };
         }
       });
@@ -725,7 +739,7 @@ export default function Index() {
 
     if (file === "parser.py") {
       const tabId = `req-${workspaceId}`;
-      setActivePanelTab("code");
+      setActivePanelTab("parser");
       setClosedTabIds((prev) => {
         if (!prev.has(tabId)) return prev;
         const next = new Set(prev);
@@ -922,10 +936,12 @@ export default function Index() {
       setWorkspaceArtifacts((prev) => ({
         ...prev,
         [workspaceId]: {
+          ...prev[workspaceId],
           responseJson: null,
           metaJson: null,
           logsTxt: `[error] ${errorMessage}`,
           parserCode: buildParserStub(workspaceName),
+          parserGenerated: true,
         },
       }));
       setStatusKind("error");
@@ -961,6 +977,7 @@ export default function Index() {
       setWorkspaceArtifacts((prev) => ({
         ...prev,
         [workspaceId]: {
+          ...prev[workspaceId],
           responseJson,
           responseFileName,
           responseContentType: data.content_type,
@@ -993,6 +1010,7 @@ export default function Index() {
       setWorkspaceArtifacts((prev) => ({
         ...prev,
         [workspaceId]: {
+          ...prev[workspaceId],
           responseJson: JSON.stringify({ error: message }, null, 2),
           responseFileName: defaultResponseFileName(workspaceName),
           responseContentType: "application/json",
@@ -1159,6 +1177,9 @@ export default function Index() {
     if (activePanelTab === "logs") {
       return "logs.txt";
     }
+    if (activePanelTab === "parser") {
+      return "parser.py";
+    }
     return panelCodeFilename;
   };
 
@@ -1170,6 +1191,9 @@ export default function Index() {
     }
     if (activePanelTab === "logs") {
       return activeLogsTxt || "";
+    }
+    if (activePanelTab === "parser") {
+      return activeWorkspaceArtifact?.parserCode ?? buildParserStub(activeWorkspaceDisplayName);
     }
     return panelCodeContent;
   };
@@ -1238,6 +1262,78 @@ export default function Index() {
       </button>
     </div>
   );
+
+  const addPathToParser = (path: string) => {
+    const workspaceId = activeResponseTab?.workspaceId || activeWorkspaceId;
+    if (!workspaceId) return;
+    const workspaceIndex = snippets.findIndex((snippet) => snippet.id === workspaceId);
+    if (workspaceIndex === -1) return;
+    const workspaceName = effectiveNames[workspaceIndex] ?? snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
+    const parts = normalizeSelectionParts(path).filter((part): part is string | number => part !== undefined);
+    const lastKey = [...parts].reverse().find((part): part is string => typeof part === "string");
+    if (!lastKey) return;
+
+    setWorkspaceArtifacts((prev) => {
+      const artifact = prev[workspaceId];
+      if (!artifact) return prev;
+      const existingSelections = artifact.parserSelections ?? [];
+      if (existingSelections.some((selection) => selection.path === path)) {
+        toast.info("Parser field already added");
+        return prev;
+      }
+
+      const isGeneratedParser = artifact.parserGenerated || artifact.parserCode === buildParserStub(workspaceName);
+      if (!isGeneratedParser && !window.confirm("Replace custom parser.py with generated parser code?")) {
+        return prev;
+      }
+
+      const outputKey = uniqueOutputKey(sanitizeOutputKey(lastKey), existingSelections);
+      const parserSelections = [...existingSelections, { path, outputKey }];
+      const parserCode = generateParserCode(workspaceName, parserSelections);
+      toast.success("Added to parser");
+      return {
+        ...prev,
+        [workspaceId]: {
+          ...artifact,
+          parserSelections,
+          parserCode,
+          parserGenerated: true,
+        },
+      };
+    });
+
+    setActiveWorkspaceId(workspaceId);
+    setActiveWorkspaceFile("parser.py");
+    setActivePanelTab("parser");
+  };
+
+  const optimizeActiveParser = () => {
+    if (!activeWorkspaceId) return;
+    const workspaceIndex = snippets.findIndex((snippet) => snippet.id === activeWorkspaceId);
+    if (workspaceIndex === -1) return;
+    const workspaceName = effectiveNames[workspaceIndex] ?? snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
+
+    setWorkspaceArtifacts((prev) => {
+      const artifact = prev[activeWorkspaceId];
+      if (!artifact) return prev;
+      const selections = artifact.parserSelections ?? [];
+      const isGeneratedParser = artifact.parserGenerated || artifact.parserCode === buildParserStub(workspaceName);
+      if (!isGeneratedParser && !window.confirm("Replace custom parser.py with generated parser code?")) {
+        return prev;
+      }
+
+      const parserCode = generateParserCode(workspaceName, selections);
+      return {
+        ...prev,
+        [activeWorkspaceId]: {
+          ...artifact,
+          parserCode,
+          parserGenerated: true,
+        },
+      };
+    });
+    toast.success("Parser optimized");
+  };
 
   const handleRunActiveWorkspace = async () => {
     if (!activeWorkspaceId || isRunning) return;
@@ -2190,7 +2286,7 @@ export default function Index() {
 
             <div className="flex items-center justify-between border-b border-border bg-surface">
               <div className="flex min-w-0 flex-1 items-center gap-0 overflow-x-auto scrollbar-thin">
-                {(["code", "response"] as WorkspacePanelTab[]).map((tab) => (
+                {(["code", "response", "parser"] as WorkspacePanelTab[]).map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setActivePanelTab(tab)}
@@ -2206,6 +2302,16 @@ export default function Index() {
                 ))}
               </div>
               <div className="flex items-center gap-2 pr-3">
+                {activePanelTab === "parser" && (
+                  <button
+                    onClick={optimizeActiveParser}
+                    disabled={!activeWorkspaceId}
+                    className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                    title="Rebuild parser from selected JSON paths"
+                  >
+                    Optimize Parser
+                  </button>
+                )}
                 <button
                   onClick={() => void handleRunActiveWorkspace()}
                   disabled={!activeWorkspaceId || isRunning}
@@ -2365,9 +2471,29 @@ export default function Index() {
                 </div>
                 <div className="relative min-h-0 flex-1 overflow-auto">
                   {activeResponseJson ? (
-                    <ResponseBodyViewer source={activeResponseJson} />
+                    <ResponseBodyViewer source={activeResponseJson} onAddToParser={addPathToParser} />
                   ) : (
                     <div className="px-4 py-3 text-[11px] text-muted-foreground">No response yet</div>
+                  )}
+                </div>
+              </div>
+            ) : activePanelTab === "parser" ? (
+              <div className="flex min-h-0 flex-1 flex-col">
+                <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-1.5 font-mono text-[12px]">
+                  <span className="font-semibold text-syntax-function">PARSER</span>
+                  <span className="text-syntax-comment">|</span>
+                  <span className="text-muted-foreground">{activeWorkspaceDisplayName || "request"}</span>
+                  {currentFileActions}
+                </div>
+                <div className="relative min-h-0 flex-1 overflow-auto">
+                  {activeResponseJson && !activeResponseIsJson ? (
+                    <div className="px-4 py-3 text-[11px] text-muted-foreground">
+                      JSON parser builder works only for JSON responses.
+                    </div>
+                  ) : (
+                    <pre className="px-4 py-3">
+                      <HighlightedPython code={activeWorkspaceArtifact?.parserCode ?? buildParserStub(activeWorkspaceDisplayName || "request")} />
+                    </pre>
                   )}
                 </div>
               </div>
@@ -2459,6 +2585,218 @@ function formatJsonPath(path: Array<string | number>): string {
     if (!acc) return part;
     return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(part) ? `${acc}.${part}` : `${acc}[${JSON.stringify(part)}]`;
   }, "");
+}
+
+function parseJsonPath(path: string): Array<string | number> {
+  const parts: Array<string | number> = [];
+  const pattern = /([A-Za-z_$][A-Za-z0-9_$]*)|\[(\d+)\]|\["([^"]+)"\]/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(path))) {
+    if (match[1]) parts.push(match[1]);
+    else if (match[2]) parts.push(Number(match[2]));
+    else if (match[3]) parts.push(match[3]);
+  }
+  return parts;
+}
+
+function sanitizeOutputKey(value: string): string {
+  const snake = value
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^A-Za-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+  return snake || "value";
+}
+
+function uniqueOutputKey(baseKey: string, selections: ParserSelection[]) {
+  const used = new Set(selections.map((selection) => selection.outputKey));
+  if (!used.has(baseKey)) return baseKey;
+  let index = 2;
+  while (used.has(`${baseKey}_${index}`)) index += 1;
+  return `${baseKey}_${index}`;
+}
+
+function sanitizePythonName(value: string) {
+  const name = sanitizeOutputKey(value);
+  return /^[0-9]/.test(name) ? `item_${name}` : name;
+}
+
+interface ParserField {
+  outputKey: string;
+  path: string[];
+}
+
+interface ParserArrayGroup {
+  prop: string;
+  accessPath: string[];
+  fields: ParserField[];
+  children: ParserArrayGroup[];
+}
+
+function singularName(value: string) {
+  const sanitized = sanitizePythonName(value);
+  if (sanitized.endsWith("ies")) return sanitized.slice(0, -3) + "y";
+  if (sanitized.endsWith("s") && sanitized.length > 1) return sanitized.slice(0, -1);
+  return `${sanitized}_item`;
+}
+
+function normalizeSelectionParts(path: string) {
+  const parts = parseJsonPath(path);
+  return parts[0] === "response" ? parts.slice(1) : parts;
+}
+
+function findNextArray(parts: Array<string | number>) {
+  for (let index = 0; index < parts.length - 1; index += 1) {
+    if (typeof parts[index] === "string" && typeof parts[index + 1] === "number") {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function getOrCreateArrayGroup(groups: ParserArrayGroup[], prop: string, accessPath: string[]) {
+  const key = accessPath.join(".");
+  let group = groups.find((item) => item.accessPath.join(".") === key);
+  if (!group) {
+    group = { prop, accessPath, fields: [], children: [] };
+    groups.push(group);
+  }
+  return group;
+}
+
+function addSelectionToGroups(groups: ParserArrayGroup[], selection: ParserSelection, parts: Array<string | number>) {
+  const arrayIndex = findNextArray(parts);
+  if (arrayIndex === -1) return;
+  const prop = String(parts[arrayIndex]);
+  const group = getOrCreateArrayGroup(groups, prop, parts.slice(0, arrayIndex + 1) as string[]);
+  addSelectionRemainder(group, selection, parts.slice(arrayIndex + 2));
+}
+
+function addSelectionRemainder(group: ParserArrayGroup, selection: ParserSelection, remainder: Array<string | number>) {
+  const arrayIndex = findNextArray(remainder);
+  if (arrayIndex !== -1) {
+    const prop = String(remainder[arrayIndex]);
+    const child = getOrCreateArrayGroup(group.children, prop, remainder.slice(0, arrayIndex + 1) as string[]);
+    addSelectionRemainder(child, selection, remainder.slice(arrayIndex + 2));
+    return;
+  }
+
+  const fieldPath = remainder.filter((part): part is string => typeof part === "string");
+  if (fieldPath.length === 0) return;
+  if (!group.fields.some((field) => field.outputKey === selection.outputKey && field.path.join(".") === fieldPath.join("."))) {
+    group.fields.push({ outputKey: selection.outputKey, path: fieldPath });
+  }
+}
+
+function pythonString(value: string) {
+  return JSON.stringify(value);
+}
+
+function getFromExpression(base: string, path: string[]) {
+  if (path.length === 1) return `${base}.get(${pythonString(path[0])})`;
+  return `_get_value(${base}, [${path.map(pythonString).join(", ")}])`;
+}
+
+function collectionExpression(base: string, path: string[]) {
+  if (path.length === 1) return `${base}.get(${pythonString(path[0])}, [])`;
+  return `_get_value(${base}, [${path.map(pythonString).join(", ")}]) or []`;
+}
+
+function emitArrayGroup(lines: string[], group: ParserArrayGroup, base: string, indent: string, usedVars: Set<string>) {
+  let itemVar = singularName(group.prop);
+  if (usedVars.has(itemVar)) {
+    let index = 2;
+    while (usedVars.has(`${itemVar}_${index}`)) index += 1;
+    itemVar = `${itemVar}_${index}`;
+  }
+  usedVars.add(itemVar);
+  const collectionVar = `${itemVar}s`;
+  const iterVar = `${collectionVar}_iter`;
+
+  lines.push(`${indent}${collectionVar} = ${collectionExpression(base, group.accessPath)}`);
+  lines.push(`${indent}${iterVar} = _iter_items(${collectionVar})`);
+  lines.push("");
+  lines.push(`${indent}for ${itemVar} in ${iterVar}:`);
+  lines.push(`${indent}    if not isinstance(${itemVar}, dict):`);
+  lines.push(`${indent}        continue`);
+
+  if (group.fields.length > 0) {
+    lines.push(`${indent}    results.append({`);
+    group.fields.forEach((field, index) => {
+      const comma = index < group.fields.length - 1 ? "," : "";
+      lines.push(`${indent}        ${pythonString(field.outputKey)}: ${getFromExpression(itemVar, field.path)}${comma}`);
+    });
+    lines.push(`${indent}    })`);
+  }
+
+  group.children.forEach((child) => {
+    if (group.fields.length > 0) lines.push("");
+    emitArrayGroup(lines, child, itemVar, `${indent}    `, usedVars);
+  });
+}
+
+function generateParserCode(workspaceName: string, selections: ParserSelection[]) {
+  const functionName = `${sanitizePythonName(workspaceName || "request")}_parser`;
+  const deduped = selections.filter((selection, index) => selections.findIndex((item) => item.path === selection.path) === index);
+  const rootFields: ParserField[] = [];
+  const groups: ParserArrayGroup[] = [];
+
+  deduped.forEach((selection) => {
+    const parts = normalizeSelectionParts(selection.path);
+    if (findNextArray(parts) === -1) {
+      const fieldPath = parts.filter((part): part is string => typeof part === "string");
+      if (fieldPath.length > 0) {
+        rootFields.push({ outputKey: selection.outputKey, path: fieldPath });
+      }
+      return;
+    }
+    addSelectionToGroups(groups, selection, parts);
+  });
+
+  const lines = [
+    `def ${functionName}(response):`,
+    "    try:",
+    "        data = response.json()",
+    "    except Exception:",
+    "        return []",
+    "",
+    "    def _get_value(container, path):",
+    "        current = container",
+    "        for key in path:",
+    "            if not isinstance(current, dict):",
+    "                return None",
+    "            current = current.get(key)",
+    "        return current",
+    "",
+    "    def _iter_items(value):",
+    "        if isinstance(value, dict):",
+    "            return value.values()",
+    "        if isinstance(value, list):",
+    "            return value",
+    "        return []",
+    "",
+    "    results = []",
+    "",
+  ];
+
+  if (rootFields.length > 0) {
+    lines.push("    results.append({");
+    rootFields.forEach((field, index) => {
+      const comma = index < rootFields.length - 1 ? "," : "";
+      lines.push(`        ${pythonString(field.outputKey)}: ${getFromExpression("data", field.path)}${comma}`);
+    });
+    lines.push("    })");
+    if (groups.length > 0) lines.push("");
+  }
+
+  groups.forEach((group, index) => {
+    emitArrayGroup(lines, group, "data", "    ", new Set());
+    if (index < groups.length - 1) lines.push("");
+  });
+
+  lines.push("    return results");
+  lines.push("");
+  return lines.join("\n");
 }
 
 async function copyToClipboard(text: string) {
@@ -2557,17 +2895,17 @@ function getCssSelector(element: Element): string {
   return parts.join(" > ");
 }
 
-function ResponseBodyViewer({ source }: { source: string }) {
+function ResponseBodyViewer({ source, onAddToParser }: { source: string; onAddToParser?: (path: string) => void }) {
   const mode = useMemo(() => detectResponseMode(source), [source]);
 
   if (mode.kind === "json") {
-    return <JsonResponseViewer value={mode.value} />;
+    return <JsonResponseViewer value={mode.value} onAddToParser={onAddToParser} />;
   }
 
   return <HtmlResponseViewer html={mode.value} />;
 }
 
-function JsonResponseViewer({ value }: { value: unknown }) {
+function JsonResponseViewer({ value, onAddToParser }: { value: unknown; onAddToParser?: (path: string) => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<{ path: string; value: unknown; x: number; y: number } | null>(null);
   useEffect(() => setSelected(null), [value]);
@@ -2598,6 +2936,17 @@ function JsonResponseViewer({ value }: { value: unknown }) {
           >
             Copy value
           </button>
+          {onAddToParser && (
+            <button
+              onClick={() => {
+                onAddToParser(selected.path);
+                setSelected(null);
+              }}
+              className="text-primary hover:text-foreground"
+            >
+              Add to Parser
+            </button>
+          )}
         </div>
       )}
       <JsonTreeNode
@@ -2659,16 +3008,18 @@ function JsonTreeNode({
 
   return (
     <div className="text-foreground">
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          onSelect(path, value, e);
-        }}
-        className="text-left hover:text-foreground"
-      >
-        {displayName && <span className="text-syntax-function">"{displayName}": </span>}
-        <span className="text-syntax-punct">{isArray ? "[" : "{"}</span>
-      </button>
+      {displayName && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect(path, value, e);
+          }}
+          className="text-left hover:text-foreground"
+        >
+          <span className="text-syntax-function">"{displayName}": </span>
+        </button>
+      )}
+      <span className="text-syntax-punct">{isArray ? "[" : "{"}</span>
       <div className="pl-4">
         {entries.map(([key, child], index) => {
           const childPath = [...path, isArray ? Number(key) : key];
