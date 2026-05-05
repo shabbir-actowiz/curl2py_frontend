@@ -1,14 +1,15 @@
 import { ShieldCheck } from "lucide-react";
 import { ReactNode, useEffect, useRef, useState } from "react";
-
+import favicon from "/favicon-32x32.png";
 export function BrandLogo() {
   return (
     <div className="flex items-center justify-center gap-2 font-mono text-[15px] tracking-tight">
-      <span className="text-primary">&gt;_</span>
-      <span>
-        <span className="text-foreground">cur</span>
-        <span className="text-primary">l2py</span>
-      </span>
+      <img src={favicon} alt="logo" className="mr-0 h-7 w-7" />
+          <h1 className="m-0 p-0 text-[19px] font-semibold leading-none tracking-tight">
+            <span className="text-primary">curl</span>
+            <span className="text-muted-foreground">2</span>
+            <span className="text-foreground">py</span>
+          </h1>
     </div>
   );
 }

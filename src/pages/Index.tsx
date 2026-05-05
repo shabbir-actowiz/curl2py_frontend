@@ -1552,8 +1552,8 @@ export default function Index() {
           >
             <PanelLeft className="h-3.5 w-3.5" strokeWidth={1.75} />
           </button>
-          <img src={favicon} alt="logo" className="mr-0 h-5 w-5" />
-          <h1 className="m-0 p-0 text-[13px] font-semibold leading-none tracking-tight">
+          <img src={favicon} alt="logo" className="mr-1 h-6 w-6" />
+          <h1 className="m-0 p-0 text-[15px] font-semibold leading-none tracking-tight">
             <span className="text-primary">curl</span>
             <span className="text-muted-foreground">2</span>
             <span className="text-foreground">py</span>
