@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Check, Copy, ChevronDown, ChevronRight, ChevronUp, AlertCircle, Terminal, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil, Moon, Sun, Play } from "lucide-react";
+import { Check, Copy, ChevronDown, ChevronRight, ChevronUp, AlertCircle, Terminal, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil, Moon, Sun, Play, Loader2 } from "lucide-react";
 import JSZip from "jszip";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -297,6 +297,7 @@ export default function Index() {
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [isSyncingBackend, setIsSyncingBackend] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>("");
   const [activeWorkspaceFile, setActiveWorkspaceFile] = useState<WorkspaceFile>("request.py");
   const [activeInputTab, setActiveInputTab] = useState<InputPanelTab>("input");
@@ -1175,9 +1176,19 @@ export default function Index() {
   const handleCopyActive = async () => {
     const content = getActivePanelContent();
     if (!content) return;
-    await navigator.clipboard.writeText(content);
-    setCopiedAll(true);
-    setTimeout(() => setCopiedAll(false), 1400);
+    try {
+      const copied = await copyToClipboard(content);
+      if (copied) {
+        setCopiedAll(true);
+        setTimeout(() => setCopiedAll(false), 1400);
+        toast.success("Copied");
+        return;
+      }
+    } catch {
+      // Fall through to the friendly toast below.
+    }
+
+    toast.error("Copy failed. Use HTTPS or localhost.");
   };
 
   const downloadFile = (filename: string, content: string) => {
@@ -1227,9 +1238,19 @@ export default function Index() {
     </div>
   );
 
-  const handleRunActiveWorkspace = () => {
-    if (!activeWorkspaceId) return;
-    void runWorkspace(activeWorkspaceId);
+  const handleRunActiveWorkspace = async () => {
+    if (!activeWorkspaceId || isRunning) return;
+    setIsRunning(true);
+    try {
+      await runWorkspace(activeWorkspaceId);
+    } catch (error) {
+      const message = extractApiErrorMessage(error);
+      setStatusKind("error");
+      setStatusMsg(message);
+      toast.error(message);
+    } finally {
+      setIsRunning(false);
+    }
   };
 
   const handleDownloadAll = async () => {
@@ -2185,19 +2206,23 @@ export default function Index() {
               </div>
               <div className="flex items-center gap-2 pr-3">
                 <button
-                  onClick={handleRunActiveWorkspace}
-                  disabled={!activeWorkspaceId}
+                  onClick={() => void handleRunActiveWorkspace()}
+                  disabled={!activeWorkspaceId || isRunning}
                   className={cn(
                     "flex items-center gap-1.5 rounded-sm border px-2.5 py-1 text-[11px] transition-colors",
                     activeWorkspaceId
                       ? "border-primary/60 bg-primary/10 text-primary hover:bg-primary/15"
                       : "border-border bg-transparent text-muted-foreground hover:border-border-strong hover:text-foreground",
-                    !activeWorkspaceId && "cursor-not-allowed opacity-40"
+                    (!activeWorkspaceId || isRunning) && "cursor-not-allowed opacity-40"
                   )}
                   title={activeWorkspaceId ? `Run ${activeWorkspaceDisplayName}` : "Select a workspace to run"}
                 >
-                  <Play className="h-4 w-4" strokeWidth={2} />
-                  Run
+                  {isRunning ? (
+                    <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
+                  ) : (
+                    <Play className="h-4 w-4" strokeWidth={2} />
+                  )}
+                  {isRunning ? "Running" : "Run"}
                 </button>
               </div>
             </div>
@@ -2435,9 +2460,39 @@ function formatJsonPath(path: Array<string | number>): string {
   }, "");
 }
 
-async function copyText(value: string, label: string) {
-  await navigator.clipboard.writeText(value);
-  toast.success(label);
+async function copyToClipboard(text: string) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  try {
+    return document.execCommand("copy");
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
+async function copyText(value: string, label = "Copied") {
+  try {
+    const copied = await copyToClipboard(value);
+    if (copied) {
+      toast.success("Copied");
+      return;
+    }
+  } catch {
+    // Fall through to the friendly toast below.
+  }
+
+  toast.error("Copy failed. Use HTTPS or localhost.");
 }
 
 function xpathLiteral(value: string): string {
