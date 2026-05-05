@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Check, Copy, ChevronDown, ChevronRight, ChevronUp, AlertCircle, Terminal, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil, Moon, Sun } from "lucide-react";
+import { Check, Copy, ChevronDown, ChevronRight, ChevronUp, AlertCircle, Terminal, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil, Moon, Sun, Play } from "lucide-react";
 import JSZip from "jszip";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -1704,7 +1704,7 @@ export default function Index() {
                     <div key={collection.id} className="group border-l-2 border-transparent">
                       <div
                         className={cn(
-                          "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] font-mono transition-colors",
+                          "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] font-mono transition-colors",
                           isActiveCollection
                             ? "bg-primary/[0.07] text-foreground"
                             : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground"
@@ -1779,7 +1779,7 @@ export default function Index() {
                                   onMouseEnter={() => setHoveredSnippetId(b.id)}
                                   onMouseLeave={() => setHoveredSnippetId(null)}
                                   className={cn(
-                                    "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] font-mono transition-colors",
+                                    "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] font-mono transition-colors",
                                     isActiveWorkspace
                                       ? "bg-primary/[0.07] text-foreground"
                                       : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground",
@@ -2173,7 +2173,7 @@ export default function Index() {
                     key={tab}
                     onClick={() => setActivePanelTab(tab)}
                     className={cn(
-                      "border-r border-border px-3 py-2 text-[11px] font-mono transition-colors",
+                      "border-r border-border px-3 py-2 text-[12px] font-mono transition-colors",
                       activePanelTab === tab
                         ? "border-t border-t-primary bg-background text-foreground"
                         : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground"
@@ -2196,6 +2196,7 @@ export default function Index() {
                   )}
                   title={activeWorkspaceId ? `Run ${activeWorkspaceDisplayName}` : "Select a workspace to run"}
                 >
+                  <Play className="h-4 w-4" strokeWidth={2} />
                   Run
                 </button>
               </div>
@@ -2811,7 +2812,7 @@ function MetaRow({ tab, blocks, names, actions }: { tab: OutputTab; blocks: Snip
   if (tab.kind === "merged") {
     const valid = blocks.filter((b) => b.raw.trim() && !b.parsed.error).length;
     return (
-      <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-1.5 font-mono text-[11px]">
+      <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-1.5 font-mono text-[12px]">
         <span className="font-semibold text-primary">MULTI</span>
         <span className="text-syntax-comment">|</span>
         <span className="text-foreground">{valid} snippet{valid === 1 ? "" : "s"}</span>
@@ -2823,7 +2824,7 @@ function MetaRow({ tab, blocks, names, actions }: { tab: OutputTab; blocks: Snip
   }
   if (tab.kind === "parser") {
     return (
-      <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-1.5 font-mono text-[11px]">
+      <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-1.5 font-mono text-[12px]">
         <span className="font-semibold text-syntax-function">PARSER</span>
         <span className="text-syntax-comment">|</span>
         <span className="text-muted-foreground">Auto-generated</span>
@@ -2835,7 +2836,7 @@ function MetaRow({ tab, blocks, names, actions }: { tab: OutputTab; blocks: Snip
   const parsed = blocks[idx]?.parsed;
   if (!parsed || parsed.error) {
     return (
-      <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-1.5 font-mono text-[11px]">
+      <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-1.5 font-mono text-[12px]">
         <span className="font-semibold text-destructive">REQUEST</span>
         <span className="text-syntax-comment">|</span>
         <span className="text-primary">{names[idx] ?? tab.filename}</span>
@@ -2854,7 +2855,7 @@ function MetaRow({ tab, blocks, names, actions }: { tab: OutputTab; blocks: Snip
     OPTIONS: "text-muted-foreground",
   };
   return (
-    <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-1.5 font-mono text-[11px]">
+    <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-1.5 font-mono text-[12px]">
       <span className={cn("font-semibold", methodColor[m] || "text-foreground")}>{m}</span>
       <span className="text-syntax-comment">|</span>
       <span className="text-foreground">{parsed.domain}</span>
