@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Check, Copy, ChevronDown, ChevronRight, ChevronUp, AlertCircle, Terminal, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil, Moon, Sun } from "lucide-react";
 import JSZip from "jszip";
@@ -519,11 +519,6 @@ export default function Index() {
     : activeWorkspaceArtifact;
   const activeResponseJson = activeResponseArtifact?.responseJson;
   const activeResponseMeta = readWorkspaceMeta(activeResponseArtifact?.metaJson ?? null);
-  const activePanelFilename = activePanelTab === "response"
-    ? activeResponseTab?.label ?? (activeWorkspaceFile === "meta.json" ? "meta.json" : defaultResponseFileName(activeWorkspaceName || "request"))
-    : activePanelTab === "logs"
-      ? "logs.txt"
-      : panelCodeFilename;
   const snippetSyncHashes = useMemo(() => Object.fromEntries(
     snippets.map((snippet, index) => [
       snippet.id,
@@ -747,17 +742,12 @@ export default function Index() {
     setActivePanelTab("logs");
   };
 
-  const toggleWorkspace = (workspaceId: string) => {
-    const tabId = `req-${workspaceId}`;
+  const toggleWorkspace = (workspaceId: string, collectionId = activeCollection.id) => {
+    if (activeCollection.id !== collectionId) {
+      setActiveCollectionId(collectionId);
+    }
     setActiveWorkspaceId(workspaceId);
     setActiveWorkspaceFile("request.py");
-    setClosedTabIds((prev) => {
-      if (!prev.has(tabId)) return prev;
-      const next = new Set(prev);
-      next.delete(tabId);
-      return next;
-    });
-    setActiveTabId(tabId);
     setExpandedWorkspaceIds((prev) => {
       const next = new Set(prev);
       if (next.has(workspaceId)) next.delete(workspaceId);
@@ -1167,7 +1157,7 @@ export default function Index() {
     if (activePanelTab === "logs") {
       return "logs.txt";
     }
-    return activeCodeFilename;
+    return panelCodeFilename;
   };
 
   const getActivePanelContent = () => {
@@ -1207,6 +1197,35 @@ export default function Index() {
     if (!content) return;
     downloadFile(getActivePanelFilename(), content);
   };
+
+  const activePanelContent = getActivePanelContent();
+  const hasActivePanelContent = activePanelContent.length > 0;
+  const currentFileActions = (
+    <div className="ml-auto flex items-center gap-1">
+      <button
+        onClick={handleCopyActive}
+        disabled={!hasActivePanelContent}
+        className="flex h-5 w-5 items-center justify-center rounded-sm border border-border bg-transparent text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+        title="Copy current file"
+        aria-label="Copy current file"
+      >
+        {copiedAll ? (
+          <Check className="h-3 w-3 animate-check-in text-success" strokeWidth={2.5} />
+        ) : (
+          <Copy className="h-3 w-3" strokeWidth={2} />
+        )}
+      </button>
+      <button
+        onClick={handleDownloadActive}
+        disabled={!hasActivePanelContent}
+        className="flex h-5 w-5 items-center justify-center rounded-sm border border-border bg-transparent text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+        title="Download current file"
+        aria-label="Download current file"
+      >
+        <Download className="h-3 w-3" strokeWidth={2} />
+      </button>
+    </div>
+  );
 
   const handleRunActiveWorkspace = () => {
     if (!activeWorkspaceId) return;
@@ -1562,34 +1581,6 @@ export default function Index() {
           </button>
 
           <button
-            onClick={handleCopyActive}
-            disabled={!activePanelFilename}
-            className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-            title={activePanelFilename ? `Copy ${activePanelFilename}` : "Copy active file"}
-          >
-            {copiedAll ? (
-              <span className="flex items-center gap-1.5 text-success">
-                <Check className="h-3 w-3 animate-check-in" strokeWidth={2.5} /> Copied
-              </span>
-            ) : (
-              <>
-                <Copy className="h-3 w-3" strokeWidth={2} />
-                Copy
-              </>
-            )}
-          </button>
-
-          <button
-            onClick={handleDownloadActive}
-            disabled={!activePanelFilename}
-            className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-            title={activePanelFilename ? `Download ${activePanelFilename}` : "Download active file"}
-          >
-            <Download className="h-3 w-3" strokeWidth={2} />
-            Download
-          </button>
-
-          <button
             onClick={handleDownloadAll}
             disabled={visibleTabs.length === 0}
             className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
@@ -1790,18 +1781,15 @@ export default function Index() {
                         <div className="ml-3 border-l border-border/70 py-1">
                           {collectionBlocks.map((b, i) => {
                             const isActiveWorkspace = isActiveCollection && activeWorkspaceId === b.id;
-                            const isExpanded = expandedWorkspaceIds.has(b.id) || isActiveWorkspace;
+                            const isExpanded = expandedWorkspaceIds.has(b.id);
                             const hasError = !b.raw.trim() || !!b.parsed.error;
                             const method = (b.parsed.method || "GET").toUpperCase();
                             const artifact = collection.workspaceArtifacts[b.id];
                             const files: WorkspaceFile[] = ["request.py", "parser.py", artifact?.responseFileName ?? defaultResponseFileName(collectionNames[i])];
                             return (
                               <div key={b.id}>
-                                <button
-                                  onClick={() => {
-                                    selectCollection(collection.id);
-                                    toggleWorkspace(b.id);
-                                  }}
+                                <div
+                                  onClick={() => toggleWorkspace(b.id, collection.id)}
                                   onMouseEnter={() => setHoveredSnippetId(b.id)}
                                   onMouseLeave={() => setHoveredSnippetId(null)}
                                   className={cn(
@@ -1813,19 +1801,28 @@ export default function Index() {
                                   )}
                                   title={b.parsed.url || "invalid"}
                                 >
-                                  {isExpanded ? (
-                                    <ChevronDown className="h-3 w-3 shrink-0" strokeWidth={2} />
-                                  ) : (
-                                    <ChevronRight className="h-3 w-3 shrink-0" strokeWidth={2} />
-                                  )}
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      toggleWorkspace(b.id, collection.id);
+                                    }}
+                                    className="flex h-3 w-3 shrink-0 items-center justify-center"
+                                    aria-label={isExpanded ? "Collapse request" : "Expand request"}
+                                  >
+                                    {isExpanded ? (
+                                      <ChevronDown className="h-3 w-3 shrink-0" strokeWidth={2} />
+                                    ) : (
+                                      <ChevronRight className="h-3 w-3 shrink-0" strokeWidth={2} />
+                                    )}
+                                  </button>
                                   <span className={cn(
                                     "shrink-0 text-[9px] font-semibold uppercase tracking-wider",
                                     hasError ? "text-destructive" : "text-syntax-function"
                                   )}>
                                     {method.slice(0, 4)}
                                   </span>
-                                  <span className="truncate">{collectionNames[i]}</span>
-                                </button>
+                                  <span className="min-w-0 flex-1 truncate text-left">{collectionNames[i]}</span>
+                                </div>
 
                                 {isExpanded && (
                                   <div className="ml-3 border-l border-border/70 py-1">
@@ -2264,7 +2261,7 @@ export default function Index() {
 
                 {activeTab && (
                   <div className="flex min-h-0 flex-1 flex-col">
-                    <MetaRow tab={activeTab} blocks={blocks} names={effectiveNames} />
+                    <MetaRow tab={activeTab} blocks={blocks} names={effectiveNames} actions={currentFileActions} />
 
                     <div className="relative min-h-0 flex-1 overflow-auto">
                       {activeWorkspaceFile !== "parser.py" && activeTab.hasError && activeTab.kind === "request" ? (
@@ -2333,6 +2330,7 @@ export default function Index() {
                   <span className="text-syntax-comment">|</span>
                   <span className="font-semibold text-primary">Size</span>
                   <span className="text-muted-foreground">{activeResponseMeta?.size ?? "-"}</span>
+                  {currentFileActions}
                 </div>
                 <div className="relative min-h-0 flex-1 overflow-auto">
                   {activeResponseJson ? (
@@ -2805,7 +2803,7 @@ function AutoTextarea({
   );
 }
 
-function MetaRow({ tab, blocks, names }: { tab: OutputTab; blocks: SnippetBlock[]; names: string[] }) {
+function MetaRow({ tab, blocks, names, actions }: { tab: OutputTab; blocks: SnippetBlock[]; names: string[]; actions?: ReactNode }) {
   if (tab.kind === "merged") {
     const valid = blocks.filter((b) => b.raw.trim() && !b.parsed.error).length;
     return (
@@ -2815,6 +2813,7 @@ function MetaRow({ tab, blocks, names }: { tab: OutputTab; blocks: SnippetBlock[
         <span className="text-foreground">{valid} snippet{valid === 1 ? "" : "s"}</span>
         <span className="text-syntax-comment">|</span>
         <span className="text-muted-foreground">Combined Script</span>
+        {actions}
       </div>
     );
   }
@@ -2824,12 +2823,22 @@ function MetaRow({ tab, blocks, names }: { tab: OutputTab; blocks: SnippetBlock[
         <span className="font-semibold text-syntax-function">PARSER</span>
         <span className="text-syntax-comment">|</span>
         <span className="text-muted-foreground">Auto-generated</span>
+        {actions}
       </div>
     );
   }
   const idx = tab.reqIdx ?? 0;
   const parsed = blocks[idx]?.parsed;
-  if (!parsed || parsed.error) return null;
+  if (!parsed || parsed.error) {
+    return (
+      <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-1.5 font-mono text-[11px]">
+        <span className="font-semibold text-destructive">REQUEST</span>
+        <span className="text-syntax-comment">|</span>
+        <span className="text-primary">{names[idx] ?? tab.filename}</span>
+        {actions}
+      </div>
+    );
+  }
   const m = parsed.method.toUpperCase();
   const methodColor: Record<string, string> = {
     GET: "text-syntax-function",
@@ -2849,6 +2858,7 @@ function MetaRow({ tab, blocks, names }: { tab: OutputTab; blocks: SnippetBlock[
       <span className="text-muted-foreground">{parsed.dataType}</span>
       <span className="text-syntax-comment">|</span>
       <span className="text-primary">{names[idx]}</span>
+      {actions}
     </div>
   );
 }
