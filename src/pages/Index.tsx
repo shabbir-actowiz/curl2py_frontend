@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Check, Copy, ChevronDown, ChevronRight, ChevronUp, AlertCircle, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil, Moon, Sun, Play, Loader2 } from "lucide-react";
 import JSZip from "jszip";
 import { toast } from "sonner";
@@ -310,6 +310,11 @@ export default function Index() {
   const [activeWorkspaceFile, setActiveWorkspaceFile] = useState<WorkspaceFile>("request.py");
   const [activeInputTab, setActiveInputTab] = useState<InputPanelTab>("input");
   const [activePanelTab, setActivePanelTab] = useState<WorkspacePanelTab>("code");
+  const [parserPageTab, setParserPageTab] = useState<"json" | "jmespath" | "parser">("json");
+  const [selectedParserPath, setSelectedParserPath] = useState<string | null>(null);
+  const [manualParserJsonByWorkspace, setManualParserJsonByWorkspace] = useState<Record<string, string>>({});
+  const [isEditingParserJson, setIsEditingParserJson] = useState(false);
+  const [parserJsonDraft, setParserJsonDraft] = useState("");
   const [theme, setTheme] = useState<ThemeMode>(() => {
     try {
       return window.localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark";
@@ -327,6 +332,10 @@ export default function Index() {
   const [hasLoadedRemoteWorkspace, setHasLoadedRemoteWorkspace] = useState(false);
 
   const { user, accessToken, logout } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const parserRouteParams = useParams<{ collectionId?: string; snippetId?: string }>();
+  const isParserRoute = location.pathname.startsWith("/parser");
 
   const outputRef = useRef<HTMLDivElement>(null);
   const snippetRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -533,6 +542,43 @@ export default function Index() {
   );
   const activeResponseIsJson = activeResponseMode?.kind === "json";
   const activeResponseMeta = readWorkspaceMeta(activeResponseArtifact?.metaJson ?? null);
+  const parserCollection = parserRouteParams.collectionId
+    ? collections[parserRouteParams.collectionId] ?? activeCollection
+    : activeCollection;
+  const parserSnippets = parserCollection.snippets;
+  const parserNames = parserCollection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(parserSnippets);
+  const parserWorkspaceId = parserRouteParams.snippetId || activeResponseTab?.workspaceId || activeWorkspaceId;
+  const parserWorkspaceIndex = parserSnippets.findIndex((snippet) => snippet.id === parserWorkspaceId);
+  const parserWorkspaceName = parserWorkspaceIndex >= 0
+    ? parserNames[parserWorkspaceIndex]
+    : activeResponseWorkspaceName || activeWorkspaceDisplayName || "request";
+  const parserArtifact = parserWorkspaceId ? parserCollection.workspaceArtifacts[parserWorkspaceId] : undefined;
+  const parserResponseJson = (parserWorkspaceId ? manualParserJsonByWorkspace[parserWorkspaceId] : undefined) ?? parserArtifact?.responseJson ?? null;
+  const parserResponseMode = useMemo(
+    () => parserResponseJson ? detectResponseMode(parserResponseJson) : null,
+    [parserResponseJson]
+  );
+  const parserResponseIsJson = parserResponseMode?.kind === "json";
+  const parserCode = parserArtifact?.parserCode ?? buildParserStub(parserWorkspaceName);
+  const parserSelections = parserArtifact?.parserSelections ?? [];
+
+  useEffect(() => setSelectedParserPath(null), [parserResponseJson, parserPageTab]);
+
+  useEffect(() => {
+    setParserJsonDraft(parserResponseJson ?? "");
+    setIsEditingParserJson(!parserResponseJson && isParserRoute);
+  }, [isParserRoute, parserResponseJson, parserWorkspaceId]);
+
+  useEffect(() => {
+    if (!isParserRoute) return;
+    if (parserRouteParams.collectionId && collections[parserRouteParams.collectionId]) {
+      setActiveCollectionId(parserRouteParams.collectionId);
+    }
+    if (parserWorkspaceId) {
+      setActiveWorkspaceId(parserWorkspaceId);
+      setActiveWorkspaceFile("parser.py");
+    }
+  }, [isParserRoute, parserRouteParams.collectionId, parserWorkspaceId, collections]);
   const snippetSyncHashes = useMemo(() => Object.fromEntries(
     snippets.map((snippet, index) => [
       snippet.id,
@@ -739,7 +785,7 @@ export default function Index() {
 
     if (file === "parser.py") {
       const tabId = `req-${workspaceId}`;
-      setActivePanelTab("parser");
+      setActivePanelTab("code");
       setClosedTabIds((prev) => {
         if (!prev.has(tabId)) return prev;
         const next = new Set(prev);
@@ -1264,7 +1310,7 @@ export default function Index() {
   );
 
   const addPathToParser = (path: string) => {
-    const workspaceId = activeResponseTab?.workspaceId || activeWorkspaceId;
+    const workspaceId = isParserRoute ? parserWorkspaceId : activeResponseTab?.workspaceId || activeWorkspaceId;
     if (!workspaceId) return;
     const workspaceIndex = snippets.findIndex((snippet) => snippet.id === workspaceId);
     if (workspaceIndex === -1) return;
@@ -1290,7 +1336,7 @@ export default function Index() {
       const outputKey = uniqueOutputKey(sanitizeOutputKey(lastKey), existingSelections);
       const parserSelections = [...existingSelections, { path, outputKey }];
       const parserCode = generateParserCode(workspaceName, parserSelections);
-      toast.success("Added to parser");
+      toast.success("Path added");
       return {
         ...prev,
         [workspaceId]: {
@@ -1306,32 +1352,105 @@ export default function Index() {
     setActiveWorkspaceFile("parser.py");
   };
 
-  const optimizeActiveParser = () => {
-    if (!activeWorkspaceId) return;
-    const workspaceIndex = snippets.findIndex((snippet) => snippet.id === activeWorkspaceId);
+  const updateParserSelectionsForWorkspace = (
+    workspaceId: string,
+    updater: ParserSelection[] | ((prev: ParserSelection[]) => ParserSelection[]),
+  ) => {
+    const workspaceIndex = snippets.findIndex((snippet) => snippet.id === workspaceId);
     if (workspaceIndex === -1) return;
     const workspaceName = effectiveNames[workspaceIndex] ?? snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
 
     setWorkspaceArtifacts((prev) => {
-      const artifact = prev[activeWorkspaceId];
+      const artifact = prev[workspaceId];
       if (!artifact) return prev;
-      const selections = artifact.parserSelections ?? [];
+      const nextSelections = typeof updater === "function"
+        ? (updater as (prev: ParserSelection[]) => ParserSelection[])(artifact.parserSelections ?? [])
+        : updater;
+      const parserCode = nextSelections.length > 0
+        ? generateParserCode(workspaceName, nextSelections)
+        : buildParserStub(workspaceName);
+      return {
+        ...prev,
+        [workspaceId]: {
+          ...artifact,
+          parserSelections: nextSelections,
+          parserCode,
+          parserGenerated: true,
+        },
+      };
+    });
+  };
+
+  const updateParserSelectionRow = (index: number, patch: Partial<ParserSelection>) => {
+    if (!parserWorkspaceId) return;
+    updateParserSelectionsForWorkspace(parserWorkspaceId, (prev) => prev.map((selection, rowIndex) => (
+      rowIndex === index ? { ...selection, ...patch } : selection
+    )));
+  };
+
+  const addManualParserPath = () => {
+    if (!parserWorkspaceId) return;
+    updateParserSelectionsForWorkspace(parserWorkspaceId, (prev) => [
+      ...prev,
+      {
+        path: "response.",
+        outputKey: uniqueOutputKey("value", prev),
+      },
+    ]);
+  };
+
+  const deleteParserSelectionRow = (index: number) => {
+    if (!parserWorkspaceId) return;
+    updateParserSelectionsForWorkspace(parserWorkspaceId, (prev) => prev.filter((_, rowIndex) => rowIndex !== index));
+  };
+
+  const saveParserJson = () => {
+    if (!parserWorkspaceId) return;
+    try {
+      const parsed = JSON.parse(parserJsonDraft);
+      setManualParserJsonByWorkspace((prev) => ({
+        ...prev,
+        [parserWorkspaceId]: JSON.stringify(parsed, null, 2),
+      }));
+      setParserJsonDraft(JSON.stringify(parsed, null, 2));
+      setIsEditingParserJson(false);
+      toast.success("JSON saved");
+    } catch {
+      toast.error("Invalid JSON. Fix the syntax and try again.");
+    }
+  };
+
+  const optimizeParserForWorkspace = (workspaceId: string) => {
+    if (!workspaceId) return;
+    const workspaceIndex = snippets.findIndex((snippet) => snippet.id === workspaceId);
+    if (workspaceIndex === -1) return;
+    const workspaceName = effectiveNames[workspaceIndex] ?? snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
+
+    setWorkspaceArtifacts((prev) => {
+      const artifact = prev[workspaceId];
+      if (!artifact) return prev;
+      const selections = optimizeParserSelections(artifact.parserSelections ?? []);
       const isGeneratedParser = artifact.parserGenerated || artifact.parserCode === buildParserStub(workspaceName);
       if (!isGeneratedParser && !window.confirm("Replace custom parser.py with generated parser code?")) {
         return prev;
       }
 
-      const parserCode = generateParserCode(workspaceName, selections);
+      const parserCode = selections.length > 0 ? generateParserCode(workspaceName, selections) : buildParserStub(workspaceName);
       return {
         ...prev,
-        [activeWorkspaceId]: {
+        [workspaceId]: {
           ...artifact,
+          parserSelections: selections,
           parserCode,
           parserGenerated: true,
         },
       };
     });
     toast.success("Parser optimized");
+  };
+
+  const optimizeActiveParser = () => {
+    optimizeParserForWorkspace(activeWorkspaceId);
   };
 
   const handleRunActiveWorkspace = async () => {
@@ -1347,6 +1466,24 @@ export default function Index() {
     } finally {
       setIsRunning(false);
     }
+  };
+
+  const openParserPage = () => {
+    const workspaceId = activeResponseTab?.workspaceId || activeWorkspaceId;
+    if (!workspaceId) {
+      navigate("/parser");
+      return;
+    }
+
+    setActiveWorkspaceId(workspaceId);
+    setActiveWorkspaceFile("parser.py");
+    navigate(`/parser/${encodeURIComponent(activeCollection.id)}/${encodeURIComponent(workspaceId)}`, {
+      state: {
+        collectionId: activeCollection.id,
+        snippetId: workspaceId,
+        responseFile: workspaceArtifacts[workspaceId]?.responseFileName,
+      },
+    });
   };
 
   const handleDownloadAll = async () => {
@@ -1633,6 +1770,200 @@ export default function Index() {
 
     return () => window.clearTimeout(timer);
   }, [syncKey, snippets, user, accessToken]);
+
+  if (isParserRoute) {
+    const canUseParser = !!parserWorkspaceId;
+    const hasResponse = !!parserResponseJson;
+    const canShowJsonParser = hasResponse && parserResponseIsJson;
+    const parserJsonEditorVisible = parserPageTab === "json" && isEditingParserJson;
+
+    return (
+      <div className="flex h-screen flex-col bg-background text-foreground">
+        <header className="flex h-12 items-center justify-between border-b border-border px-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <button
+              onClick={() => navigate("/")}
+              className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
+            >
+              Back to workspace
+            </button>
+            <div className="min-w-0 font-mono text-[12px]">
+              <span className="font-semibold text-syntax-function">PARSER</span>
+              <span className="px-2 text-syntax-comment">|</span>
+              <span className="truncate text-muted-foreground">{parserWorkspaceName}</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                if (!selectedParserPath) return;
+                addPathToParser(selectedParserPath);
+                setSelectedParserPath(null);
+              }}
+              disabled={!selectedParserPath}
+              className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+              title="Select a JSON path, then use Add selected path"
+            >
+              Add selected path
+            </button>
+            <button
+              onClick={() => parserWorkspaceId && optimizeParserForWorkspace(parserWorkspaceId)}
+              disabled={!canUseParser}
+              className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+              title="Rebuild parser from selected JSON paths"
+            >
+              Optimize Parser
+            </button>
+            <button
+              onClick={() => void copyText(parserCode, "Copied parser")}
+              disabled={!canUseParser}
+              className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Copy className="h-3 w-3" strokeWidth={2} />
+              Copy Parser
+            </button>
+            <button
+              onClick={() => downloadFile("parser.py", parserCode)}
+              disabled={!canUseParser}
+              className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Download className="h-3 w-3" strokeWidth={2} />
+              Download Parser
+            </button>
+          </div>
+        </header>
+
+        <main className="flex min-h-0 flex-1 flex-col">
+          <div className="flex items-center justify-between border-b border-border bg-surface">
+            <div className="flex min-w-0 flex-1 items-center gap-0 overflow-x-auto scrollbar-thin">
+              {(["json", "jmespath", "parser"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setParserPageTab(tab)}
+                  className={cn(
+                    "border-r border-border px-3 py-2 text-[12px] font-mono transition-colors",
+                    parserPageTab === tab
+                      ? "border-t border-t-primary bg-background text-foreground"
+                      : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground"
+                  )}
+                >
+                  {tab === "json" ? "JSON" : tab === "jmespath" ? "JMESPath" : "Parser"}
+                </button>
+              ))}
+            </div>
+            {parserPageTab === "json" && (
+              <div className="flex items-center gap-2 pr-3">
+                {parserJsonEditorVisible ? (
+                  <button
+                    onClick={saveParserJson}
+                    disabled={!canUseParser}
+                    className="flex items-center gap-1.5 rounded-sm border border-primary/60 bg-primary/10 px-2.5 py-1 text-[11px] text-primary transition-colors hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Save JSON
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setIsEditingParserJson(true)}
+                    disabled={!canUseParser}
+                    className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Edit JSON
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {parserPageTab === "json" ? (
+            <div className="relative min-h-0 flex-1 overflow-auto">
+              {parserJsonEditorVisible ? (
+                <textarea
+                  value={parserJsonDraft}
+                  onChange={(event) => setParserJsonDraft(event.target.value)}
+                  onPaste={() => setIsEditingParserJson(true)}
+                  spellCheck={false}
+                  placeholder={"{\n  \"response\": {}\n}"}
+                  className="block h-full min-h-full w-full resize-none bg-background px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground caret-primary outline-none placeholder:text-muted-foreground/50"
+                />
+              ) : !hasResponse ? (
+                <textarea
+                  value={parserJsonDraft}
+                  onChange={(event) => {
+                    setParserJsonDraft(event.target.value);
+                    setIsEditingParserJson(true);
+                  }}
+                  onPaste={() => setIsEditingParserJson(true)}
+                  spellCheck={false}
+                  placeholder={"{\n  \"response\": {}\n}"}
+                  className="block h-full min-h-full w-full resize-none bg-background px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground caret-primary outline-none placeholder:text-muted-foreground/50"
+                />
+              ) : canShowJsonParser ? (
+                <ResponseBodyViewer source={parserResponseJson} onAddToParser={addPathToParser} onSelectedPathChange={setSelectedParserPath} />
+              ) : (
+                <div className="px-4 py-3 text-[11px] text-muted-foreground">JSON parser builder works only for JSON responses.</div>
+              )}
+            </div>
+          ) : parserPageTab === "jmespath" ? (
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className="flex items-center justify-between border-b border-border bg-background px-4 py-1.5">
+                <span className="font-mono text-[11px] text-muted-foreground">{parserSelections.length} selected path{parserSelections.length === 1 ? "" : "s"}</span>
+                <button
+                  onClick={addManualParserPath}
+                  disabled={!canUseParser}
+                  className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Plus className="h-3 w-3" strokeWidth={2} />
+                  Add Path
+                </button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
+                {parserSelections.length === 0 ? (
+                  <div className="text-[11px] text-muted-foreground">No paths selected</div>
+                ) : (
+                  <div className="space-y-2">
+                    {parserSelections.map((selection, index) => {
+                      const warning = getParserPathWarning(selection.path);
+                      return (
+                        <div key={`${selection.path}-${index}`} className="grid gap-1 md:grid-cols-[minmax(0,1fr)_220px_28px] md:items-start">
+                          <div className="min-w-0">
+                            <input
+                              value={selection.path}
+                              onChange={(event) => updateParserSelectionRow(index, { path: event.target.value })}
+                              className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
+                            />
+                            {warning && <div className="mt-1 text-[10px] text-destructive">{warning}</div>}
+                          </div>
+                          <input
+                            value={selection.outputKey}
+                            onChange={(event) => updateParserSelectionRow(index, { outputKey: event.target.value })}
+                            className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
+                            placeholder="output field"
+                          />
+                          <button
+                            onClick={() => deleteParserSelectionRow(index)}
+                            className="flex h-8 w-8 items-center justify-center rounded-sm border border-border bg-transparent text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
+                            aria-label={`Delete ${selection.path}`}
+                          >
+                            <Trash2 className="h-3 w-3" strokeWidth={2} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="relative min-h-0 flex-1 overflow-auto">
+              <pre className="px-4 py-3">
+                <HighlightedPython code={parserCode} />
+              </pre>
+            </div>
+          )}
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
@@ -2285,7 +2616,7 @@ export default function Index() {
 
             <div className="flex items-center justify-between border-b border-border bg-surface">
               <div className="flex min-w-0 flex-1 items-center gap-0 overflow-x-auto scrollbar-thin">
-                {(["code", "response", "parser"] as WorkspacePanelTab[]).map((tab) => (
+                {(["code", "response"] as WorkspacePanelTab[]).map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setActivePanelTab(tab)}
@@ -2301,16 +2632,15 @@ export default function Index() {
                 ))}
               </div>
               <div className="flex items-center gap-2 pr-3">
-                {activePanelTab === "parser" && (
-                  <button
-                    onClick={optimizeActiveParser}
-                    disabled={!activeWorkspaceId}
-                    className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                    title="Rebuild parser from selected JSON paths"
-                  >
-                    Optimize Parser
-                  </button>
-                )}
+                <button
+                  onClick={openParserPage}
+                  disabled={!activeWorkspaceId}
+                  className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                  title={activeWorkspaceId ? `Open parser for ${activeWorkspaceDisplayName}` : "Select a workspace to parse"}
+                >
+                  <FileCode className="h-4 w-4" strokeWidth={2} />
+                  Parser
+                </button>
                 <button
                   onClick={() => void handleRunActiveWorkspace()}
                   disabled={!activeWorkspaceId || isRunning}
@@ -2615,6 +2945,40 @@ function uniqueOutputKey(baseKey: string, selections: ParserSelection[]) {
   return `${baseKey}_${index}`;
 }
 
+function getParserPathWarning(path: string) {
+  const trimmed = path.trim();
+  if (!trimmed) return "Path is required";
+  if (/[.[\]]$/.test(trimmed)) return "Path is incomplete";
+  const parts = parseJsonPath(trimmed);
+  if (parts.length === 0) return "Path is invalid";
+  if (parts[0] !== "response") return "Path should start with response";
+  return "";
+}
+
+function getOutputKeyFromPath(path: string, fallback = "value") {
+  const parts = normalizeSelectionParts(path);
+  const lastKey = [...parts].reverse().find((part): part is string => typeof part === "string");
+  return sanitizeOutputKey(lastKey || fallback);
+}
+
+function optimizeParserSelections(selections: ParserSelection[]) {
+  const usedPaths = new Set<string>();
+  const optimized: ParserSelection[] = [];
+
+  selections.forEach((selection) => {
+    const path = selection.path.trim();
+    if (getParserPathWarning(path) || usedPaths.has(path)) return;
+    usedPaths.add(path);
+    const baseKey = sanitizeOutputKey(selection.outputKey || getOutputKeyFromPath(path));
+    optimized.push({
+      path,
+      outputKey: uniqueOutputKey(baseKey, optimized),
+    });
+  });
+
+  return optimized;
+}
+
 function sanitizePythonName(value: string) {
   const name = sanitizeOutputKey(value);
   return /^[0-9]/.test(name) ? `item_${name}` : name;
@@ -2736,7 +3100,17 @@ function emitArrayGroup(lines: string[], group: ParserArrayGroup, base: string, 
 
 function generateParserCode(workspaceName: string, selections: ParserSelection[]) {
   const functionName = `${sanitizePythonName(workspaceName || "request")}_parser`;
-  const deduped = selections.filter((selection, index) => selections.findIndex((item) => item.path === selection.path) === index);
+  const usedPaths = new Set<string>();
+  const deduped: ParserSelection[] = [];
+  selections.forEach((selection) => {
+    const path = selection.path.trim();
+    if (getParserPathWarning(path) || usedPaths.has(path)) return;
+    usedPaths.add(path);
+    deduped.push({
+      path,
+      outputKey: uniqueOutputKey(sanitizeOutputKey(selection.outputKey || getOutputKeyFromPath(path)), deduped),
+    });
+  });
   const rootFields: ParserField[] = [];
   const groups: ParserArrayGroup[] = [];
 
@@ -2894,27 +3268,49 @@ function getCssSelector(element: Element): string {
   return parts.join(" > ");
 }
 
-function ResponseBodyViewer({ source, onAddToParser }: { source: string; onAddToParser?: (path: string) => void }) {
+function ResponseBodyViewer({
+  source,
+  onAddToParser,
+  onSelectedPathChange,
+}: {
+  source: string;
+  onAddToParser?: (path: string) => void;
+  onSelectedPathChange?: (path: string | null) => void;
+}) {
   const mode = useMemo(() => detectResponseMode(source), [source]);
 
   if (mode.kind === "json") {
-    return <JsonResponseViewer value={mode.value} onAddToParser={onAddToParser} />;
+    return <JsonResponseViewer value={mode.value} onAddToParser={onAddToParser} onSelectedPathChange={onSelectedPathChange} />;
   }
 
   return <HtmlResponseViewer html={mode.value} />;
 }
 
-function JsonResponseViewer({ value, onAddToParser }: { value: unknown; onAddToParser?: (path: string) => void }) {
+function JsonResponseViewer({
+  value,
+  onAddToParser,
+  onSelectedPathChange,
+}: {
+  value: unknown;
+  onAddToParser?: (path: string) => void;
+  onSelectedPathChange?: (path: string | null) => void;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<{ path: string; value: unknown; x: number; y: number } | null>(null);
-  useEffect(() => setSelected(null), [value]);
+  useEffect(() => {
+    setSelected(null);
+    onSelectedPathChange?.(null);
+  }, [value, onSelectedPathChange]);
 
   return (
     <div
       ref={containerRef}
       className="relative px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground"
       onClick={(e) => {
-        if (e.target === e.currentTarget) setSelected(null);
+        if (e.target === e.currentTarget) {
+          setSelected(null);
+          onSelectedPathChange?.(null);
+        }
       }}
     >
       {selected && (
@@ -2940,10 +3336,11 @@ function JsonResponseViewer({ value, onAddToParser }: { value: unknown; onAddToP
               onClick={() => {
                 onAddToParser(selected.path);
                 setSelected(null);
+                onSelectedPathChange?.(null);
               }}
               className="text-primary hover:text-foreground"
             >
-              Add to Parser
+              Add selected path
             </button>
           )}
         </div>
@@ -2954,12 +3351,14 @@ function JsonResponseViewer({ value, onAddToParser }: { value: unknown; onAddToP
         name="response"
         onSelect={(path, nodeValue, event) => {
           const rect = containerRef.current?.getBoundingClientRect();
+          const nextPath = formatJsonPath(path);
           setSelected({
-            path: formatJsonPath(path),
+            path: nextPath,
             value: nodeValue,
             x: rect ? event.clientX - rect.left : 12,
             y: rect ? event.clientY - rect.top : 12,
           });
+          onSelectedPathChange?.(nextPath);
         }}
       />
     </div>
@@ -2992,16 +3391,28 @@ function JsonTreeNode({
             ? "text-syntax-function"
             : "text-syntax-keyword";
     return (
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          onSelect(path, value, e);
-        }}
-        className="block text-left hover:text-foreground"
-      >
-        {displayName && <span className="text-syntax-function">"{displayName}": </span>}
-        <span className={valueClass}>{typeof value === "string" ? JSON.stringify(value) : String(value)}</span>
-      </button>
+      <span className="block text-left">
+        {displayName && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect(path, value, e);
+            }}
+            className="text-syntax-function hover:text-foreground"
+          >
+            "{displayName}": 
+          </button>
+        )}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect(path, value, e);
+          }}
+          className={cn(valueClass, "hover:text-foreground")}
+        >
+          {typeof value === "string" ? JSON.stringify(value) : String(value)}
+        </button>
+      </span>
     );
   }
 
