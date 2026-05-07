@@ -567,6 +567,10 @@ export default function Index() {
   const parserSelections = activeParserRequestKey
     ? parserSelectionsByRequest[activeParserRequestKey] ?? parserArtifact?.parserSelections ?? []
     : [];
+  const addedParserPaths = useMemo(
+    () => new Set(parserSelections.map((selection) => selection.path)),
+    [parserSelections]
+  );
   const parserCode = parserSelections.length > 0
     ? generateParserCode(parserWorkspaceName, parserSelections)
     : parserArtifact?.parserCode ?? buildParserStub(parserWorkspaceName);
@@ -579,7 +583,7 @@ export default function Index() {
 
   useEffect(() => {
     handleParserPathSelect(null);
-  }, [handleParserPathSelect, parserResponseJson, parserPageTab]);
+  }, [handleParserPathSelect, parserResponseJson, parserWorkspaceId]);
 
   useEffect(() => {
     if (import.meta.env.DEV) console.debug("selectedPath", selectedParserPath);
@@ -1923,40 +1927,63 @@ export default function Index() {
                 {selectedParserPath} {"->"} {selectedParserOutputKey || "value"}
               </span>
             )}
-            <button
-              onClick={() => {
-                addSelectedPathToParser();
-              }}
-              disabled={!selectedParserPath}
-              className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-              title="Select a JSON path, then use Add selected path"
-            >
-              Add selected path
-            </button>
-            <button
-              onClick={() => parserWorkspaceId && optimizeParserForWorkspace(parserWorkspaceId)}
-              disabled={!canUseParser}
-              className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-              title="Rebuild parser from selected JSON paths"
-            >
-              Optimize Parser
-            </button>
-            <button
-              onClick={() => void copyText(parserCode, "Copied parser")}
-              disabled={!canUseParser}
-              className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <Copy className="h-3 w-3" strokeWidth={2} />
-              Copy Parser
-            </button>
-            <button
-              onClick={() => downloadFile("parser.py", parserCode)}
-              disabled={!canUseParser}
-              className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <Download className="h-3 w-3" strokeWidth={2} />
-              Download Parser
-            </button>
+            {parserPageTab === "json" && (
+              <>
+                <button
+                  onClick={() => void copyText(parserJsonEditorVisible ? parserJsonDraft : parserResponseJson ?? parserJsonDraft, "Copied JSON")}
+                  disabled={!canUseParser || (!parserResponseJson && !parserJsonDraft)}
+                  className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Copy className="h-3 w-3" strokeWidth={2} />
+                  Copy JSON
+                </button>
+                {parserJsonEditorVisible ? (
+                  <button
+                    onClick={saveParserJson}
+                    disabled={!canUseParser}
+                    className="flex items-center gap-1.5 rounded-sm border border-primary/60 bg-primary/10 px-2.5 py-1 text-[11px] text-primary transition-colors hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Save JSON
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setIsEditingParserJson(true)}
+                    disabled={!canUseParser}
+                    className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Edit JSON
+                  </button>
+                )}
+              </>
+            )}
+            {parserPageTab === "parser" && (
+              <>
+                <button
+                  onClick={() => parserWorkspaceId && optimizeParserForWorkspace(parserWorkspaceId)}
+                  disabled={!canUseParser}
+                  className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                  title="Rebuild parser from selected JSON paths"
+                >
+                  Optimize Parser
+                </button>
+                <button
+                  onClick={() => void copyText(parserCode, "Copied parser")}
+                  disabled={!canUseParser}
+                  className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Copy className="h-3 w-3" strokeWidth={2} />
+                  Copy Parser
+                </button>
+                <button
+                  onClick={() => downloadFile("parser.py", parserCode)}
+                  disabled={!canUseParser}
+                  className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Download className="h-3 w-3" strokeWidth={2} />
+                  Download Parser
+                </button>
+              </>
+            )}
           </div>
         </header>
 
@@ -1978,27 +2005,6 @@ export default function Index() {
                 </button>
               ))}
             </div>
-            {parserPageTab === "json" && (
-              <div className="flex items-center gap-2 pr-3">
-                {parserJsonEditorVisible ? (
-                  <button
-                    onClick={saveParserJson}
-                    disabled={!canUseParser}
-                    className="flex items-center gap-1.5 rounded-sm border border-primary/60 bg-primary/10 px-2.5 py-1 text-[11px] text-primary transition-colors hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    Save JSON
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => setIsEditingParserJson(true)}
-                    disabled={!canUseParser}
-                    className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    Edit JSON
-                  </button>
-                )}
-              </div>
-            )}
           </div>
 
           {parserPageTab === "json" ? (
@@ -2025,7 +2031,13 @@ export default function Index() {
                   className="block h-full min-h-full w-full resize-none bg-background px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground caret-primary outline-none placeholder:text-muted-foreground/50"
                 />
               ) : canShowJsonParser ? (
-                <ResponseBodyViewer source={parserResponseJson} onAddToParser={addSelectedPathToParser} onSelectedPathChange={handleParserPathSelect} />
+                <ResponseBodyViewer
+                  source={parserResponseJson}
+                  selectedPath={selectedParserPath}
+                  addedPaths={addedParserPaths}
+                  onAddToParser={addSelectedPathToParser}
+                  onSelectedPathChange={handleParserPathSelect}
+                />
               ) : (
                 <div className="px-4 py-3 text-[11px] text-muted-foreground">JSON parser builder works only for JSON responses.</div>
               )}
@@ -3397,17 +3409,29 @@ function getCssSelector(element: Element): string {
 
 function ResponseBodyViewer({
   source,
+  selectedPath,
+  addedPaths,
   onAddToParser,
   onSelectedPathChange,
 }: {
   source: string;
+  selectedPath?: string | null;
+  addedPaths?: Set<string>;
   onAddToParser?: (path: string) => void;
   onSelectedPathChange?: (path: string | null, value?: unknown) => void;
 }) {
   const mode = useMemo(() => detectResponseMode(source), [source]);
 
   if (mode.kind === "json") {
-    return <JsonResponseViewer value={mode.value} onAddToParser={onAddToParser} onSelectedPathChange={onSelectedPathChange} />;
+    return (
+      <JsonResponseViewer
+        value={mode.value}
+        selectedPath={selectedPath}
+        addedPaths={addedPaths}
+        onAddToParser={onAddToParser}
+        onSelectedPathChange={onSelectedPathChange}
+      />
+    );
   }
 
   return <HtmlResponseViewer html={mode.value} />;
@@ -3415,10 +3439,14 @@ function ResponseBodyViewer({
 
 function JsonResponseViewer({
   value,
+  selectedPath,
+  addedPaths,
   onAddToParser,
   onSelectedPathChange,
 }: {
   value: unknown;
+  selectedPath?: string | null;
+  addedPaths?: Set<string>;
   onAddToParser?: (path: string) => void;
   onSelectedPathChange?: (path: string | null, value?: unknown) => void;
 }) {
@@ -3426,8 +3454,7 @@ function JsonResponseViewer({
   const [selected, setSelected] = useState<{ path: string; value: unknown; x: number; y: number } | null>(null);
   useEffect(() => {
     setSelected(null);
-    onSelectedPathChange?.(null);
-  }, [value, onSelectedPathChange]);
+  }, [value]);
 
   return (
     <div
@@ -3442,19 +3469,19 @@ function JsonResponseViewer({
     >
       {selected && (
         <div
-          className="absolute z-20 flex items-center gap-2 bg-background text-[11px]"
+          className="absolute z-20 flex items-center gap-3 rounded-sm border border-border bg-background px-2 py-1 text-[11px] shadow-sm"
           style={{ left: selected.x, top: selected.y + 18 }}
         >
           <span className="max-w-[40ch] truncate text-muted-foreground">{selected.path || "root"}</span>
           <button
             onClick={() => void copyText(selected.path, "Copied JSON path")}
-            className="text-primary hover:text-foreground"
+            className="rounded-full border border-border px-2 py-0.5 text-primary transition-colors hover:border-border-strong hover:text-foreground"
           >
             Copy Path
           </button>
           <button
             onClick={() => void copyText(stringifyJsonValue(selected.value), "Copied value")}
-            className="text-primary hover:text-foreground"
+            className="rounded-full border border-border px-2 py-0.5 text-primary transition-colors hover:border-border-strong hover:text-foreground"
           >
             Copy value
           </button>
@@ -3463,9 +3490,8 @@ function JsonResponseViewer({
               onClick={() => {
                 onAddToParser(selected.path);
                 setSelected(null);
-                onSelectedPathChange?.(null);
               }}
-              className="text-primary hover:text-foreground"
+              className="rounded-full border border-border px-2 py-0.5 text-primary transition-colors hover:border-border-strong hover:text-foreground"
             >
               Add selected path
             </button>
@@ -3476,6 +3502,8 @@ function JsonResponseViewer({
         value={value}
         path={["response"]}
         name="response"
+        selectedPath={selectedPath}
+        addedPaths={addedPaths}
         onSelect={(path, nodeValue, event) => {
           const rect = containerRef.current?.getBoundingClientRect();
           const nextPath = formatJsonPath(path);
@@ -3496,17 +3524,29 @@ function JsonTreeNode({
   value,
   path,
   name,
+  selectedPath,
+  addedPaths,
   onSelect,
 }: {
   value: unknown;
   path: Array<string | number>;
   name?: string | number;
+  selectedPath?: string | null;
+  addedPaths?: Set<string>;
   onSelect: (path: Array<string | number>, value: unknown, event: React.MouseEvent) => void;
 }) {
   const isArray = Array.isArray(value);
   const isObject = value !== null && typeof value === "object";
   const entries = isObject ? Object.entries(value as Record<string, unknown>) : [];
   const displayName = name !== undefined ? String(name) : "";
+  const pathString = formatJsonPath(path);
+  const isTemporarySelected = selectedPath === pathString;
+  const isPermanentlySelected = addedPaths?.has(pathString) ?? false;
+  const highlightClass = isTemporarySelected
+    ? "rounded-sm bg-emerald-500/10 outline outline-1 outline-emerald-500/45 outline-offset-1"
+    : isPermanentlySelected
+      ? "rounded-sm bg-emerald-500/15 outline outline-1 outline-emerald-500/70 outline-offset-1"
+      : "";
 
   if (!isObject) {
     const valueClass =
@@ -3518,7 +3558,7 @@ function JsonTreeNode({
             ? "text-syntax-function"
             : "text-syntax-keyword";
     return (
-      <span className="block text-left">
+      <span className={cn("block text-left", highlightClass)}>
         {displayName && (
           <button
             onClick={(e) => {
@@ -3544,7 +3584,7 @@ function JsonTreeNode({
   }
 
   return (
-    <div className="text-foreground">
+    <div className={cn("text-foreground", highlightClass)}>
       {displayName && (
         <button
           onClick={(e) => {
@@ -3566,6 +3606,8 @@ function JsonTreeNode({
                 value={child}
                 path={childPath}
                 name={isArray ? Number(key) : key}
+                selectedPath={selectedPath}
+                addedPaths={addedPaths}
                 onSelect={onSelect}
               />
               {index < entries.length - 1 && <span className="text-syntax-punct">,</span>}
