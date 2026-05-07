@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Check, Copy, ChevronDown, ChevronRight, ChevronUp, AlertCircle, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil, Moon, Sun, Play, Loader2 } from "lucide-react";
 import JSZip from "jszip";
@@ -54,6 +54,7 @@ type ThemeMode = "dark" | "light";
 type WorkspaceFile = string;
 
 interface ParserSelection {
+  id?: string;
   path: string;
   outputKey: string;
 }
@@ -312,6 +313,9 @@ export default function Index() {
   const [activePanelTab, setActivePanelTab] = useState<WorkspacePanelTab>("code");
   const [parserPageTab, setParserPageTab] = useState<"json" | "jmespath" | "parser">("json");
   const [selectedParserPath, setSelectedParserPath] = useState<string | null>(null);
+  const [selectedParserValue, setSelectedParserValue] = useState<unknown>(null);
+  const [selectedParserOutputKey, setSelectedParserOutputKey] = useState("");
+  const [parserSelectionsByRequest, setParserSelectionsByRequest] = useState<Record<string, ParserSelection[]>>({});
   const [manualParserJsonByWorkspace, setManualParserJsonByWorkspace] = useState<Record<string, string>>({});
   const [isEditingParserJson, setIsEditingParserJson] = useState(false);
   const [parserJsonDraft, setParserJsonDraft] = useState("");
@@ -559,10 +563,39 @@ export default function Index() {
     [parserResponseJson]
   );
   const parserResponseIsJson = parserResponseMode?.kind === "json";
-  const parserCode = parserArtifact?.parserCode ?? buildParserStub(parserWorkspaceName);
-  const parserSelections = parserArtifact?.parserSelections ?? [];
+  const activeParserRequestKey = parserWorkspaceId ? `${parserCollection.id}:${parserWorkspaceId}` : "";
+  const parserSelections = activeParserRequestKey
+    ? parserSelectionsByRequest[activeParserRequestKey] ?? parserArtifact?.parserSelections ?? []
+    : [];
+  const parserCode = parserSelections.length > 0
+    ? generateParserCode(parserWorkspaceName, parserSelections)
+    : parserArtifact?.parserCode ?? buildParserStub(parserWorkspaceName);
 
-  useEffect(() => setSelectedParserPath(null), [parserResponseJson, parserPageTab]);
+  const handleParserPathSelect = useCallback((path: string | null, value?: unknown) => {
+    setSelectedParserPath(path);
+    setSelectedParserValue(value ?? null);
+    setSelectedParserOutputKey(path ? getOutputKeyFromPath(path) : "");
+  }, []);
+
+  useEffect(() => {
+    handleParserPathSelect(null);
+  }, [handleParserPathSelect, parserResponseJson, parserPageTab]);
+
+  useEffect(() => {
+    if (import.meta.env.DEV) console.debug("selectedPath", selectedParserPath);
+  }, [selectedParserPath]);
+
+  useEffect(() => {
+    if (import.meta.env.DEV) console.debug("parserSelections", parserSelections);
+  }, [parserSelections]);
+
+  useEffect(() => {
+    if (!activeParserRequestKey || parserSelectionsByRequest[activeParserRequestKey] || !parserArtifact?.parserSelections?.length) return;
+    setParserSelectionsByRequest((prev) => ({
+      ...prev,
+      [activeParserRequestKey]: parserArtifact.parserSelections ?? [],
+    }));
+  }, [activeParserRequestKey, parserArtifact?.parserSelections, parserSelectionsByRequest]);
 
   useEffect(() => {
     setParserJsonDraft(parserResponseJson ?? "");
@@ -1309,22 +1342,124 @@ export default function Index() {
     </div>
   );
 
+  const writeParserSelectionsToArtifact = (
+    collectionId: string,
+    workspaceId: string,
+    workspaceName: string,
+    nextSelections: ParserSelection[],
+  ) => {
+    const parserCode = nextSelections.length > 0
+      ? generateParserCode(workspaceName, nextSelections)
+      : buildParserStub(workspaceName);
+
+    setCollections((prev) => {
+      const collection = prev[collectionId];
+      if (!collection) return prev;
+      const artifacts = collection.workspaceArtifacts || {};
+      const artifact = artifacts[workspaceId] ?? {
+        responseJson: null,
+        responseFileName: defaultResponseFileName(workspaceName),
+        responseContentType: "application/json",
+        responseExtension: "json",
+        metaJson: null,
+        logsTxt: `Workspace ${workspaceName} ready`,
+        parserCode: buildParserStub(workspaceName),
+        parserSelections: [],
+        parserGenerated: true,
+      };
+
+      return {
+        ...prev,
+        [collectionId]: {
+          ...collection,
+          workspaceArtifacts: {
+            ...artifacts,
+            [workspaceId]: {
+              ...artifact,
+              parserSelections: nextSelections,
+              parserCode,
+              parserGenerated: true,
+            },
+          },
+        },
+      };
+    });
+  };
+
+  const addSelectedPathToParser = () => {
+    const selectedPath = selectedParserPath;
+    const targetCollection = isParserRoute ? parserCollection : activeCollection;
+    const targetNames = targetCollection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(targetCollection.snippets);
+    const workspaceId = isParserRoute ? parserWorkspaceId : activeResponseTab?.workspaceId || activeWorkspaceId;
+    const requestKey = workspaceId ? `${targetCollection.id}:${workspaceId}` : "";
+
+    console.debug("selectedPath before add", selectedPath);
+    console.debug("activeRequestKey", requestKey);
+
+    if (!selectedPath || !workspaceId || !requestKey) return;
+    const workspaceIndex = targetCollection.snippets.findIndex((snippet) => snippet.id === workspaceId);
+    if (workspaceIndex === -1) return;
+    const workspaceName = targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
+
+    setParserSelectionsByRequest((prev) => {
+      const currentSelections = prev[requestKey] ?? targetCollection.workspaceArtifacts?.[workspaceId]?.parserSelections ?? [];
+      if (currentSelections.some((selection) => selection.path === selectedPath)) {
+        toast.info("Path already added");
+        console.debug("new parser selections", currentSelections);
+        return prev;
+      }
+
+      const nextSelections = [
+        ...currentSelections,
+        {
+          id: newId(),
+          path: selectedPath,
+          outputKey: uniqueOutputKey(getOutputKeyFromPath(selectedPath), currentSelections),
+        },
+      ];
+      console.debug("new parser selections", nextSelections);
+      writeParserSelectionsToArtifact(targetCollection.id, workspaceId, workspaceName, nextSelections);
+      toast.success("Path added");
+      return {
+        ...prev,
+        [requestKey]: nextSelections,
+      };
+    });
+
+    setActiveWorkspaceId(workspaceId);
+    setActiveWorkspaceFile("parser.py");
+  };
+
   const addPathToParser = (path: string) => {
+    const targetCollection = isParserRoute ? parserCollection : activeCollection;
+    const targetNames = targetCollection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(targetCollection.snippets);
     const workspaceId = isParserRoute ? parserWorkspaceId : activeResponseTab?.workspaceId || activeWorkspaceId;
     if (!workspaceId) return;
-    const workspaceIndex = snippets.findIndex((snippet) => snippet.id === workspaceId);
+    const workspaceIndex = targetCollection.snippets.findIndex((snippet) => snippet.id === workspaceId);
     if (workspaceIndex === -1) return;
-    const workspaceName = effectiveNames[workspaceIndex] ?? snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
+    const workspaceName = targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
     const parts = normalizeSelectionParts(path).filter((part): part is string | number => part !== undefined);
     const lastKey = [...parts].reverse().find((part): part is string => typeof part === "string");
     if (!lastKey) return;
 
-    setWorkspaceArtifacts((prev) => {
-      const artifact = prev[workspaceId];
-      if (!artifact) return prev;
+    setCollections((prev) => {
+      const collection = prev[targetCollection.id];
+      if (!collection) return prev;
+      const artifacts = collection.workspaceArtifacts || {};
+      const artifact = artifacts[workspaceId] ?? {
+        responseJson: null,
+        responseFileName: defaultResponseFileName(workspaceName),
+        responseContentType: "application/json",
+        responseExtension: "json",
+        metaJson: null,
+        logsTxt: `Workspace ${workspaceName} ready`,
+        parserCode: buildParserStub(workspaceName),
+        parserSelections: [],
+        parserGenerated: true,
+      };
       const existingSelections = artifact.parserSelections ?? [];
       if (existingSelections.some((selection) => selection.path === path)) {
-        toast.info("Parser field already added");
+        toast.info("Path already added");
         return prev;
       }
 
@@ -1339,11 +1474,17 @@ export default function Index() {
       toast.success("Path added");
       return {
         ...prev,
-        [workspaceId]: {
-          ...artifact,
-          parserSelections,
-          parserCode,
-          parserGenerated: true,
+        [targetCollection.id]: {
+          ...collection,
+          workspaceArtifacts: {
+            ...artifacts,
+            [workspaceId]: {
+              ...artifact,
+              parserSelections,
+              parserCode,
+              parserGenerated: true,
+            },
+          },
         },
       };
     });
@@ -1356,27 +1497,22 @@ export default function Index() {
     workspaceId: string,
     updater: ParserSelection[] | ((prev: ParserSelection[]) => ParserSelection[]),
   ) => {
-    const workspaceIndex = snippets.findIndex((snippet) => snippet.id === workspaceId);
+    const targetCollection = isParserRoute ? parserCollection : activeCollection;
+    const targetNames = targetCollection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(targetCollection.snippets);
+    const workspaceIndex = targetCollection.snippets.findIndex((snippet) => snippet.id === workspaceId);
     if (workspaceIndex === -1) return;
-    const workspaceName = effectiveNames[workspaceIndex] ?? snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
+    const workspaceName = targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
+    const requestKey = `${targetCollection.id}:${workspaceId}`;
 
-    setWorkspaceArtifacts((prev) => {
-      const artifact = prev[workspaceId];
-      if (!artifact) return prev;
+    setParserSelectionsByRequest((prev) => {
+      const currentSelections = prev[requestKey] ?? targetCollection.workspaceArtifacts?.[workspaceId]?.parserSelections ?? [];
       const nextSelections = typeof updater === "function"
-        ? (updater as (prev: ParserSelection[]) => ParserSelection[])(artifact.parserSelections ?? [])
+        ? (updater as (prev: ParserSelection[]) => ParserSelection[])(currentSelections)
         : updater;
-      const parserCode = nextSelections.length > 0
-        ? generateParserCode(workspaceName, nextSelections)
-        : buildParserStub(workspaceName);
+      writeParserSelectionsToArtifact(targetCollection.id, workspaceId, workspaceName, nextSelections);
       return {
         ...prev,
-        [workspaceId]: {
-          ...artifact,
-          parserSelections: nextSelections,
-          parserCode,
-          parserGenerated: true,
-        },
+        [requestKey]: nextSelections,
       };
     });
   };
@@ -1422,30 +1558,18 @@ export default function Index() {
 
   const optimizeParserForWorkspace = (workspaceId: string) => {
     if (!workspaceId) return;
-    const workspaceIndex = snippets.findIndex((snippet) => snippet.id === workspaceId);
+    const targetCollection = isParserRoute ? parserCollection : activeCollection;
+    const targetNames = targetCollection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(targetCollection.snippets);
+    const workspaceIndex = targetCollection.snippets.findIndex((snippet) => snippet.id === workspaceId);
     if (workspaceIndex === -1) return;
-    const workspaceName = effectiveNames[workspaceIndex] ?? snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
-
-    setWorkspaceArtifacts((prev) => {
-      const artifact = prev[workspaceId];
-      if (!artifact) return prev;
-      const selections = optimizeParserSelections(artifact.parserSelections ?? []);
-      const isGeneratedParser = artifact.parserGenerated || artifact.parserCode === buildParserStub(workspaceName);
-      if (!isGeneratedParser && !window.confirm("Replace custom parser.py with generated parser code?")) {
-        return prev;
-      }
-
-      const parserCode = selections.length > 0 ? generateParserCode(workspaceName, selections) : buildParserStub(workspaceName);
-      return {
-        ...prev,
-        [workspaceId]: {
-          ...artifact,
-          parserSelections: selections,
-          parserCode,
-          parserGenerated: true,
-        },
-      };
-    });
+    const workspaceName = targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
+    const currentSelections = parserSelectionsByRequest[`${targetCollection.id}:${workspaceId}`] ?? targetCollection.workspaceArtifacts?.[workspaceId]?.parserSelections ?? [];
+    const selections = optimizeParserSelections(currentSelections);
+    writeParserSelectionsToArtifact(targetCollection.id, workspaceId, workspaceName, selections);
+    setParserSelectionsByRequest((prev) => ({
+      ...prev,
+      [`${targetCollection.id}:${workspaceId}`]: selections,
+    }));
     toast.success("Parser optimized");
   };
 
@@ -1794,11 +1918,14 @@ export default function Index() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {selectedParserPath && (
+              <span className="hidden max-w-[320px] truncate font-mono text-[11px] text-muted-foreground md:inline" title={`${selectedParserPath} (${typeof selectedParserValue})`}>
+                {selectedParserPath} {"->"} {selectedParserOutputKey || "value"}
+              </span>
+            )}
             <button
               onClick={() => {
-                if (!selectedParserPath) return;
-                addPathToParser(selectedParserPath);
-                setSelectedParserPath(null);
+                addSelectedPathToParser();
               }}
               disabled={!selectedParserPath}
               className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
@@ -1898,7 +2025,7 @@ export default function Index() {
                   className="block h-full min-h-full w-full resize-none bg-background px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground caret-primary outline-none placeholder:text-muted-foreground/50"
                 />
               ) : canShowJsonParser ? (
-                <ResponseBodyViewer source={parserResponseJson} onAddToParser={addPathToParser} onSelectedPathChange={setSelectedParserPath} />
+                <ResponseBodyViewer source={parserResponseJson} onAddToParser={addSelectedPathToParser} onSelectedPathChange={handleParserPathSelect} />
               ) : (
                 <div className="px-4 py-3 text-[11px] text-muted-foreground">JSON parser builder works only for JSON responses.</div>
               )}
@@ -3275,7 +3402,7 @@ function ResponseBodyViewer({
 }: {
   source: string;
   onAddToParser?: (path: string) => void;
-  onSelectedPathChange?: (path: string | null) => void;
+  onSelectedPathChange?: (path: string | null, value?: unknown) => void;
 }) {
   const mode = useMemo(() => detectResponseMode(source), [source]);
 
@@ -3293,7 +3420,7 @@ function JsonResponseViewer({
 }: {
   value: unknown;
   onAddToParser?: (path: string) => void;
-  onSelectedPathChange?: (path: string | null) => void;
+  onSelectedPathChange?: (path: string | null, value?: unknown) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<{ path: string; value: unknown; x: number; y: number } | null>(null);
@@ -3358,7 +3485,7 @@ function JsonResponseViewer({
             x: rect ? event.clientX - rect.left : 12,
             y: rect ? event.clientY - rect.top : 12,
           });
-          onSelectedPathChange?.(nextPath);
+          onSelectedPathChange?.(nextPath, nodeValue);
         }}
       />
     </div>
