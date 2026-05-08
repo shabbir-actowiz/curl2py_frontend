@@ -1620,32 +1620,34 @@ export default function Index() {
 
     setHtmlParserSelectionsByRequest((prev) => {
       const currentSelections = prev[requestKey] ?? targetCollection.workspaceArtifacts?.[workspaceId]?.htmlParserSelections ?? [];
-      if (currentSelections.some((item) => (item.selector || item.path) === selector && item.selectorType === selection.selectorType)) {
-        toast.info("Path already added");
+      const nextSelection: ParserSelection = {
+        id: newId(),
+        path: selector,
+        selector,
+        xpath: selection.xpath || (selectorType === "xpath" ? selector : ""),
+        css: selection.css || (selectorType === "css" ? selector : ""),
+        selectorType,
+        extractMode: selection.extractMode ?? selection.valueMode ?? "text",
+        valueMode: selection.extractMode ?? selection.valueMode ?? "text",
+        attrName: (selection.extractMode ?? selection.valueMode) === "attr" ? selection.attrName ?? "" : "",
+        outputKey: uniqueOutputKey(selection.outputKey || getOutputKeyFromHtmlSelector(selector), currentSelections),
+        parentSelector: selection.parentSelector,
+        parentSelectorType: selection.parentSelectorType,
+        parentXpath: selection.parentXpath,
+        parentCss: selection.parentCss,
+        relativeSelector: selection.relativeSelector,
+        relativeXpath: selection.relativeXpath,
+        relativeCss: selection.relativeCss,
+      };
+
+      if (currentSelections.some((item) => getHtmlSelectorMappingKey(item) === getHtmlSelectorMappingKey(nextSelection))) {
+        toast.info("Selector already added");
         return prev;
       }
 
       const nextSelections = [
         ...currentSelections,
-        {
-          id: newId(),
-          path: selector,
-          selector,
-          xpath: selection.xpath || (selectorType === "xpath" ? selector : ""),
-          css: selection.css || (selectorType === "css" ? selector : ""),
-          selectorType,
-          extractMode: selection.extractMode ?? selection.valueMode ?? "text",
-          valueMode: selection.extractMode ?? selection.valueMode ?? "text",
-          attrName: (selection.extractMode ?? selection.valueMode) === "attr" ? selection.attrName ?? "" : "",
-          outputKey: uniqueOutputKey(selection.outputKey || getOutputKeyFromHtmlSelector(selector), currentSelections),
-          parentSelector: selection.parentSelector,
-          parentSelectorType: selection.parentSelectorType,
-          parentXpath: selection.parentXpath,
-          parentCss: selection.parentCss,
-          relativeSelector: selection.relativeSelector,
-          relativeXpath: selection.relativeXpath,
-          relativeCss: selection.relativeCss,
-        },
+        nextSelection,
       ];
       writeHtmlParserSelectionsToArtifact(targetCollection.id, workspaceId, workspaceName, nextSelections);
       toast.success("Path added");
@@ -2437,53 +2439,63 @@ export default function Index() {
                   <div className="text-[11px] text-muted-foreground">No paths selected</div>
                 ) : (
                   <div className="space-y-2">
-                    {htmlParserSelections.map((selection, index) => (
-                      <div key={`${selection.selector || selection.path}-${index}`} className="grid gap-1 md:grid-cols-[96px_minmax(0,1fr)_180px_120px_150px_28px] md:items-start">
-                        <select
-                          value={selection.selectorType ?? "xpath"}
-                          onChange={(event) => updateHtmlParserSelectionRow(index, { selectorType: event.target.value as "xpath" | "css" })}
-                          className="h-8 rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
-                        >
-                          <option value="xpath">xpath</option>
-                          <option value="css">css</option>
-                        </select>
-                        <input
-                          value={selection.selector || selection.path}
-                          onChange={(event) => updateHtmlParserSelectionRow(index, { selector: event.target.value, path: event.target.value })}
-                          className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
-                          placeholder="selector"
-                        />
-                        <input
-                          value={selection.outputKey}
-                          onChange={(event) => updateHtmlParserSelectionRow(index, { outputKey: event.target.value })}
-                          className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
-                          placeholder="output field"
-                        />
-                        <select
-                          value={selection.extractMode ?? selection.valueMode ?? "text"}
-                          onChange={(event) => updateHtmlParserSelectionRow(index, { extractMode: event.target.value as "text" | "attr" | "html" })}
-                          className="h-8 rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
-                        >
-                          <option value="text">text</option>
-                          <option value="attr">attr</option>
-                          <option value="html">html</option>
-                        </select>
-                        <input
-                          value={selection.attrName ?? ""}
-                          onChange={(event) => updateHtmlParserSelectionRow(index, { attrName: event.target.value })}
-                          disabled={(selection.extractMode ?? selection.valueMode ?? "text") !== "attr"}
-                          className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong disabled:cursor-not-allowed disabled:opacity-40"
-                          placeholder="attr name"
-                        />
-                        <button
-                          onClick={() => deleteHtmlParserSelectionRow(index)}
-                          className="flex h-8 w-8 items-center justify-center rounded-sm border border-border bg-transparent text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
-                          aria-label={`Delete ${selection.selector || selection.path}`}
-                        >
-                          <Trash2 className="h-3 w-3" strokeWidth={2} />
-                        </button>
-                      </div>
-                    ))}
+                    {htmlParserSelections.map((selection, index) => {
+                      const duplicateIndexes = getDuplicateHtmlSelectorIndexes(htmlParserSelections);
+                      const isDuplicate = duplicateIndexes.has(index);
+                      return (
+                        <div key={`${selection.selector || selection.path}-${index}`} className="space-y-1">
+                          <div className="grid gap-1 md:grid-cols-[96px_minmax(0,1fr)_180px_120px_150px_28px] md:items-start">
+                            <select
+                              value={selection.selectorType ?? "xpath"}
+                              onChange={(event) => updateHtmlParserSelectionRow(index, { selectorType: event.target.value as "xpath" | "css" })}
+                              className="h-8 rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
+                            >
+                              <option value="xpath">xpath</option>
+                              <option value="css">css</option>
+                            </select>
+                            <input
+                              value={selection.selector || selection.path}
+                              onChange={(event) => updateHtmlParserSelectionRow(index, { selector: event.target.value, path: event.target.value })}
+                              className={cn(
+                                "h-8 w-full rounded-sm border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong",
+                                isDuplicate ? "border-destructive/70" : "border-border"
+                              )}
+                              placeholder="selector"
+                            />
+                            <input
+                              value={selection.outputKey}
+                              onChange={(event) => updateHtmlParserSelectionRow(index, { outputKey: event.target.value })}
+                              className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
+                              placeholder="output field"
+                            />
+                            <select
+                              value={selection.extractMode ?? selection.valueMode ?? "text"}
+                              onChange={(event) => updateHtmlParserSelectionRow(index, { extractMode: event.target.value as "text" | "attr" | "html" })}
+                              className="h-8 rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
+                            >
+                              <option value="text">text</option>
+                              <option value="attr">attr</option>
+                              <option value="html">html</option>
+                            </select>
+                            <input
+                              value={selection.attrName ?? ""}
+                              onChange={(event) => updateHtmlParserSelectionRow(index, { attrName: event.target.value })}
+                              disabled={(selection.extractMode ?? selection.valueMode ?? "text") !== "attr"}
+                              className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong disabled:cursor-not-allowed disabled:opacity-40"
+                              placeholder="attr name"
+                            />
+                            <button
+                              onClick={() => deleteHtmlParserSelectionRow(index)}
+                              className="flex h-8 w-8 items-center justify-center rounded-sm border border-border bg-transparent text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
+                              aria-label={`Delete ${selection.selector || selection.path}`}
+                            >
+                              <Trash2 className="h-3 w-3" strokeWidth={2} />
+                            </button>
+                          </div>
+                          {isDuplicate && <div className="font-mono text-[10px] text-destructive">Duplicate selector mapping</div>}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -3769,6 +3781,30 @@ function getHtmlSelectionKey(selection: ParserSelection) {
   return `${selection.selectorType || "xpath"}:${selection.selector || selection.path}:${selection.extractMode || selection.valueMode || "text"}:${selection.attrName || ""}`;
 }
 
+function getHtmlSelectorMappingKey(selection: ParserSelection) {
+  const selectorType = selection.selectorType ?? "xpath";
+  const selector = (selection.selector || (selectorType === "css" ? selection.css : selection.xpath) || selection.path || "").trim();
+  const parentSelector = (selection.parentSelector || (selectorType === "css" ? selection.parentCss : selection.parentXpath) || "").trim();
+  const relativeSelector = (selectorType === "css"
+    ? selection.relativeCss || selection.relativeSelector
+    : selection.relativeXpath || selection.relativeSelector
+  )?.trim() || "";
+  const extractMode = selection.extractMode ?? selection.valueMode ?? "text";
+  const attrName = extractMode === "attr" ? (selection.attrName || "").trim() : "";
+  return [selectorType, parentSelector, relativeSelector || selector, extractMode, attrName].join("\u0001");
+}
+
+function getDuplicateHtmlSelectorIndexes(selections: ParserSelection[]) {
+  const seen = new Set<string>();
+  const duplicates = new Set<number>();
+  selections.forEach((selection, index) => {
+    const key = getHtmlSelectorMappingKey(selection);
+    if (seen.has(key)) duplicates.add(index);
+    else seen.add(key);
+  });
+  return duplicates;
+}
+
 function optimizeHtmlParserSelections(selections: ParserSelection[]) {
   const used = new Set<string>();
   const optimized: ParserSelection[] = [];
@@ -3798,7 +3834,7 @@ function optimizeHtmlParserSelections(selections: ParserSelection[]) {
       relativeXpath: selection.relativeXpath,
       relativeCss: selection.relativeCss,
     };
-    const key = getHtmlSelectionKey(normalized);
+    const key = getHtmlSelectorMappingKey(normalized);
     if (used.has(key)) return;
     used.add(key);
     optimized.push(normalized);
@@ -3851,8 +3887,8 @@ function generateHtmlParserCode(workspaceName: string, selections: ParserSelecti
   const functionName = `${sanitizePythonName(workspaceName || "request")}_parser`;
   const optimized = optimizeHtmlParserSelections(selections);
   const repeatedGroups = getRepeatedParentGroups(optimized);
-  const groupedKeys = new Set(repeatedGroups.flatMap(([, items]) => items.map(getHtmlSelectionKey)));
-  const rootSelections = optimized.filter((selection) => !groupedKeys.has(getHtmlSelectionKey(selection)));
+  const groupedKeys = new Set(repeatedGroups.flatMap(([, items]) => items.map(getHtmlSelectorMappingKey)));
+  const rootSelections = optimized.filter((selection) => !groupedKeys.has(getHtmlSelectorMappingKey(selection)));
 
   const lines = [
     "from parsel import Selector",
