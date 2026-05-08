@@ -9,6 +9,7 @@ export const apiRoutes = {
   workspace: "/api/v1/workspace",
   convert: "/api/v1/convert",
   runWorkspace: "/run-workspace",
+  runParser: "/api/v1/run-parser",
   history: "/api/v1/history",
   deleteHistory: (id: string) => `/api/v1/history/${id}`,
   deleteConversionSnippet: (collectionId: string, snippetId: string) => `/api/v1/conversions/snippet/${encodeURIComponent(collectionId)}/${encodeURIComponent(snippetId)}`,

@@ -1,6 +1,6 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Component, type ErrorInfo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { Check, Copy, ChevronDown, ChevronRight, ChevronUp, AlertCircle, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil, Moon, Sun, Play, Loader2 } from "lucide-react";
+import { Check, Copy, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, AlertCircle, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil, Moon, Sun, Play, Loader2 } from "lucide-react";
 import JSZip from "jszip";
 import { toast } from "sonner";
 import favicon from "/favicon-32x32.png";
@@ -23,6 +23,7 @@ import {
   extractApiErrorMessage,
   getUserWorkspace,
   renameConversionCollection,
+  runParserWithBackend,
   runWorkspaceWithBackend,
   saveUserWorkspace,
 } from "@/lib/api";
@@ -81,6 +82,31 @@ interface ParserSelection {
   relativeCss?: string;
 }
 
+interface HtmlElementSelection {
+  tagName: string;
+  xpath: string;
+  cssSelector: string;
+  text: string;
+  attributes: Record<string, string>;
+  parentXpath?: string;
+  parentCss?: string;
+  relativeXpath?: string;
+  relativeCss?: string;
+  scriptJson?: { ok: true; value: unknown } | { ok: false; error: string };
+  x: number;
+  y: number;
+}
+
+interface JsonValueSelection {
+  keyName: string;
+  path: string;
+  valueType: string;
+  valueText: string;
+  valuePreview: string;
+  x: number;
+  y: number;
+}
+
 interface ProxyConfig {
   enabled: boolean;
   url: string;
@@ -91,6 +117,7 @@ interface WorkspaceArtifact {
   responseFileName?: string;
   responseContentType?: string;
   responseExtension?: string;
+  responseOutputs?: Record<string, { content: string; contentType: string; extension: string; metaJson?: string }>;
   metaJson: string | null;
   logsTxt: string;
   parserCode: string;
@@ -127,6 +154,48 @@ const SAMPLE_SNIPPETS: Snippet[] = [];
 
 const BACKEND_PLACEHOLDER = "# Connect to the backend and sync to generate Python code\n";
 const DEFAULT_PROXY_CONFIG: ProxyConfig = { enabled: false, url: "" };
+const toolbarButtonClass = "inline-flex h-7 items-center justify-center gap-1.5 rounded-sm border px-2.5 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45";
+const quietToolbarButtonClass = `${toolbarButtonClass} border-border bg-background/40 text-muted-foreground hover:border-border-strong hover:bg-surface-elevated hover:text-foreground`;
+const primaryToolbarButtonClass = `${toolbarButtonClass} border-primary/60 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary`;
+const panelTabClass = "relative border-r border-border px-3 py-2 text-[12px] font-mono transition-colors";
+const fileTabClass = "group relative flex cursor-pointer items-center gap-1.5 border-r border-border px-3 py-2 text-[11px] font-mono transition-colors";
+
+class ParserInspectorErrorBoundary extends Component<
+  { children: ReactNode; resetKey: string },
+  { hasError: boolean; message: string }
+> {
+  state = { hasError: false, message: "" };
+
+  static getDerivedStateFromError(error: unknown) {
+    return {
+      hasError: true,
+      message: error instanceof Error ? error.message : "The parser inspector failed to render.",
+    };
+  }
+
+  componentDidCatch(error: unknown, info: ErrorInfo) {
+    console.error("Parser inspector crashed", error, info);
+  }
+
+  componentDidUpdate(prevProps: { resetKey: string }) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false, message: "" });
+    }
+  }
+
+  render() {
+    if (!this.state.hasError) return this.props.children;
+
+    return (
+      <div className="m-4 rounded-sm border border-destructive/40 bg-destructive/10 px-4 py-3 font-mono text-[12px] text-foreground">
+        <div className="font-semibold text-destructive">Parser inspector recovered from an error.</div>
+        <div className="mt-1 text-muted-foreground">
+          {this.state.message || "Try switching tabs or editing the response source."}
+        </div>
+      </div>
+    );
+  }
+}
 
 function buildParserStub(workspaceName: string): string {
   return [
@@ -331,6 +400,7 @@ export default function Index() {
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [isSyncingBackend, setIsSyncingBackend] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
+  const [isRunningParser, setIsRunningParser] = useState(false);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>("");
   const [activeWorkspaceFile, setActiveWorkspaceFile] = useState<WorkspaceFile>("request.py");
   const [activeInputTab, setActiveInputTab] = useState<InputPanelTab>("input");
@@ -343,6 +413,7 @@ export default function Index() {
   const [parserSelectionsByRequest, setParserSelectionsByRequest] = useState<Record<string, ParserSelection[]>>({});
   const [htmlParserSelectionsByRequest, setHtmlParserSelectionsByRequest] = useState<Record<string, ParserSelection[]>>({});
   const [manualParserJsonByWorkspace, setManualParserJsonByWorkspace] = useState<Record<string, string>>({});
+  const [scriptJsonParserByWorkspace, setScriptJsonParserByWorkspace] = useState<Record<string, boolean>>({});
   const [manualParserHtmlByWorkspace, setManualParserHtmlByWorkspace] = useState<Record<string, string>>({});
   const [isEditingParserJson, setIsEditingParserJson] = useState(false);
   const [isEditingParserHtml, setIsEditingParserHtml] = useState(false);
@@ -568,14 +639,16 @@ export default function Index() {
   const activeResponseArtifact = activeResponseTab
     ? workspaceArtifacts[activeResponseTab.workspaceId]
     : activeWorkspaceArtifact;
-  const activeResponseJson = activeResponseArtifact?.responseJson;
+  const activeResponseOutput = activeResponseTab ? activeResponseArtifact?.responseOutputs?.[activeResponseTab.fileName] : undefined;
+  const activeResponseJson = activeResponseOutput?.content ?? activeResponseArtifact?.responseJson;
+  const activeResponseContentType = activeResponseOutput?.contentType ?? activeResponseArtifact?.responseContentType;
   const activeResponseMode = useMemo(
     () => activeResponseJson ? detectResponseMode(activeResponseJson) : null,
     [activeResponseJson]
   );
   const activeResponseIsJson = activeResponseMode?.kind === "json";
-  const activeResponseIsHtml = isHtmlResponse(activeResponseJson ?? "", activeResponseArtifact?.responseContentType);
-  const activeResponseMeta = readWorkspaceMeta(activeResponseArtifact?.metaJson ?? null);
+  const activeResponseIsHtml = isHtmlResponse(activeResponseJson ?? "", activeResponseContentType);
+  const activeResponseMeta = readWorkspaceMeta(activeResponseOutput?.metaJson ?? activeResponseArtifact?.metaJson ?? null);
   const parserCollection = parserRouteParams.collectionId
     ? collections[parserRouteParams.collectionId] ?? activeCollection
     : activeCollection;
@@ -596,6 +669,7 @@ export default function Index() {
   const parserResponseIsJson = parserResponseMode?.kind === "json";
   const parserResponseIsHtml = isHtmlResponse(parserResponseHtml, parserArtifact?.responseContentType);
   const detectedParserMode: ParserBuilderMode = parserResponseIsHtml && !parserResponseIsJson ? "html" : "json";
+  const parserUsesScriptJson = !!(parserWorkspaceId && scriptJsonParserByWorkspace[parserWorkspaceId]);
   const activeParserRequestKey = parserWorkspaceId ? `${parserCollection.id}:${parserWorkspaceId}` : "";
   const parserSelections = activeParserRequestKey
     ? parserSelectionsByRequest[activeParserRequestKey] ?? parserArtifact?.parserSelections ?? []
@@ -612,9 +686,9 @@ export default function Index() {
     [htmlParserSelections]
   );
   const parserCode = parserBuilderMode === "html"
-    ? generateHtmlParserCode(parserWorkspaceName, htmlParserSelections)
+    ? safeGenerateHtmlParserCode(parserWorkspaceName, htmlParserSelections)
     : parserSelections.length > 0
-      ? generateParserCode(parserWorkspaceName, parserSelections)
+      ? generateParserCode(parserWorkspaceName, parserSelections, parserUsesScriptJson ? "script_json" : "response_json")
       : parserArtifact?.parserCode ?? buildParserStub(parserWorkspaceName);
 
   const handleParserPathSelect = useCallback((path: string | null, value?: unknown) => {
@@ -839,7 +913,7 @@ export default function Index() {
     }
   }, [snippets, effectiveNames, activeWorkspaceId]);
 
-  const openResponseFile = (collectionId: string, workspaceId: string, fileNameOverride?: string) => {
+  const openResponseFile = (collectionId: string, workspaceId: string, fileNameOverride?: string, options?: { preserveWorkspaceTabs?: boolean }) => {
     const collection = collections[collectionId] ?? activeCollection;
     const collectionNames = collection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(collection.snippets);
     const workspaceIndex = collection.snippets.findIndex((snippet) => snippet.id === workspaceId);
@@ -856,8 +930,10 @@ export default function Index() {
     };
 
     setOpenResponseTabs((prev) => {
-      const withoutWorkspace = prev.filter((item) => !(item.collectionId === collectionId && item.workspaceId === workspaceId));
-      return withoutWorkspace.some((item) => item.id === tabId) ? withoutWorkspace : [...withoutWorkspace, tab];
+      const base = options?.preserveWorkspaceTabs
+        ? prev
+        : prev.filter((item) => !(item.collectionId === collectionId && item.workspaceId === workspaceId));
+      return base.some((item) => item.id === tabId) ? base.map((item) => item.id === tabId ? tab : item) : [...base, tab];
     });
     setActiveResponseTabId(tabId);
     setActivePanelTab("response");
@@ -1130,6 +1206,15 @@ export default function Index() {
           responseFileName,
           responseContentType: data.content_type,
           responseExtension: data.extension,
+          responseOutputs: {
+            ...prev[workspaceId]?.responseOutputs,
+            [responseFileName]: {
+              content: responseJson,
+              contentType: data.content_type,
+              extension: data.extension,
+              metaJson: JSON.stringify(meta, null, 2),
+            },
+          },
           metaJson: JSON.stringify(meta, null, 2),
           logsTxt: data.logs,
           parserCode,
@@ -1148,6 +1233,12 @@ export default function Index() {
         setStatusMsg(`Error in ${workspaceName}`);
         toast.error(data.error || data.logs || "Execution failed");
       }
+      return {
+        responseJson,
+        responseContentType: data.content_type,
+        responseFileName,
+        responseExtension: data.extension,
+      };
     } catch (error) {
       const message = extractApiErrorMessage(error);
       const meta = {
@@ -1172,6 +1263,7 @@ export default function Index() {
       setStatusKind("error");
       setStatusMsg(`Error in ${workspaceName}`);
       toast.error(message);
+      return null;
     }
   }
 
@@ -1389,7 +1481,7 @@ export default function Index() {
       <button
         onClick={handleCopyActive}
         disabled={!hasActivePanelContent}
-        className="flex h-5 w-5 items-center justify-center rounded-sm border border-border bg-transparent text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+        className="flex h-6 w-6 items-center justify-center rounded-sm border border-border bg-background/40 text-muted-foreground transition-colors hover:border-border-strong hover:bg-surface-elevated hover:text-foreground disabled:cursor-not-allowed disabled:opacity-45"
         title="Copy current file"
         aria-label="Copy current file"
       >
@@ -1402,7 +1494,7 @@ export default function Index() {
       <button
         onClick={handleDownloadActive}
         disabled={!hasActivePanelContent}
-        className="flex h-5 w-5 items-center justify-center rounded-sm border border-border bg-transparent text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+        className="flex h-6 w-6 items-center justify-center rounded-sm border border-border bg-background/40 text-muted-foreground transition-colors hover:border-border-strong hover:bg-surface-elevated hover:text-foreground disabled:cursor-not-allowed disabled:opacity-45"
         title="Download current file"
         aria-label="Download current file"
       >
@@ -1418,7 +1510,7 @@ export default function Index() {
     nextSelections: ParserSelection[],
   ) => {
     const parserCode = nextSelections.length > 0
-      ? generateParserCode(workspaceName, nextSelections)
+      ? generateParserCode(workspaceName, nextSelections, scriptJsonParserByWorkspace[workspaceId] ? "script_json" : "response_json")
       : buildParserStub(workspaceName);
 
     setCollections((prev) => {
@@ -1461,7 +1553,7 @@ export default function Index() {
     workspaceName: string,
     nextSelections: ParserSelection[],
   ) => {
-    const parserCode = generateHtmlParserCode(workspaceName, nextSelections);
+    const parserCode = safeGenerateHtmlParserCode(workspaceName, nextSelections);
 
     setCollections((prev) => {
       const collection = prev[collectionId];
@@ -1606,59 +1698,63 @@ export default function Index() {
   };
 
   const addHtmlPathToParser = (selection: ParserSelection) => {
-    const targetCollection = isParserRoute ? parserCollection : activeCollection;
-    const targetNames = targetCollection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(targetCollection.snippets);
-    const workspaceId = isParserRoute ? parserWorkspaceId : activeResponseTab?.workspaceId || activeWorkspaceId;
-    const requestKey = workspaceId ? `${targetCollection.id}:${workspaceId}` : "";
-    const selectorType = selection.selectorType ?? "xpath";
-    const selector = selection.selector || (selectorType === "css" ? selection.css : selection.xpath) || selection.path;
+    try {
+      const targetCollection = isParserRoute ? parserCollection : activeCollection;
+      const targetNames = targetCollection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(targetCollection.snippets);
+      const workspaceId = isParserRoute ? parserWorkspaceId : activeResponseTab?.workspaceId || activeWorkspaceId;
+      const requestKey = workspaceId ? `${targetCollection.id}:${workspaceId}` : "";
+      const selectorType = selection.selectorType ?? "xpath";
+      const selector = selection.selector || (selectorType === "css" ? selection.css : selection.xpath) || selection.path;
 
-    if (!selector || !workspaceId || !requestKey) return;
-    const workspaceIndex = targetCollection.snippets.findIndex((snippet) => snippet.id === workspaceId);
-    if (workspaceIndex === -1) return;
-    const workspaceName = targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
+      if (!selector || !workspaceId || !requestKey) return;
+      const workspaceIndex = targetCollection.snippets.findIndex((snippet) => snippet.id === workspaceId);
+      if (workspaceIndex === -1) return;
+      const workspaceName = targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
 
-    setHtmlParserSelectionsByRequest((prev) => {
-      const currentSelections = prev[requestKey] ?? targetCollection.workspaceArtifacts?.[workspaceId]?.htmlParserSelections ?? [];
-      const nextSelection: ParserSelection = {
-        id: newId(),
-        path: selector,
-        selector,
-        xpath: selection.xpath || (selectorType === "xpath" ? selector : ""),
-        css: selection.css || (selectorType === "css" ? selector : ""),
-        selectorType,
-        extractMode: selection.extractMode ?? selection.valueMode ?? "text",
-        valueMode: selection.extractMode ?? selection.valueMode ?? "text",
-        attrName: (selection.extractMode ?? selection.valueMode) === "attr" ? selection.attrName ?? "" : "",
-        outputKey: uniqueOutputKey(selection.outputKey || getOutputKeyFromHtmlSelector(selector), currentSelections),
-        parentSelector: selection.parentSelector,
-        parentSelectorType: selection.parentSelectorType,
-        parentXpath: selection.parentXpath,
-        parentCss: selection.parentCss,
-        relativeSelector: selection.relativeSelector,
-        relativeXpath: selection.relativeXpath,
-        relativeCss: selection.relativeCss,
-      };
+      setHtmlParserSelectionsByRequest((prev) => {
+        const currentSelections = prev[requestKey] ?? targetCollection.workspaceArtifacts?.[workspaceId]?.htmlParserSelections ?? [];
+        const nextSelection: ParserSelection = {
+          id: newId(),
+          path: selector,
+          selector,
+          xpath: selection.xpath || (selectorType === "xpath" ? selector : ""),
+          css: selection.css || (selectorType === "css" ? selector : ""),
+          selectorType,
+          extractMode: selection.extractMode ?? selection.valueMode ?? "text",
+          valueMode: selection.extractMode ?? selection.valueMode ?? "text",
+          attrName: (selection.extractMode ?? selection.valueMode) === "attr" ? selection.attrName ?? "" : "",
+          outputKey: uniqueOutputKey(selection.outputKey || getOutputKeyFromHtmlSelector(selector), currentSelections),
+          parentSelector: selection.parentSelector,
+          parentSelectorType: selection.parentSelectorType,
+          parentXpath: selection.parentXpath,
+          parentCss: selection.parentCss,
+          relativeSelector: selection.relativeSelector,
+          relativeXpath: selection.relativeXpath,
+          relativeCss: selection.relativeCss,
+        };
 
-      if (currentSelections.some((item) => getHtmlSelectorMappingKey(item) === getHtmlSelectorMappingKey(nextSelection))) {
-        toast.info("Selector already added");
-        return prev;
-      }
+        if (currentSelections.some((item) => getHtmlSelectorMappingKey(item) === getHtmlSelectorMappingKey(nextSelection))) {
+          toast.info("Selector already added");
+          return prev;
+        }
 
-      const nextSelections = [
-        ...currentSelections,
-        nextSelection,
-      ];
-      writeHtmlParserSelectionsToArtifact(targetCollection.id, workspaceId, workspaceName, nextSelections);
-      toast.success("Path added");
-      return {
-        ...prev,
-        [requestKey]: nextSelections,
-      };
-    });
+        const nextSelections = [
+          ...currentSelections,
+          nextSelection,
+        ];
+        writeHtmlParserSelectionsToArtifact(targetCollection.id, workspaceId, workspaceName, nextSelections);
+        toast.success("Path added");
+        return {
+          ...prev,
+          [requestKey]: nextSelections,
+        };
+      });
 
-    setActiveWorkspaceId(workspaceId);
-    setActiveWorkspaceFile("parser.py");
+      setActiveWorkspaceId(workspaceId);
+      setActiveWorkspaceFile("parser.py");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not add selector");
+    }
   };
 
   const updateParserSelectionsForWorkspace = (
@@ -1740,7 +1836,7 @@ export default function Index() {
     updateParserSelectionsForWorkspace(parserWorkspaceId, (prev) => [
       ...prev,
       {
-        path: "response.",
+        path: "",
         outputKey: uniqueOutputKey("value", prev),
       },
     ]);
@@ -1863,6 +1959,106 @@ export default function Index() {
     } finally {
       setIsRunning(false);
     }
+  };
+
+  const handleRunParserForWorkspace = async (workspaceId: string) => {
+    if (!workspaceId || isRunningParser) return;
+    setIsRunningParser(true);
+    try {
+      const targetCollection = isParserRoute ? parserCollection : activeCollection;
+      const targetNames = targetCollection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(targetCollection.snippets);
+      const workspaceIndex = targetCollection.snippets.findIndex((snippet) => snippet.id === workspaceId);
+      if (workspaceIndex === -1) return;
+      const workspaceName = targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
+      let artifact = targetCollection.workspaceArtifacts[workspaceId];
+      let responseContent = artifact?.responseJson ?? "";
+      let responseContentType = artifact?.responseContentType ?? "";
+
+      if (!responseContent && targetCollection.id === activeCollection.id) {
+        toast.info("No response found. Running request first.");
+        const runResult = await runWorkspace(workspaceId);
+        if (!runResult?.responseJson) {
+          toast.error("No response available for parser");
+          return;
+        }
+        responseContent = runResult.responseJson;
+        responseContentType = runResult.responseContentType;
+      }
+
+      if (!responseContent) {
+        toast.error("No response available for parser");
+        return;
+      }
+
+      const parserSource = workspaceId === parserWorkspaceId ? parserCode : artifact?.parserCode ?? buildParserStub(workspaceName);
+      const parserFunctionName = `${sanitizePythonName(workspaceName || "request")}_parser`;
+      const responseType: "html" | "json" = scriptJsonParserByWorkspace[workspaceId] || isHtmlResponse(responseContent, responseContentType) ? "html" : "json";
+      const responseContentForParser = responseType === "html" ? normalizeHtmlSource(responseContent) : responseContent;
+      const data = await runParserWithBackend({
+        response_content: responseContentForParser,
+        response_type: responseType,
+        parser_code: parserSource,
+        parser_function_name: parserFunctionName,
+      });
+
+      if (!data.success) {
+        toast.error(data.error || "Parser failed");
+        return;
+      }
+
+      const outputFileName = data.output_file_name || `${parserFunctionName}_output.json`;
+      const outputContent = JSON.stringify(data.output ?? null, null, 2);
+      const metaJson = JSON.stringify({
+        status: 200,
+        time_ms: 0,
+        size: formatSize(outputContent.length),
+        content_type: "application/json",
+      }, null, 2);
+
+      setCollections((prev) => {
+        const collection = prev[targetCollection.id];
+        if (!collection) return prev;
+        const artifacts = collection.workspaceArtifacts || {};
+        const currentArtifact = artifacts[workspaceId] ?? artifact ?? {
+          responseJson: null,
+          metaJson: null,
+          logsTxt: `Workspace ${workspaceName} ready`,
+          parserCode: parserSource,
+        };
+        return {
+          ...prev,
+          [targetCollection.id]: {
+            ...collection,
+            workspaceArtifacts: {
+              ...artifacts,
+              [workspaceId]: {
+                ...currentArtifact,
+                parserCode: parserSource,
+                responseOutputs: {
+                  ...currentArtifact.responseOutputs,
+                  [outputFileName]: {
+                    content: outputContent,
+                    contentType: "application/json",
+                    extension: "json",
+                    metaJson,
+                  },
+                },
+              },
+            },
+          },
+        };
+      });
+      openResponseFile(targetCollection.id, workspaceId, outputFileName, { preserveWorkspaceTabs: true });
+      toast.success("Parser ran");
+    } catch (error) {
+      toast.error(extractApiErrorMessage(error));
+    } finally {
+      setIsRunningParser(false);
+    }
+  };
+
+  const handleRunActiveParser = async () => {
+    await handleRunParserForWorkspace(isParserRoute ? parserWorkspaceId : activeWorkspaceId);
   };
 
   const openParserPage = (mode?: ParserBuilderMode) => {
@@ -2185,11 +2381,11 @@ export default function Index() {
 
     return (
       <div className="flex h-screen flex-col bg-background text-foreground">
-        <header className="flex h-12 items-center justify-between border-b border-border px-4">
+        <header className="flex h-12 items-center justify-between border-b border-border bg-surface/70 px-4">
           <div className="flex min-w-0 items-center gap-3">
             <button
               onClick={() => navigate("/")}
-              className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
+              className={quietToolbarButtonClass}
             >
               Back to workspace
             </button>
@@ -2210,7 +2406,7 @@ export default function Index() {
                 <button
                   onClick={() => void copyText(parserJsonEditorVisible ? parserJsonDraft : parserResponseJson ?? parserJsonDraft, "Copied JSON")}
                   disabled={!canUseParser || (!parserResponseJson && !parserJsonDraft)}
-                  className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                  className={quietToolbarButtonClass}
                 >
                   <Copy className="h-3 w-3" strokeWidth={2} />
                   Copy JSON
@@ -2219,7 +2415,7 @@ export default function Index() {
                   <button
                     onClick={saveParserJson}
                     disabled={!canUseParser}
-                    className="flex items-center gap-1.5 rounded-sm border border-primary/60 bg-primary/10 px-2.5 py-1 text-[11px] text-primary transition-colors hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-40"
+                    className={primaryToolbarButtonClass}
                   >
                     Save JSON
                   </button>
@@ -2227,7 +2423,7 @@ export default function Index() {
                   <button
                     onClick={() => setIsEditingParserJson(true)}
                     disabled={!canUseParser}
-                    className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                    className={quietToolbarButtonClass}
                   >
                     Edit JSON
                   </button>
@@ -2239,7 +2435,7 @@ export default function Index() {
                 <button
                   onClick={() => void copyText(parserHtmlEditorVisible ? parserHtmlDraft : parserResponseHtml || parserHtmlDraft, "Copied HTML")}
                   disabled={!canUseParser || (!parserResponseHtml && !parserHtmlDraft)}
-                  className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                  className={quietToolbarButtonClass}
                 >
                   <Copy className="h-3 w-3" strokeWidth={2} />
                   Copy HTML
@@ -2248,7 +2444,7 @@ export default function Index() {
                   <button
                     onClick={saveParserHtml}
                     disabled={!canUseParser}
-                    className="flex items-center gap-1.5 rounded-sm border border-primary/60 bg-primary/10 px-2.5 py-1 text-[11px] text-primary transition-colors hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-40"
+                    className={primaryToolbarButtonClass}
                   >
                     Save HTML
                   </button>
@@ -2256,7 +2452,7 @@ export default function Index() {
                   <button
                     onClick={() => setIsEditingParserHtml(true)}
                     disabled={!canUseParser}
-                    className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                    className={quietToolbarButtonClass}
                   >
                     Edit HTML
                   </button>
@@ -2266,9 +2462,17 @@ export default function Index() {
             {parserPageTab === "parser" && (
               <>
                 <button
+                  onClick={() => void handleRunActiveParser()}
+                  disabled={!canUseParser || isRunningParser}
+                  className={primaryToolbarButtonClass}
+                >
+                  {isRunningParser ? <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} /> : <Play className="h-3 w-3" strokeWidth={2} />}
+                  {isRunningParser ? "Running..." : "Run Parser"}
+                </button>
+                <button
                   onClick={() => parserWorkspaceId && (parserBuilderMode === "html" ? optimizeHtmlParserForWorkspace(parserWorkspaceId) : optimizeParserForWorkspace(parserWorkspaceId))}
                   disabled={!canUseParser}
-                  className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                  className={quietToolbarButtonClass}
                   title={parserBuilderMode === "html" ? "Merge and clean HTML selectors" : "Rebuild parser from selected JSON paths"}
                 >
                   Optimize Parser
@@ -2276,7 +2480,7 @@ export default function Index() {
                 <button
                   onClick={() => void copyText(parserCode, "Copied parser")}
                   disabled={!canUseParser}
-                  className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                  className={quietToolbarButtonClass}
                 >
                   <Copy className="h-3 w-3" strokeWidth={2} />
                   Copy Parser
@@ -2284,7 +2488,7 @@ export default function Index() {
                 <button
                   onClick={() => downloadFile("parser.py", parserCode)}
                   disabled={!canUseParser}
-                  className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                  className={quietToolbarButtonClass}
                 >
                   <Download className="h-3 w-3" strokeWidth={2} />
                   Download Parser
@@ -2302,10 +2506,10 @@ export default function Index() {
                   key={tab}
                   onClick={() => setParserPageTab(tab)}
                   className={cn(
-                    "border-r border-border px-3 py-2 text-[12px] font-mono transition-colors",
+                    panelTabClass,
                     parserPageTab === tab
-                      ? "border-t border-t-primary bg-background text-foreground"
-                      : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground"
+                      ? "bg-background text-foreground before:absolute before:inset-x-2 before:top-0 before:h-px before:bg-primary"
+                      : "text-muted-foreground hover:bg-surface-elevated/80 hover:text-foreground"
                   )}
                 >
                   {tab === "json" ? "JSON" : tab === "jmespath" ? "JMESPath" : tab === "html" ? "HTML" : tab === "paths" ? "Paths" : "Parser"}
@@ -2314,6 +2518,7 @@ export default function Index() {
             </div>
           </div>
 
+          <ParserInspectorErrorBoundary resetKey={`${parserWorkspaceId}:${parserBuilderMode}:${parserPageTab}:${parserResponseHtml.length}:${parserResponseJson?.length ?? 0}`}>
           {parserBuilderMode === "json" && parserPageTab === "json" ? (
             <div className="relative min-h-0 flex-1 overflow-auto">
               {parserJsonEditorVisible ? (
@@ -2322,7 +2527,7 @@ export default function Index() {
                   onChange={(event) => setParserJsonDraft(event.target.value)}
                   onPaste={() => setIsEditingParserJson(true)}
                   spellCheck={false}
-                  placeholder={"{\n  \"response\": {}\n}"}
+                  placeholder={"{\n  \"id\": 1,\n  \"items\": []\n}"}
                   className="block h-full min-h-full w-full resize-none bg-background px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground caret-primary outline-none placeholder:text-muted-foreground/50"
                 />
               ) : !hasResponse ? (
@@ -2334,7 +2539,7 @@ export default function Index() {
                   }}
                   onPaste={() => setIsEditingParserJson(true)}
                   spellCheck={false}
-                  placeholder={"{\n  \"response\": {}\n}"}
+                  placeholder={"{\n  \"id\": 1,\n  \"items\": []\n}"}
                   className="block h-full min-h-full w-full resize-none bg-background px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground caret-primary outline-none placeholder:text-muted-foreground/50"
                 />
               ) : canShowJsonParser ? (
@@ -2356,7 +2561,7 @@ export default function Index() {
                 <button
                   onClick={addManualParserPath}
                   disabled={!canUseParser}
-                  className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                  className={quietToolbarButtonClass}
                 >
                   <Plus className="h-3 w-3" strokeWidth={2} />
                   Add Path
@@ -2418,6 +2623,17 @@ export default function Index() {
                   html={parserResponseHtml}
                   addedPaths={addedHtmlPaths}
                   onAddToParser={addHtmlPathToParser}
+                  onOpenScriptJson={(value) => {
+                    if (!parserWorkspaceId) return;
+                    const pretty = JSON.stringify(value, null, 2);
+                    setManualParserJsonByWorkspace((prev) => ({ ...prev, [parserWorkspaceId]: pretty }));
+                    setScriptJsonParserByWorkspace((prev) => ({ ...prev, [parserWorkspaceId]: true }));
+                    setParserJsonDraft(pretty);
+                    setParserBuilderMode("json");
+                    setParserPageTab("json");
+                    setIsEditingParserJson(false);
+                    toast.success("Script JSON opened");
+                  }}
                 />
               )}
             </div>
@@ -2428,7 +2644,7 @@ export default function Index() {
                 <button
                   onClick={addManualHtmlPath}
                   disabled={!canUseParser}
-                  className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                  className={quietToolbarButtonClass}
                 >
                   <Plus className="h-3 w-3" strokeWidth={2} />
                   Add Path
@@ -2502,11 +2718,16 @@ export default function Index() {
             </div>
           ) : (
             <div className="relative min-h-0 flex-1 overflow-auto">
-              <pre className="px-4 py-3">
-                <HighlightedPython code={parserCode} />
-              </pre>
+              {parserCode === buildParserStub(parserWorkspaceName) ? (
+                <EmptyState title="No parser output yet" detail="Select JSON paths or HTML elements to generate parser code." />
+              ) : (
+                <pre className="px-4 py-3">
+                  <HighlightedPython code={parserCode} />
+                </pre>
+              )}
             </div>
           )}
+          </ParserInspectorErrorBoundary>
         </main>
       </div>
     );
@@ -2515,7 +2736,7 @@ export default function Index() {
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
       {/* TOP BAR */}
-      <header className="flex h-12 items-center justify-between border-b border-border px-4">
+      <header className="flex h-12 items-center justify-between border-b border-border bg-surface/70 px-4">
         <div className="flex items-center gap-0">
           <button
             onClick={() => setSidebarOpen((s) => !s)}
@@ -2538,7 +2759,7 @@ export default function Index() {
 
           <button
             onClick={() => setTheme((value) => value === "dark" ? "light" : "dark")}
-            className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
+            className={quietToolbarButtonClass}
             title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
           >
             {theme === "dark" ? <Sun className="h-3 w-3" strokeWidth={2} /> : <Moon className="h-3 w-3" strokeWidth={2} />}
@@ -2548,10 +2769,10 @@ export default function Index() {
           <button
             onClick={() => setMergeMode((s) => !s)}
             className={cn(
-              "flex items-center gap-1.5 rounded-sm border px-2.5 py-1 text-[11px] transition-colors",
+              toolbarButtonClass,
               mergeMode
-                ? "border-primary/60 bg-primary/10 text-primary"
-                : "border-border bg-transparent text-muted-foreground hover:border-border-strong hover:text-foreground"
+                ? "border-primary/60 bg-primary/10 text-primary hover:bg-primary/15"
+                : "border-border bg-background/40 text-muted-foreground hover:border-border-strong hover:bg-surface-elevated hover:text-foreground"
             )}
             title="Combine all requests into a single script + parser stub"
           >
@@ -2579,7 +2800,7 @@ export default function Index() {
           <button
             onClick={handleDownloadAll}
             disabled={visibleTabs.length === 0}
-            className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            className={quietToolbarButtonClass}
             title="Download all files as ZIP"
           >
             <Download className="h-3 w-3" strokeWidth={2} />
@@ -2590,16 +2811,15 @@ export default function Index() {
             onClick={() => void handleSyncBackend({ force: true })}
             disabled={isSyncingBackend || !user || !accessToken || snippets.length === 0}
             className={cn(
-              "flex items-center gap-1.5 rounded-sm border px-2.5 py-1 text-[11px] transition-colors",
+              toolbarButtonClass,
               user && accessToken && snippets.length > 0 && !isSyncingBackend
                 ? "border-primary/60 bg-primary/10 text-primary hover:bg-primary/15"
-                : "border-border bg-transparent text-muted-foreground hover:border-border-strong hover:text-foreground",
-              (isSyncingBackend || !user || !accessToken || snippets.length === 0) && "cursor-not-allowed opacity-40"
+                : "border-border bg-background/40 text-muted-foreground hover:border-border-strong hover:bg-surface-elevated hover:text-foreground"
             )}
             title={user ? "Save the current conversion to the backend" : "Login to sync conversions to the backend"}
           >
             <Upload className="h-3 w-3" strokeWidth={2} />
-            {isSyncingBackend ? "Syncing" : "Sync backend"}
+            {isSyncingBackend ? "Syncing..." : "Sync backend"}
           </button>
 
           <div className="mx-1 h-4 w-px bg-border" aria-hidden />
@@ -2611,7 +2831,7 @@ export default function Index() {
               </span>
               <button
                 onClick={handleLogout}
-                className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
+                className={quietToolbarButtonClass}
                 title="Sign out"
               >
                 <LogOut className="h-3 w-3" strokeWidth={2} />
@@ -2621,7 +2841,7 @@ export default function Index() {
           ) : (
             <Link
               to="/login"
-              className="flex items-center gap-1.5 rounded-sm border border-primary/60 bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/15"
+              className={primaryToolbarButtonClass}
               title="Login or sign up to save your collections"
             >
               <LogIn className="h-3 w-3" strokeWidth={2} />
@@ -3168,10 +3388,10 @@ export default function Index() {
                     key={tab}
                     onClick={() => setActivePanelTab(tab)}
                     className={cn(
-                      "border-r border-border px-3 py-2 text-[12px] font-mono transition-colors",
+                      panelTabClass,
                       activePanelTab === tab
-                        ? "border-t border-t-primary bg-background text-foreground"
-                        : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground"
+                        ? "bg-background text-foreground before:absolute before:inset-x-2 before:top-0 before:h-px before:bg-primary"
+                        : "text-muted-foreground hover:bg-surface-elevated/80 hover:text-foreground"
                     )}
                   >
                     {tab.charAt(0).toUpperCase() + tab.slice(1)}
@@ -3183,7 +3403,7 @@ export default function Index() {
                   <DropdownMenuTrigger asChild>
                     <button
                       disabled={!activeWorkspaceId}
-                      className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                      className={quietToolbarButtonClass}
                       title={activeWorkspaceId ? `Open parser for ${activeWorkspaceDisplayName}` : "Select a workspace to parse"}
                     >
                       <FileCode className="h-4 w-4" strokeWidth={2} />
@@ -3201,14 +3421,31 @@ export default function Index() {
                   </DropdownMenuContent>
                 </DropdownMenu>
                 <button
+                  onClick={() => void handleRunActiveParser()}
+                  disabled={!activeWorkspaceId || isRunningParser}
+                  className={cn(
+                    toolbarButtonClass,
+                    activeWorkspaceId
+                      ? "border-primary/60 bg-primary/10 text-primary hover:bg-primary/15"
+                      : "border-border bg-background/40 text-muted-foreground hover:border-border-strong hover:bg-surface-elevated hover:text-foreground"
+                  )}
+                  title={activeWorkspaceId ? `Run parser for ${activeWorkspaceDisplayName}` : "Select a workspace to run parser"}
+                >
+                  {isRunningParser ? (
+                    <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
+                  ) : (
+                    <Play className="h-4 w-4" strokeWidth={2} />
+                  )}
+                  {isRunningParser ? "Running..." : "Run Parser"}
+                </button>
+                <button
                   onClick={() => void handleRunActiveWorkspace()}
                   disabled={!activeWorkspaceId || isRunning}
                   className={cn(
-                    "flex items-center gap-1.5 rounded-sm border px-2.5 py-1 text-[11px] transition-colors",
+                    toolbarButtonClass,
                     activeWorkspaceId
                       ? "border-primary/60 bg-primary/10 text-primary hover:bg-primary/15"
-                      : "border-border bg-transparent text-muted-foreground hover:border-border-strong hover:text-foreground",
-                    (!activeWorkspaceId || isRunning) && "cursor-not-allowed opacity-40"
+                      : "border-border bg-background/40 text-muted-foreground hover:border-border-strong hover:bg-surface-elevated hover:text-foreground"
                   )}
                   title={activeWorkspaceId ? `Run ${activeWorkspaceDisplayName}` : "Select a workspace to run"}
                 >
@@ -3217,7 +3454,7 @@ export default function Index() {
                   ) : (
                     <Play className="h-4 w-4" strokeWidth={2} />
                   )}
-                  {isRunning ? "Running" : "Run"}
+                  {isRunning ? "Running..." : "Run"}
                 </button>
               </div>
             </div>
@@ -3254,13 +3491,12 @@ export default function Index() {
                           }}
                           onMouseLeave={() => t.kind === "request" && setHoveredSnippetId(null)}
                           className={cn(
-                            "group flex cursor-pointer items-center gap-1.5 border-r border-border px-3 py-2 text-[11px] font-mono transition-colors",
+                            fileTabClass,
                             isActive
-                              ? "bg-background text-foreground"
-                              : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground",
+                              ? "bg-background text-foreground before:absolute before:inset-x-2 before:top-0 before:h-px before:bg-primary"
+                              : "text-muted-foreground hover:bg-surface-elevated/80 hover:text-foreground",
                             isHover && !isActive && "bg-surface-elevated text-foreground",
                             t.hasError && "text-destructive",
-                            isActive && "border-t border-t-primary"
                           )}
                         >
                           {t.hasError && <AlertCircle className="h-3 w-3" strokeWidth={2} />}
@@ -3304,6 +3540,9 @@ export default function Index() {
                     </div>
                   </div>
                 )}
+                {!activeTab && (
+                  <EmptyState title="No parser output yet" detail="Run a request or select an existing output file to view generated code." />
+                )}
               </div>
             ) : activePanelTab === "response" ? (
               <div className="flex min-h-0 flex-1 flex-col">
@@ -3322,11 +3561,10 @@ export default function Index() {
                             setActiveWorkspaceFile(tab.fileName);
                           }}
                           className={cn(
-                            "group flex cursor-pointer items-center gap-1.5 border-r border-border px-3 py-2 text-[11px] font-mono transition-colors",
+                            fileTabClass,
                             isActive
-                              ? "bg-background text-foreground"
-                              : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground",
-                            isActive && "border-t border-t-primary"
+                              ? "bg-background text-foreground before:absolute before:inset-x-2 before:top-0 before:h-px before:bg-primary"
+                              : "text-muted-foreground hover:bg-surface-elevated/80 hover:text-foreground"
                           )}
                         >
                           <FileCode className={cn("h-3 w-3", isActive ? "text-primary" : "")} strokeWidth={2} />
@@ -3361,7 +3599,7 @@ export default function Index() {
                   {activeResponseJson ? (
                     <ResponseBodyViewer source={activeResponseJson} onAddToParser={addPathToParser} />
                   ) : (
-                    <div className="px-4 py-3 text-[11px] text-muted-foreground">No response yet</div>
+                    <EmptyState title="No response yet" detail="Run the selected request to inspect its response." />
                   )}
                 </div>
               </div>
@@ -3375,9 +3613,9 @@ export default function Index() {
                 </div>
                 <div className="relative min-h-0 flex-1 overflow-auto">
                   {activeResponseJson && !activeResponseIsJson ? (
-                    <div className="px-4 py-3 text-[11px] text-muted-foreground">
-                      JSON parser builder works only for JSON responses.
-                    </div>
+                    <EmptyState title="No parser output yet" detail="JSON parser builder works only for JSON responses." />
+                  ) : !activeWorkspaceArtifact?.parserCode || activeWorkspaceArtifact.parserCode === buildParserStub(activeWorkspaceDisplayName || "request") ? (
+                    <EmptyState title="No parser output yet" detail="Open the parser and select fields to generate parser code." />
                   ) : (
                     <pre className="px-4 py-3">
                       <HighlightedPython code={activeWorkspaceArtifact?.parserCode ?? buildParserStub(activeWorkspaceDisplayName || "request")} />
@@ -3478,9 +3716,81 @@ function normalizeHtmlSource(source: string) {
   }
 }
 
+function extractBalancedJsonLike(text: string, start: number) {
+  const opener = text[start];
+  const closer = opener === "{" ? "}" : "]";
+  let depth = 0;
+  let inString = false;
+  let quote = "";
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === quote) inString = false;
+      continue;
+    }
+    if (char === "'" || char === "\"") {
+      inString = true;
+      quote = char;
+    } else if (char === opener) {
+      depth += 1;
+    } else if (char === closer) {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, index + 1);
+    }
+  }
+  return "";
+}
+
+function parseJsonLike(value: string) {
+  const cleaned = value.trim().replace(/;+\s*$/, "");
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const converted = cleaned
+      .replace(/'/g, "\"")
+      .replace(/([{,]\s*)([A-Za-z_$][\w$-]*)(\s*:)/g, "$1\"$2\"$3")
+      .replace(/,\s*([}\]])/g, "$1")
+      .replace(/\bundefined\b/g, "null")
+      .replace(/\bNaN\b/g, "null");
+    return JSON.parse(converted);
+  }
+}
+
+function extractJsonFromScriptText(script: string): { ok: true; value: unknown } | { ok: false; error: string } {
+  const assignment = /(?:window\.)?[A-Za-z_$][\w$]*(?:\s*=\s*)|(?:var|let|const)\s+[A-Za-z_$][\w$]*\s*=\s*/g;
+  let match: RegExpExecArray | null;
+  while ((match = assignment.exec(script))) {
+    const start = script.slice(match.index + match[0].length).search(/[{[]/);
+    if (start === -1) continue;
+    const absoluteStart = match.index + match[0].length + start;
+    const jsonLike = extractBalancedJsonLike(script, absoluteStart);
+    if (!jsonLike) continue;
+    try {
+      return { ok: true, value: parseJsonLike(jsonLike) };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Could not parse script JSON" };
+    }
+  }
+  return { ok: false, error: "No script JSON assignment found" };
+}
+
 function stringifyJsonValue(value: unknown): string {
   if (typeof value === "string") return value;
   return JSON.stringify(value, null, 2);
+}
+
+function getJsonValueType(value: unknown): string {
+  if (Array.isArray(value)) return "array";
+  if (value === null) return "null";
+  return typeof value;
+}
+
+function getJsonValuePreview(value: unknown): string {
+  const text = stringifyJsonValue(value);
+  return text.length > 500 ? `${text.slice(0, 500)}...` : text;
 }
 
 function formatJsonPath(path: Array<string | number>): string {
@@ -3526,7 +3836,6 @@ function getParserPathWarning(path: string) {
   if (/[.[\]]$/.test(trimmed)) return "Path is incomplete";
   const parts = parseJsonPath(trimmed);
   if (parts.length === 0) return "Path is invalid";
-  if (parts[0] !== "response") return "Path should start with response";
   return "";
 }
 
@@ -3636,6 +3945,7 @@ function getFromExpression(base: string, path: string[]) {
 }
 
 function collectionExpression(base: string, path: string[]) {
+  if (path.length === 0) return base;
   if (path.length === 1) return `${base}.get(${pythonString(path[0])}, [])`;
   return `_get_value(${base}, [${path.map(pythonString).join(", ")}]) or []`;
 }
@@ -3673,7 +3983,7 @@ function emitArrayGroup(lines: string[], group: ParserArrayGroup, base: string, 
   });
 }
 
-function generateParserCode(workspaceName: string, selections: ParserSelection[]) {
+function generateParserCode(workspaceName: string, selections: ParserSelection[], source: "response_json" | "script_json" = "response_json") {
   const functionName = `${sanitizePythonName(workspaceName || "request")}_parser`;
   const usedPaths = new Set<string>();
   const deduped: ParserSelection[] = [];
@@ -3691,6 +4001,11 @@ function generateParserCode(workspaceName: string, selections: ParserSelection[]
 
   deduped.forEach((selection) => {
     const parts = normalizeSelectionParts(selection.path);
+    if (typeof parts[0] === "number") {
+      const group = getOrCreateArrayGroup(groups, "items", []);
+      addSelectionRemainder(group, selection, parts.slice(1));
+      return;
+    }
     if (findNextArray(parts) === -1) {
       const fieldPath = parts.filter((part): part is string => typeof part === "string");
       if (fieldPath.length > 0) {
@@ -3704,7 +4019,9 @@ function generateParserCode(workspaceName: string, selections: ParserSelection[]
   const lines = [
     `def ${functionName}(response):`,
     "    try:",
-    "        data = response.json()",
+    source === "script_json"
+      ? "        data = extract_json_from_script(response.text)"
+      : "        data = response if isinstance(response, (dict, list)) else response.json()",
     "    except Exception:",
     "        return []",
     "",
@@ -3783,14 +4100,14 @@ function getHtmlSelectionKey(selection: ParserSelection) {
 
 function getHtmlSelectorMappingKey(selection: ParserSelection) {
   const selectorType = selection.selectorType ?? "xpath";
-  const selector = (selection.selector || (selectorType === "css" ? selection.css : selection.xpath) || selection.path || "").trim();
-  const parentSelector = (selection.parentSelector || (selectorType === "css" ? selection.parentCss : selection.parentXpath) || "").trim();
-  const relativeSelector = (selectorType === "css"
+  const selector = String(selection.selector || (selectorType === "css" ? selection.css : selection.xpath) || selection.path || "").trim();
+  const parentSelector = String(selection.parentSelector || (selectorType === "css" ? selection.parentCss : selection.parentXpath) || "").trim();
+  const relativeSelector = String((selectorType === "css"
     ? selection.relativeCss || selection.relativeSelector
     : selection.relativeXpath || selection.relativeSelector
-  )?.trim() || "";
+  ) || "").trim();
   const extractMode = selection.extractMode ?? selection.valueMode ?? "text";
-  const attrName = extractMode === "attr" ? (selection.attrName || "").trim() : "";
+  const attrName = extractMode === "attr" ? String(selection.attrName || "").trim() : "";
   return [selectorType, parentSelector, relativeSelector || selector, extractMode, attrName].join("\u0001");
 }
 
@@ -3958,6 +4275,27 @@ function generateHtmlParserCode(workspaceName: string, selections: ParserSelecti
   return lines.join("\n");
 }
 
+function safeGenerateHtmlParserCode(workspaceName: string, selections: ParserSelection[]) {
+  try {
+    return generateHtmlParserCode(workspaceName, selections);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown parser generation error";
+    return [
+      "from parsel import Selector",
+      "",
+      "",
+      `def ${sanitizePythonName(workspaceName || "request")}_parser(response):`,
+      "    try:",
+      "        html = response.text",
+      "    except Exception:",
+      "        return []",
+      "",
+      `    return {"error": ${pythonString(`Parser generation failed: ${message}`)}}`,
+      "",
+    ].join("\n");
+  }
+}
+
 async function copyToClipboard(text: string) {
   if (navigator.clipboard && window.isSecureContext) {
     await navigator.clipboard.writeText(text);
@@ -4117,6 +4455,46 @@ function getRelativeCssSelector(parent: Element, element: Element) {
   return parts.join(" > ");
 }
 
+function getElementAttributes(element: Element): Record<string, string> {
+  return Object.fromEntries(
+    Array.from(element.attributes)
+      .slice(0, 20)
+      .map((attr) => [attr.name, attr.value])
+  );
+}
+
+function createHtmlElementSelection(
+  element: Element,
+  event: React.MouseEvent,
+  container: HTMLDivElement | null,
+): HtmlElementSelection | null {
+  if (!element || !(element instanceof HTMLElement)) return null;
+
+  const rect = container?.getBoundingClientRect();
+  const repeatedParent = getRepeatedParent(element);
+  const tagName = element.tagName.toLowerCase();
+  const xpath = getXPath(element);
+  const cssSelector = getCssSelector(element);
+  const scriptJson = tagName === "script"
+    ? extractJsonFromScriptText(element.textContent || "")
+    : undefined;
+
+  return {
+    tagName,
+    xpath,
+    cssSelector,
+    text: (element.textContent || "").slice(0, 5000),
+    attributes: getElementAttributes(element),
+    parentXpath: repeatedParent ? getXPath(repeatedParent) : undefined,
+    parentCss: repeatedParent ? getCssSelector(repeatedParent) : undefined,
+    relativeXpath: repeatedParent ? getRelativeXPath(repeatedParent, element) : undefined,
+    relativeCss: repeatedParent ? getRelativeCssSelector(repeatedParent, element) : undefined,
+    scriptJson,
+    x: rect ? event.clientX - rect.left : 12,
+    y: rect ? event.clientY - rect.top : 12,
+  };
+}
+
 function ResponseBodyViewer({
   source,
   selectedPath,
@@ -4161,71 +4539,84 @@ function JsonResponseViewer({
   onSelectedPathChange?: (path: string | null, value?: unknown) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [selected, setSelected] = useState<{ path: string; value: unknown; x: number; y: number } | null>(null);
+  const [selected, setSelected] = useState<JsonValueSelection | null>(null);
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   useEffect(() => {
     setSelected(null);
   }, [value]);
 
   return (
-    <div
-      ref={containerRef}
-      className="relative px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) {
-          setSelected(null);
-          onSelectedPathChange?.(null);
-        }
-      }}
-    >
-      {selected && (
-        <div
-          className="absolute z-20 flex items-center gap-3 rounded-sm border border-border bg-background px-2 py-1 text-[11px] shadow-sm"
-          style={{ left: selected.x, top: selected.y + 18 }}
-        >
-          <span className="max-w-[40ch] truncate text-muted-foreground">{selected.path || "root"}</span>
-          <button
-            onClick={() => void copyText(selected.path, "Copied JSON path")}
-            className="rounded-full border border-border px-2 py-0.5 text-primary transition-colors hover:border-border-strong hover:text-foreground"
-          >
-            Copy Path
-          </button>
-          <button
-            onClick={() => void copyText(stringifyJsonValue(selected.value), "Copied value")}
-            className="rounded-full border border-border px-2 py-0.5 text-primary transition-colors hover:border-border-strong hover:text-foreground"
-          >
-            Copy value
-          </button>
-          {onAddToParser && (
-            <button
-              onClick={() => {
-                onAddToParser(selected.path);
-                setSelected(null);
-              }}
-              className="rounded-full border border-border px-2 py-0.5 text-primary transition-colors hover:border-border-strong hover:text-foreground"
-            >
-              Add selected path
-            </button>
-          )}
-        </div>
-      )}
-      <JsonTreeNode
-        value={value}
-        path={["response"]}
-        name="response"
-        selectedPath={selectedPath}
-        addedPaths={addedPaths}
-        onSelect={(path, nodeValue, event) => {
-          const rect = containerRef.current?.getBoundingClientRect();
-          const nextPath = formatJsonPath(path);
-          setSelected({
-            path: nextPath,
-            value: nodeValue,
-            x: rect ? event.clientX - rect.left : 12,
-            y: rect ? event.clientY - rect.top : 12,
-          });
-          onSelectedPathChange?.(nextPath, nodeValue);
+    <div className="flex h-full min-h-0">
+      <div
+        ref={containerRef}
+        className="relative min-w-0 flex-1 overflow-auto px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) {
+            setSelected(null);
+            onSelectedPathChange?.(null);
+          }
         }}
-      />
+      >
+        <JsonTreeNode
+          value={value}
+          path={[]}
+          selectedPath={selectedPath}
+          addedPaths={addedPaths}
+          onSelect={(path, nodeValue, event) => {
+            const rect = containerRef.current?.getBoundingClientRect();
+            const nextPath = formatJsonPath(path);
+            const valueText = stringifyJsonValue(nodeValue);
+            const key = path.length ? String(path[path.length - 1]) : "root";
+            setSelected({
+              keyName: key,
+              path: nextPath,
+              valueType: getJsonValueType(nodeValue),
+              valueText,
+              valuePreview: getJsonValuePreview(nodeValue),
+              x: rect ? event.clientX - rect.left : 12,
+              y: rect ? event.clientY - rect.top : 12,
+            });
+            onSelectedPathChange?.(nextPath, nodeValue);
+          }}
+        />
+      </div>
+      <InspectorPanel
+        title="Inspector"
+        collapsed={inspectorCollapsed}
+        onToggle={() => setInspectorCollapsed((value) => !value)}
+      >
+        {selected ? (
+          <div className="space-y-4">
+            <InspectorRow label="Key">{selected.keyName}</InspectorRow>
+            <InspectorRow label="JSON path">{selected.path || "root"}</InspectorRow>
+            <InspectorRow label="Value type">{selected.valueType}</InspectorRow>
+            <InspectorRow label="Value preview">
+              <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-sm border border-border bg-background/60 p-2 text-[11px] leading-5 text-foreground">
+                {selected.valuePreview}
+              </pre>
+            </InspectorRow>
+            <div className="grid grid-cols-2 gap-2">
+              <InspectorActionButton onClick={() => void copyText(selected.path, "Copied JSON path")}>
+                Copy Path
+              </InspectorActionButton>
+              <InspectorActionButton onClick={() => void copyText(selected.valueText, "Copied value")}>
+                Copy Value
+              </InspectorActionButton>
+              <InspectorActionButton
+                disabled={!onAddToParser}
+                onClick={() => {
+                  if (!onAddToParser) return;
+                  onAddToParser(selected.path);
+                }}
+              >
+                Add Field
+              </InspectorActionButton>
+            </div>
+          </div>
+        ) : (
+          <EmptyState title="Select an element or JSON value to inspect." />
+        )}
+      </InspectorPanel>
     </div>
   );
 }
@@ -4334,22 +4725,19 @@ function HtmlResponseViewer({
   html,
   addedPaths,
   onAddToParser,
+  onOpenScriptJson,
 }: {
   html: string;
   addedPaths?: Set<string>;
   onAddToParser?: (selection: ParserSelection) => void;
+  onOpenScriptJson?: (value: unknown) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [showFullHtml, setShowFullHtml] = useState(html.length < 200000);
   const visibleHtml = showFullHtml ? html : html.slice(0, 200000);
   const documentNode = useMemo(() => new DOMParser().parseFromString(visibleHtml, "text/html"), [visibleHtml]);
-  const [selectedElement, setSelectedElement] = useState<{ element: Element; x: number; y: number } | null>(null);
+  const [selectedElement, setSelectedElement] = useState<HtmlElementSelection | null>(null);
   const root = documentNode.documentElement;
-  const xpath = selectedElement ? getXPath(selectedElement.element) : "";
-  const cssSelector = selectedElement ? getCssSelector(selectedElement.element) : "";
-  const repeatedParent = selectedElement ? getRepeatedParent(selectedElement.element) : null;
-  const parentXpath = repeatedParent ? getXPath(repeatedParent) : undefined;
-  const parentCss = repeatedParent ? getCssSelector(repeatedParent) : undefined;
   useEffect(() => {
     setSelectedElement(null);
     setShowFullHtml(html.length < 200000);
@@ -4360,29 +4748,35 @@ function HtmlResponseViewer({
       ref={containerRef}
       className="relative px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground"
       onClick={(e) => {
+        e.preventDefault();
         if (e.target === e.currentTarget) setSelectedElement(null);
       }}
     >
+      {!selectedElement && (
+        <div className="mb-3 rounded-sm border border-border bg-surface/35 px-3 py-2 text-[11px] text-muted-foreground">
+          Select an element to inspect
+        </div>
+      )}
       {selectedElement && (
         <div
-          className="absolute z-20 flex items-center gap-2 bg-background text-[11px]"
+          className="absolute z-20 flex items-center gap-2 rounded-sm border border-border bg-background px-2 py-1 text-[11px] shadow-sm"
           style={{ left: selectedElement.x, top: selectedElement.y + 18 }}
         >
-          <span className="max-w-[32ch] truncate text-muted-foreground">{selectedElement.element.tagName.toLowerCase()}</span>
+          <span className="max-w-[32ch] truncate text-muted-foreground">{selectedElement.tagName}</span>
           <button
-            onClick={() => void copyText(xpath, "Copied XPath")}
+            onClick={() => void copyText(selectedElement.xpath, "Copied XPath")}
             className="text-primary hover:text-foreground"
           >
             Copy XPath
           </button>
           <button
-            onClick={() => void copyText(cssSelector, "Copied CSS selector")}
+            onClick={() => void copyText(selectedElement.cssSelector, "Copied CSS selector")}
             className="text-primary hover:text-foreground"
           >
             Copy CSS
           </button>
           <button
-            onClick={() => void copyText(selectedElement.element.textContent || "", "Copied text")}
+            onClick={() => void copyText(selectedElement.text, "Copied text")}
             className="text-primary hover:text-foreground"
           >
             Copy Text
@@ -4390,27 +4784,41 @@ function HtmlResponseViewer({
           {onAddToParser && (
             <button
               onClick={() => {
-                onAddToParser({
-                  path: xpath,
-                  selector: xpath,
-                  xpath,
-                  css: cssSelector,
-                  selectorType: "xpath",
-                  outputKey: getOutputKeyFromHtmlSelector(cssSelector || xpath),
-                  extractMode: "text",
-                  valueMode: "text",
-                  parentSelector: parentXpath,
-                  parentSelectorType: repeatedParent ? "xpath" : undefined,
-                  parentXpath,
-                  parentCss,
-                  relativeSelector: repeatedParent ? getRelativeXPath(repeatedParent, selectedElement.element) : undefined,
-                  relativeXpath: repeatedParent ? getRelativeXPath(repeatedParent, selectedElement.element) : undefined,
-                  relativeCss: repeatedParent ? getRelativeCssSelector(repeatedParent, selectedElement.element) : undefined,
-                });
+                try {
+                  onAddToParser({
+                    path: selectedElement.xpath,
+                    selector: selectedElement.xpath,
+                    xpath: selectedElement.xpath,
+                    css: selectedElement.cssSelector,
+                    selectorType: "xpath",
+                    outputKey: getOutputKeyFromHtmlSelector(selectedElement.cssSelector || selectedElement.xpath),
+                    extractMode: "text",
+                    valueMode: "text",
+                    parentSelector: selectedElement.parentXpath,
+                    parentSelectorType: selectedElement.parentXpath ? "xpath" : undefined,
+                    parentXpath: selectedElement.parentXpath,
+                    parentCss: selectedElement.parentCss,
+                    relativeSelector: selectedElement.relativeXpath,
+                    relativeXpath: selectedElement.relativeXpath,
+                    relativeCss: selectedElement.relativeCss,
+                  });
+                } catch (error) {
+                  toast.error(error instanceof Error ? error.message : "Could not add selector");
+                }
               }}
               className="text-primary hover:text-foreground"
             >
               Add to Parser
+            </button>
+          )}
+          {onOpenScriptJson && selectedElement.scriptJson?.ok && (
+            <button
+              onClick={() => {
+                if (selectedElement.scriptJson?.ok) onOpenScriptJson(selectedElement.scriptJson.value);
+              }}
+              className="text-primary hover:text-foreground"
+            >
+              Open Script JSON
             </button>
           )}
         </div>
@@ -4435,15 +4843,17 @@ function HtmlResponseViewer({
           )}
           <HtmlTreeNode
             element={root}
-            selectedElement={selectedElement?.element ?? null}
+            selectedSelector={selectedElement?.xpath ?? null}
             addedPaths={addedPaths}
             onSelect={(element, event) => {
-              const rect = containerRef.current?.getBoundingClientRect();
-              setSelectedElement({
-                element,
-                x: rect ? event.clientX - rect.left : 12,
-                y: rect ? event.clientY - rect.top : 12,
-              });
+              try {
+                const nextSelection = createHtmlElementSelection(element, event, containerRef.current);
+                if (!nextSelection) return;
+                setSelectedElement(nextSelection);
+              } catch (error) {
+                setSelectedElement(null);
+                toast.error(error instanceof Error ? error.message : "Could not inspect element");
+              }
             }}
           />
         </>
@@ -4456,12 +4866,12 @@ function HtmlResponseViewer({
 
 function HtmlTreeNode({
   element,
-  selectedElement,
+  selectedSelector,
   addedPaths,
   onSelect,
 }: {
   element: Element;
-  selectedElement: Element | null;
+  selectedSelector: string | null;
   addedPaths?: Set<string>;
   onSelect: (element: Element, event: React.MouseEvent) => void;
 }) {
@@ -4476,13 +4886,16 @@ function HtmlTreeNode({
     .filter(Boolean)
     .join(" ")
     .slice(0, 80);
-  const isSelected = selectedElement === element;
-  const isAdded = addedPaths?.has(getXPath(element)) || addedPaths?.has(getCssSelector(element));
+  const xpath = getXPath(element);
+  const cssSelector = getCssSelector(element);
+  const isSelected = selectedSelector === xpath;
+  const isAdded = addedPaths?.has(xpath) || addedPaths?.has(cssSelector);
 
   return (
     <div className="pl-3">
       <button
         onClick={(e) => {
+          e.preventDefault();
           e.stopPropagation();
           onSelect(element, e);
         }}
@@ -4504,7 +4917,7 @@ function HtmlTreeNode({
         <HtmlTreeNode
           key={`${child.tagName}-${index}`}
           element={child}
-          selectedElement={selectedElement}
+          selectedSelector={selectedSelector}
           addedPaths={addedPaths}
           onSelect={onSelect}
         />
@@ -4522,6 +4935,84 @@ function PanelHeader({ label, right }: { label: React.ReactNode; right?: React.R
       {typeof label === "string" ? <span className="label-eyebrow">{label}</span> : label}
       {right}
     </div>
+  );
+}
+
+function EmptyState({ title, detail }: { title: string; detail?: string }) {
+  return (
+    <div className="flex h-full min-h-[180px] items-center justify-center px-4 py-8">
+      <div className="max-w-sm rounded-sm border border-border bg-surface/35 px-5 py-4 text-center font-mono">
+        <div className="text-[12px] font-semibold text-foreground">{title}</div>
+        {detail && <div className="mt-1 text-[11px] leading-5 text-muted-foreground">{detail}</div>}
+      </div>
+    </div>
+  );
+}
+
+function InspectorRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="space-y-1">
+      <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">{label}</div>
+      <div className="break-words font-mono text-[11px] leading-5 text-foreground">{children}</div>
+    </div>
+  );
+}
+
+function InspectorActionButton({ children, onClick, disabled }: { children: ReactNode; onClick?: () => void; disabled?: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex h-7 items-center justify-center rounded-sm border border-border bg-background/40 px-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:border-border-strong hover:bg-surface-elevated hover:text-foreground disabled:cursor-not-allowed disabled:opacity-45"
+    >
+      {children}
+    </button>
+  );
+}
+
+function InspectorPanel({
+  title,
+  collapsed,
+  onToggle,
+  children,
+}: {
+  title: string;
+  collapsed: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  if (collapsed) {
+    return (
+      <aside className="flex w-9 shrink-0 items-start justify-center border-l border-border bg-surface/40 py-2">
+        <button
+          onClick={onToggle}
+          className="flex h-7 w-7 items-center justify-center rounded-sm border border-border bg-background/40 text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
+          title="Show inspector"
+          aria-label="Show inspector"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" strokeWidth={2} />
+        </button>
+      </aside>
+    );
+  }
+
+  return (
+    <aside className="flex w-80 shrink-0 flex-col border-l border-border bg-surface/40">
+      <div className="flex h-9 items-center justify-between border-b border-border px-3">
+        <span className="font-mono text-[11px] font-semibold text-foreground">{title}</span>
+        <button
+          onClick={onToggle}
+          className="flex h-6 w-6 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-surface-elevated hover:text-foreground"
+          title="Collapse inspector"
+          aria-label="Collapse inspector"
+        >
+          <ChevronRight className="h-3.5 w-3.5" strokeWidth={2} />
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto p-3">
+        {children}
+      </div>
+    </aside>
   );
 }
 

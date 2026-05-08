@@ -121,6 +121,20 @@ export interface RunWorkspaceResponse {
   error?: string | null;
 }
 
+export interface RunParserRequest {
+  response_content: string;
+  response_type: "html" | "json";
+  parser_code: string;
+  parser_function_name: string;
+}
+
+export interface RunParserResponse {
+  success: boolean;
+  output: unknown | null;
+  output_file_name?: string | null;
+  error?: string | null;
+}
+
 export interface ConversionHistory {
   _id: string;
   user_id: string;
@@ -349,6 +363,13 @@ export async function convertWithBackend(payload: ConvertRequest, accessToken?: 
 
 export async function runWorkspaceWithBackend(payload: RunWorkspaceRequest): Promise<RunWorkspaceResponse> {
   return request<RunWorkspaceResponse>(apiRoutes.runWorkspace, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function runParserWithBackend(payload: RunParserRequest): Promise<RunParserResponse> {
+  return request<RunParserResponse>(apiRoutes.runParser, {
     method: "POST",
     body: JSON.stringify(payload),
   });
