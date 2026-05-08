@@ -65,13 +65,20 @@ interface ParserSelection {
   id?: string;
   path: string;
   outputKey: string;
+  xpath?: string;
+  css?: string;
   selectorType?: "xpath" | "css";
   selector?: string;
+  extractMode?: "text" | "attr" | "html";
   valueMode?: "text" | "attr" | "html";
   attrName?: string;
   parentSelector?: string;
   parentSelectorType?: "xpath" | "css";
+  parentXpath?: string;
+  parentCss?: string;
   relativeSelector?: string;
+  relativeXpath?: string;
+  relativeCss?: string;
 }
 
 interface ProxyConfig {
@@ -1603,7 +1610,8 @@ export default function Index() {
     const targetNames = targetCollection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(targetCollection.snippets);
     const workspaceId = isParserRoute ? parserWorkspaceId : activeResponseTab?.workspaceId || activeWorkspaceId;
     const requestKey = workspaceId ? `${targetCollection.id}:${workspaceId}` : "";
-    const selector = selection.selector || selection.path;
+    const selectorType = selection.selectorType ?? "xpath";
+    const selector = selection.selector || (selectorType === "css" ? selection.css : selection.xpath) || selection.path;
 
     if (!selector || !workspaceId || !requestKey) return;
     const workspaceIndex = targetCollection.snippets.findIndex((snippet) => snippet.id === workspaceId);
@@ -1623,14 +1631,21 @@ export default function Index() {
           id: newId(),
           path: selector,
           selector,
-          selectorType: selection.selectorType ?? "xpath",
-          valueMode: selection.valueMode ?? "text",
-                  attrName: selection.attrName ?? "",
-                  outputKey: uniqueOutputKey(selection.outputKey || getOutputKeyFromHtmlSelector(selector), currentSelections),
-                  parentSelector: selection.parentSelector,
-                  parentSelectorType: selection.parentSelectorType,
-                  relativeSelector: selection.relativeSelector,
-                },
+          xpath: selection.xpath || (selectorType === "xpath" ? selector : ""),
+          css: selection.css || (selectorType === "css" ? selector : ""),
+          selectorType,
+          extractMode: selection.extractMode ?? selection.valueMode ?? "text",
+          valueMode: selection.extractMode ?? selection.valueMode ?? "text",
+          attrName: (selection.extractMode ?? selection.valueMode) === "attr" ? selection.attrName ?? "" : "",
+          outputKey: uniqueOutputKey(selection.outputKey || getOutputKeyFromHtmlSelector(selector), currentSelections),
+          parentSelector: selection.parentSelector,
+          parentSelectorType: selection.parentSelectorType,
+          parentXpath: selection.parentXpath,
+          parentCss: selection.parentCss,
+          relativeSelector: selection.relativeSelector,
+          relativeXpath: selection.relativeXpath,
+          relativeCss: selection.relativeCss,
+        },
       ];
       writeHtmlParserSelectionsToArtifact(targetCollection.id, workspaceId, workspaceName, nextSelections);
       toast.success("Path added");
@@ -1686,16 +1701,33 @@ export default function Index() {
 
     setHtmlParserSelectionsByRequest((prev) => {
       const currentSelections = prev[requestKey] ?? targetCollection.workspaceArtifacts?.[parserWorkspaceId]?.htmlParserSelections ?? [];
-      const nextSelections = currentSelections.map((selection, rowIndex) => (
-        rowIndex === index
-          ? {
-              ...selection,
-              ...patch,
-              path: patch.selector ?? selection.selector ?? selection.path,
-              selector: patch.selector ?? selection.selector ?? selection.path,
-            }
-          : selection
-      ));
+      const nextSelections = currentSelections.map((selection, rowIndex) => {
+        if (rowIndex !== index) return selection;
+        const previousType = selection.selectorType ?? "xpath";
+        const nextType = patch.selectorType ?? previousType;
+        const typedSelector = patch.selector ?? selection.selector ?? selection.path;
+        const nextXpath = patch.xpath ?? (previousType === "xpath" && patch.selector !== undefined ? patch.selector : selection.xpath) ?? (previousType === "xpath" ? typedSelector : "");
+        const nextCss = patch.css ?? (previousType === "css" && patch.selector !== undefined ? patch.selector : selection.css) ?? (previousType === "css" ? typedSelector : "");
+        const visibleSelector = patch.selectorType
+          ? (nextType === "css" ? nextCss || xpathToCssFallback(nextXpath || typedSelector) : nextXpath || cssToXpathFallback(nextCss || typedSelector))
+          : typedSelector;
+        const mode = patch.extractMode ?? patch.valueMode ?? selection.extractMode ?? selection.valueMode ?? "text";
+        const visibleXpath = nextType === "xpath" ? visibleSelector : nextXpath;
+        const visibleCss = nextType === "css" ? visibleSelector : nextCss;
+
+        return {
+          ...selection,
+          ...patch,
+          xpath: visibleXpath,
+          css: visibleCss,
+          selectorType: nextType,
+          extractMode: mode,
+          valueMode: mode,
+          attrName: mode === "attr" ? patch.attrName ?? selection.attrName ?? "" : "",
+          path: visibleSelector,
+          selector: visibleSelector,
+        };
+      });
       writeHtmlParserSelectionsToArtifact(targetCollection.id, parserWorkspaceId, workspaceName, nextSelections);
       return { ...prev, [requestKey]: nextSelections };
     });
@@ -1721,8 +1753,11 @@ export default function Index() {
     addHtmlPathToParser({
       path: "//div",
       selector: "//div",
+      xpath: "//div",
+      css: "div",
       selectorType: "xpath",
       outputKey: uniqueOutputKey("value", htmlParserSelections),
+      extractMode: "text",
       valueMode: "text",
     });
   };
@@ -2425,8 +2460,8 @@ export default function Index() {
                           placeholder="output field"
                         />
                         <select
-                          value={selection.valueMode ?? "text"}
-                          onChange={(event) => updateHtmlParserSelectionRow(index, { valueMode: event.target.value as "text" | "attr" | "html" })}
+                          value={selection.extractMode ?? selection.valueMode ?? "text"}
+                          onChange={(event) => updateHtmlParserSelectionRow(index, { extractMode: event.target.value as "text" | "attr" | "html" })}
                           className="h-8 rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
                         >
                           <option value="text">text</option>
@@ -2436,7 +2471,7 @@ export default function Index() {
                         <input
                           value={selection.attrName ?? ""}
                           onChange={(event) => updateHtmlParserSelectionRow(index, { attrName: event.target.value })}
-                          disabled={(selection.valueMode ?? "text") !== "attr"}
+                          disabled={(selection.extractMode ?? selection.valueMode ?? "text") !== "attr"}
                           className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong disabled:cursor-not-allowed disabled:opacity-40"
                           placeholder="attr name"
                         />
@@ -3705,8 +3740,33 @@ function getOutputKeyFromHtmlSelector(selector: string) {
   return sanitizeOutputKey(match?.[1] || "value");
 }
 
+function xpathToCssFallback(xpath: string) {
+  const trimmed = xpath.trim();
+  const idMatch = trimmed.match(/^\/\/\*\[@id=(['"])(.*?)\1\]$/);
+  if (idMatch) return `#${cssEscape(idMatch[2])}`;
+  const attrMatch = trimmed.match(/^\/\/([A-Za-z][\w-]*)\[@([\w:-]+)=(['"])(.*?)\3\]$/);
+  if (attrMatch) return `${attrMatch[1]}[${attrMatch[2]}="${attrMatch[4].replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"]`;
+  const classMatch = trimmed.match(/^\/\/([A-Za-z][\w-]*)\[contains\(concat\(' ', normalize-space\(@class\), ' '\), ['"] ([^'"]+) ['"]\)\]$/);
+  if (classMatch) return `${classMatch[1]}.${cssEscape(classMatch[2])}`;
+  const tagMatch = trimmed.match(/^\/\/([A-Za-z][\w-]*)(?:\[\d+\])?$/);
+  if (tagMatch) return tagMatch[1];
+  const lastTagMatch = trimmed.match(/\/([A-Za-z][\w-]*)(?:\[\d+\])?$/);
+  return lastTagMatch?.[1] || "*";
+}
+
+function cssToXpathFallback(css: string) {
+  const trimmed = css.trim();
+  if (trimmed.startsWith("#")) return `//*[@id=${xpathLiteral(trimmed.slice(1))}]`;
+  const attrMatch = trimmed.match(/^([A-Za-z][\w-]*)\[([\w:-]+)=["']([^"']+)["']\]$/);
+  if (attrMatch) return `//${attrMatch[1]}[@${attrMatch[2]}=${xpathLiteral(attrMatch[3])}]`;
+  const classMatch = trimmed.match(/^([A-Za-z][\w-]*)\.([A-Za-z0-9_-]+)$/);
+  if (classMatch) return `//${classMatch[1]}[contains(concat(' ', normalize-space(@class), ' '), ${xpathLiteral(` ${classMatch[2]} `)})]`;
+  const tagMatch = trimmed.match(/^([A-Za-z][\w-]*)$/);
+  return tagMatch ? `//${tagMatch[1]}` : "//*";
+}
+
 function getHtmlSelectionKey(selection: ParserSelection) {
-  return `${selection.selectorType || "xpath"}:${selection.selector || selection.path}:${selection.valueMode || "text"}:${selection.attrName || ""}`;
+  return `${selection.selectorType || "xpath"}:${selection.selector || selection.path}:${selection.extractMode || selection.valueMode || "text"}:${selection.attrName || ""}`;
 }
 
 function optimizeHtmlParserSelections(selections: ParserSelection[]) {
@@ -3714,19 +3774,29 @@ function optimizeHtmlParserSelections(selections: ParserSelection[]) {
   const optimized: ParserSelection[] = [];
 
   selections.forEach((selection) => {
-    const selector = (selection.selector || selection.path || "").trim();
+    const selectorType = selection.selectorType ?? "xpath";
+    let selector = (selection.selector || (selectorType === "css" ? selection.css : selection.xpath) || selection.path || "").trim();
+    if (selectorType === "css" && selector.startsWith("//")) selector = xpathToCssFallback(selector);
+    const extractMode = selection.extractMode ?? selection.valueMode ?? "text";
     if (!selector) return;
     const normalized: ParserSelection = {
       ...selection,
       path: selector,
       selector,
-      selectorType: selection.selectorType ?? "xpath",
-      valueMode: selection.valueMode ?? "text",
-      attrName: selection.valueMode === "attr" ? selection.attrName?.trim() || "href" : "",
+      xpath: selection.xpath || (selectorType === "xpath" ? selector : ""),
+      css: selection.css || (selectorType === "css" ? selector : ""),
+      selectorType,
+      extractMode,
+      valueMode: extractMode,
+      attrName: extractMode === "attr" ? selection.attrName?.trim() || "href" : "",
       outputKey: uniqueOutputKey(sanitizeOutputKey(selection.outputKey || getOutputKeyFromHtmlSelector(selector)), optimized),
       parentSelector: selection.parentSelector,
       parentSelectorType: selection.parentSelectorType,
+      parentXpath: selection.parentXpath,
+      parentCss: selection.parentCss,
       relativeSelector: selection.relativeSelector,
+      relativeXpath: selection.relativeXpath,
+      relativeCss: selection.relativeCss,
     };
     const key = getHtmlSelectionKey(normalized);
     if (used.has(key)) return;
@@ -3739,8 +3809,8 @@ function optimizeHtmlParserSelections(selections: ParserSelection[]) {
 
 function pythonSelectorCall(variable: string, selection: ParserSelection) {
   const selectorType = selection.selectorType ?? "xpath";
-  const selector = selection.selector || selection.path;
-  const mode = selection.valueMode ?? "text";
+  const selector = selection.selector || (selectorType === "css" ? selection.css : selection.xpath) || selection.path;
+  const mode = selection.extractMode ?? selection.valueMode ?? "text";
   if (selectorType === "css") {
     if (mode === "attr") return `${variable}.css(${pythonString(`${selector}::attr(${selection.attrName || "href"})`)}).get()`;
     if (mode === "html") return `${variable}.css(${pythonString(selector)}).get()`;
@@ -3752,11 +3822,13 @@ function pythonSelectorCall(variable: string, selection: ParserSelection) {
 }
 
 function makeRelativeHtmlSelection(selection: ParserSelection, parentSelector: string) {
-  if (selection.relativeSelector) {
-    return { ...selection, selector: selection.relativeSelector, path: selection.relativeSelector };
-  }
+  const selectorType = selection.selectorType ?? "xpath";
+  const relativeSelector = selectorType === "css"
+    ? selection.relativeCss || selection.relativeSelector
+    : selection.relativeXpath || selection.relativeSelector;
+  if (relativeSelector) return { ...selection, selector: relativeSelector, path: relativeSelector };
   const selector = selection.selector || selection.path;
-  if ((selection.selectorType ?? "xpath") !== "xpath") return selection;
+  if (selectorType !== "xpath") return selection;
   if (selector.startsWith(".//") || selector.startsWith("./")) return selection;
   if (selector.startsWith(parentSelector)) {
     const rest = selector.slice(parentSelector.length).replace(/^\/+/, "");
@@ -3934,30 +4006,35 @@ function getCssSelector(element: Element): string {
   const parts: string[] = [];
   let current: Element | null = element;
   while (current && current.nodeType === Node.ELEMENT_NODE && current.tagName.toLowerCase() !== "html") {
-    let selector = current.tagName.toLowerCase();
-    const dataAttr = Array.from(current.attributes).find((attr) => attr.name.startsWith("data-") && attr.value);
-    if (dataAttr) {
-      selector += `[${dataAttr.name}="${dataAttr.value.replace(/"/g, "\\\"")}"]`;
-      parts.unshift(selector);
-      break;
-    }
-    const className = current.getAttribute("class");
-    if (className) {
-      const firstClass = className.trim().split(/\s+/)[0];
-      if (firstClass) selector += `.${cssEscape(firstClass)}`;
-    }
+    let selector = getCssSelectorPart(current);
     const parent = current.parentElement;
     if (parent) {
       const sameTagSiblings = Array.from(parent.children).filter((child) => child.tagName === current?.tagName);
-      if (sameTagSiblings.length > 1) {
+      if (!selector.includes("#") && !selector.includes("[") && sameTagSiblings.length > 1) {
         selector += `:nth-of-type(${sameTagSiblings.indexOf(current) + 1})`;
       }
     }
     parts.unshift(selector);
+    if (selector.includes("#") || selector.includes("[")) break;
     current = parent;
   }
 
   return parts.join(" > ");
+}
+
+function getCssSelectorPart(element: Element): string {
+  const tag = element.tagName.toLowerCase();
+  if (element.id) return `#${cssEscape(element.id)}`;
+  const stableAttr = Array.from(element.attributes).find((attr) => (
+    attr.value && (
+      attr.name.startsWith("data-")
+      || ["name", "href", "src", "content", "property", "type", "role", "aria-label"].includes(attr.name)
+    )
+  ));
+  if (stableAttr) return `${tag}[${stableAttr.name}="${stableAttr.value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"]`;
+  const className = element.getAttribute("class");
+  const firstClass = className?.trim().split(/\s+/).find(Boolean);
+  return firstClass ? `${tag}.${cssEscape(firstClass)}` : tag;
 }
 
 function getRepeatedParent(element: Element): Element | null {
@@ -3991,6 +4068,17 @@ function getRelativeXPath(parent: Element, element: Element) {
     current = current.parentElement;
   }
   return parts.length ? `.//${parts.join("/")}` : ".";
+}
+
+function getRelativeCssSelector(parent: Element, element: Element) {
+  if (parent === element) return ":scope";
+  const parts: string[] = [];
+  let current: Element | null = element;
+  while (current && current !== parent) {
+    parts.unshift(getCssSelectorPart(current));
+    current = current.parentElement;
+  }
+  return parts.join(" > ");
 }
 
 function ResponseBodyViewer({
@@ -4224,6 +4312,8 @@ function HtmlResponseViewer({
   const xpath = selectedElement ? getXPath(selectedElement.element) : "";
   const cssSelector = selectedElement ? getCssSelector(selectedElement.element) : "";
   const repeatedParent = selectedElement ? getRepeatedParent(selectedElement.element) : null;
+  const parentXpath = repeatedParent ? getXPath(repeatedParent) : undefined;
+  const parentCss = repeatedParent ? getCssSelector(repeatedParent) : undefined;
   useEffect(() => {
     setSelectedElement(null);
     setShowFullHtml(html.length < 200000);
@@ -4267,12 +4357,19 @@ function HtmlResponseViewer({
                 onAddToParser({
                   path: xpath,
                   selector: xpath,
+                  xpath,
+                  css: cssSelector,
                   selectorType: "xpath",
                   outputKey: getOutputKeyFromHtmlSelector(cssSelector || xpath),
+                  extractMode: "text",
                   valueMode: "text",
-                  parentSelector: repeatedParent ? getXPath(repeatedParent) : undefined,
+                  parentSelector: parentXpath,
                   parentSelectorType: repeatedParent ? "xpath" : undefined,
+                  parentXpath,
+                  parentCss,
                   relativeSelector: repeatedParent ? getRelativeXPath(repeatedParent, selectedElement.element) : undefined,
+                  relativeXpath: repeatedParent ? getRelativeXPath(repeatedParent, selectedElement.element) : undefined,
+                  relativeCss: repeatedParent ? getRelativeCssSelector(repeatedParent, selectedElement.element) : undefined,
                 });
               }}
               className="text-primary hover:text-foreground"
