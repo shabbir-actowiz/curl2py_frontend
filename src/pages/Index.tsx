@@ -11,6 +11,12 @@ import {
 } from "@/lib/curl-to-python";
 import { HighlightedPython } from "@/lib/python-highlight";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   convertWithBackend,
   deleteConversionCollection,
   deleteConversionSnippet,
@@ -52,11 +58,20 @@ type WorkspacePanelTab = "code" | "response" | "parser" | "logs";
 type InputPanelTab = "input" | "proxy";
 type ThemeMode = "dark" | "light";
 type WorkspaceFile = string;
+type ParserBuilderMode = "json" | "html";
+type ParserPageTab = "json" | "jmespath" | "html" | "paths" | "parser";
 
 interface ParserSelection {
   id?: string;
   path: string;
   outputKey: string;
+  selectorType?: "xpath" | "css";
+  selector?: string;
+  valueMode?: "text" | "attr" | "html";
+  attrName?: string;
+  parentSelector?: string;
+  parentSelectorType?: "xpath" | "css";
+  relativeSelector?: string;
 }
 
 interface ProxyConfig {
@@ -73,6 +88,8 @@ interface WorkspaceArtifact {
   logsTxt: string;
   parserCode: string;
   parserSelections?: ParserSelection[];
+  htmlParserSelections?: ParserSelection[];
+  htmlContent?: string;
   parserGenerated?: boolean;
 }
 
@@ -311,14 +328,19 @@ export default function Index() {
   const [activeWorkspaceFile, setActiveWorkspaceFile] = useState<WorkspaceFile>("request.py");
   const [activeInputTab, setActiveInputTab] = useState<InputPanelTab>("input");
   const [activePanelTab, setActivePanelTab] = useState<WorkspacePanelTab>("code");
-  const [parserPageTab, setParserPageTab] = useState<"json" | "jmespath" | "parser">("json");
+  const [parserBuilderMode, setParserBuilderMode] = useState<ParserBuilderMode>("json");
+  const [parserPageTab, setParserPageTab] = useState<ParserPageTab>("json");
   const [selectedParserPath, setSelectedParserPath] = useState<string | null>(null);
   const [selectedParserValue, setSelectedParserValue] = useState<unknown>(null);
   const [selectedParserOutputKey, setSelectedParserOutputKey] = useState("");
   const [parserSelectionsByRequest, setParserSelectionsByRequest] = useState<Record<string, ParserSelection[]>>({});
+  const [htmlParserSelectionsByRequest, setHtmlParserSelectionsByRequest] = useState<Record<string, ParserSelection[]>>({});
   const [manualParserJsonByWorkspace, setManualParserJsonByWorkspace] = useState<Record<string, string>>({});
+  const [manualParserHtmlByWorkspace, setManualParserHtmlByWorkspace] = useState<Record<string, string>>({});
   const [isEditingParserJson, setIsEditingParserJson] = useState(false);
+  const [isEditingParserHtml, setIsEditingParserHtml] = useState(false);
   const [parserJsonDraft, setParserJsonDraft] = useState("");
+  const [parserHtmlDraft, setParserHtmlDraft] = useState("");
   const [theme, setTheme] = useState<ThemeMode>(() => {
     try {
       return window.localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark";
@@ -545,6 +567,7 @@ export default function Index() {
     [activeResponseJson]
   );
   const activeResponseIsJson = activeResponseMode?.kind === "json";
+  const activeResponseIsHtml = isHtmlResponse(activeResponseJson ?? "", activeResponseArtifact?.responseContentType);
   const activeResponseMeta = readWorkspaceMeta(activeResponseArtifact?.metaJson ?? null);
   const parserCollection = parserRouteParams.collectionId
     ? collections[parserRouteParams.collectionId] ?? activeCollection
@@ -558,22 +581,34 @@ export default function Index() {
     : activeResponseWorkspaceName || activeWorkspaceDisplayName || "request";
   const parserArtifact = parserWorkspaceId ? parserCollection.workspaceArtifacts[parserWorkspaceId] : undefined;
   const parserResponseJson = (parserWorkspaceId ? manualParserJsonByWorkspace[parserWorkspaceId] : undefined) ?? parserArtifact?.responseJson ?? null;
+  const parserResponseHtml = (parserWorkspaceId ? manualParserHtmlByWorkspace[parserWorkspaceId] : undefined) ?? parserArtifact?.htmlContent ?? normalizeHtmlSource(parserArtifact?.responseJson ?? "");
   const parserResponseMode = useMemo(
     () => parserResponseJson ? detectResponseMode(parserResponseJson) : null,
     [parserResponseJson]
   );
   const parserResponseIsJson = parserResponseMode?.kind === "json";
+  const parserResponseIsHtml = isHtmlResponse(parserResponseHtml, parserArtifact?.responseContentType);
+  const detectedParserMode: ParserBuilderMode = parserResponseIsHtml && !parserResponseIsJson ? "html" : "json";
   const activeParserRequestKey = parserWorkspaceId ? `${parserCollection.id}:${parserWorkspaceId}` : "";
   const parserSelections = activeParserRequestKey
     ? parserSelectionsByRequest[activeParserRequestKey] ?? parserArtifact?.parserSelections ?? []
+    : [];
+  const htmlParserSelections = activeParserRequestKey
+    ? htmlParserSelectionsByRequest[activeParserRequestKey] ?? parserArtifact?.htmlParserSelections ?? []
     : [];
   const addedParserPaths = useMemo(
     () => new Set(parserSelections.map((selection) => selection.path)),
     [parserSelections]
   );
-  const parserCode = parserSelections.length > 0
-    ? generateParserCode(parserWorkspaceName, parserSelections)
-    : parserArtifact?.parserCode ?? buildParserStub(parserWorkspaceName);
+  const addedHtmlPaths = useMemo(
+    () => new Set(htmlParserSelections.map((selection) => selection.selector || selection.path)),
+    [htmlParserSelections]
+  );
+  const parserCode = parserBuilderMode === "html"
+    ? generateHtmlParserCode(parserWorkspaceName, htmlParserSelections)
+    : parserSelections.length > 0
+      ? generateParserCode(parserWorkspaceName, parserSelections)
+      : parserArtifact?.parserCode ?? buildParserStub(parserWorkspaceName);
 
   const handleParserPathSelect = useCallback((path: string | null, value?: unknown) => {
     setSelectedParserPath(path);
@@ -602,9 +637,32 @@ export default function Index() {
   }, [activeParserRequestKey, parserArtifact?.parserSelections, parserSelectionsByRequest]);
 
   useEffect(() => {
+    if (!activeParserRequestKey || htmlParserSelectionsByRequest[activeParserRequestKey] || !parserArtifact?.htmlParserSelections?.length) return;
+    setHtmlParserSelectionsByRequest((prev) => ({
+      ...prev,
+      [activeParserRequestKey]: parserArtifact.htmlParserSelections ?? [],
+    }));
+  }, [activeParserRequestKey, htmlParserSelectionsByRequest, parserArtifact?.htmlParserSelections]);
+
+  useEffect(() => {
     setParserJsonDraft(parserResponseJson ?? "");
     setIsEditingParserJson(!parserResponseJson && isParserRoute);
   }, [isParserRoute, parserResponseJson, parserWorkspaceId]);
+
+  useEffect(() => {
+    setParserHtmlDraft(parserResponseHtml ?? "");
+    setIsEditingParserHtml(!parserResponseHtml && isParserRoute);
+  }, [isParserRoute, parserResponseHtml, parserWorkspaceId]);
+
+  useEffect(() => {
+    if (!isParserRoute) return;
+    const nextMode = (location.state as { parserMode?: ParserBuilderMode } | null)?.parserMode ?? detectedParserMode;
+    setParserBuilderMode(nextMode);
+    setParserPageTab((current) => {
+      if (nextMode === "html") return current === "paths" || current === "parser" ? current : "html";
+      return current === "jmespath" || current === "parser" ? current : "json";
+    });
+  }, [detectedParserMode, isParserRoute, location.state, parserWorkspaceId]);
 
   useEffect(() => {
     if (!isParserRoute) return;
@@ -1390,6 +1448,49 @@ export default function Index() {
     });
   };
 
+  const writeHtmlParserSelectionsToArtifact = (
+    collectionId: string,
+    workspaceId: string,
+    workspaceName: string,
+    nextSelections: ParserSelection[],
+  ) => {
+    const parserCode = generateHtmlParserCode(workspaceName, nextSelections);
+
+    setCollections((prev) => {
+      const collection = prev[collectionId];
+      if (!collection) return prev;
+      const artifacts = collection.workspaceArtifacts || {};
+      const artifact = artifacts[workspaceId] ?? {
+        responseJson: null,
+        responseFileName: `${workspaceName}_response.html`,
+        responseContentType: "text/html",
+        responseExtension: "html",
+        metaJson: null,
+        logsTxt: `Workspace ${workspaceName} ready`,
+        parserCode: buildParserStub(workspaceName),
+        parserSelections: [],
+        htmlParserSelections: [],
+        parserGenerated: true,
+      };
+
+      return {
+        ...prev,
+        [collectionId]: {
+          ...collection,
+          workspaceArtifacts: {
+            ...artifacts,
+            [workspaceId]: {
+              ...artifact,
+              htmlParserSelections: nextSelections,
+              parserCode,
+              parserGenerated: true,
+            },
+          },
+        },
+      };
+    });
+  };
+
   const addSelectedPathToParser = () => {
     const selectedPath = selectedParserPath;
     const targetCollection = isParserRoute ? parserCollection : activeCollection;
@@ -1497,6 +1598,52 @@ export default function Index() {
     setActiveWorkspaceFile("parser.py");
   };
 
+  const addHtmlPathToParser = (selection: ParserSelection) => {
+    const targetCollection = isParserRoute ? parserCollection : activeCollection;
+    const targetNames = targetCollection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(targetCollection.snippets);
+    const workspaceId = isParserRoute ? parserWorkspaceId : activeResponseTab?.workspaceId || activeWorkspaceId;
+    const requestKey = workspaceId ? `${targetCollection.id}:${workspaceId}` : "";
+    const selector = selection.selector || selection.path;
+
+    if (!selector || !workspaceId || !requestKey) return;
+    const workspaceIndex = targetCollection.snippets.findIndex((snippet) => snippet.id === workspaceId);
+    if (workspaceIndex === -1) return;
+    const workspaceName = targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
+
+    setHtmlParserSelectionsByRequest((prev) => {
+      const currentSelections = prev[requestKey] ?? targetCollection.workspaceArtifacts?.[workspaceId]?.htmlParserSelections ?? [];
+      if (currentSelections.some((item) => (item.selector || item.path) === selector && item.selectorType === selection.selectorType)) {
+        toast.info("Path already added");
+        return prev;
+      }
+
+      const nextSelections = [
+        ...currentSelections,
+        {
+          id: newId(),
+          path: selector,
+          selector,
+          selectorType: selection.selectorType ?? "xpath",
+          valueMode: selection.valueMode ?? "text",
+                  attrName: selection.attrName ?? "",
+                  outputKey: uniqueOutputKey(selection.outputKey || getOutputKeyFromHtmlSelector(selector), currentSelections),
+                  parentSelector: selection.parentSelector,
+                  parentSelectorType: selection.parentSelectorType,
+                  relativeSelector: selection.relativeSelector,
+                },
+      ];
+      writeHtmlParserSelectionsToArtifact(targetCollection.id, workspaceId, workspaceName, nextSelections);
+      toast.success("Path added");
+      return {
+        ...prev,
+        [requestKey]: nextSelections,
+      };
+    });
+
+    setActiveWorkspaceId(workspaceId);
+    setActiveWorkspaceFile("parser.py");
+  };
+
   const updateParserSelectionsForWorkspace = (
     workspaceId: string,
     updater: ParserSelection[] | ((prev: ParserSelection[]) => ParserSelection[]),
@@ -1528,6 +1675,32 @@ export default function Index() {
     )));
   };
 
+  const updateHtmlParserSelectionRow = (index: number, patch: Partial<ParserSelection>) => {
+    if (!parserWorkspaceId) return;
+    const targetCollection = isParserRoute ? parserCollection : activeCollection;
+    const targetNames = targetCollection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(targetCollection.snippets);
+    const workspaceIndex = targetCollection.snippets.findIndex((snippet) => snippet.id === parserWorkspaceId);
+    if (workspaceIndex === -1) return;
+    const workspaceName = targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
+    const requestKey = `${targetCollection.id}:${parserWorkspaceId}`;
+
+    setHtmlParserSelectionsByRequest((prev) => {
+      const currentSelections = prev[requestKey] ?? targetCollection.workspaceArtifacts?.[parserWorkspaceId]?.htmlParserSelections ?? [];
+      const nextSelections = currentSelections.map((selection, rowIndex) => (
+        rowIndex === index
+          ? {
+              ...selection,
+              ...patch,
+              path: patch.selector ?? selection.selector ?? selection.path,
+              selector: patch.selector ?? selection.selector ?? selection.path,
+            }
+          : selection
+      ));
+      writeHtmlParserSelectionsToArtifact(targetCollection.id, parserWorkspaceId, workspaceName, nextSelections);
+      return { ...prev, [requestKey]: nextSelections };
+    });
+  };
+
   const addManualParserPath = () => {
     if (!parserWorkspaceId) return;
     updateParserSelectionsForWorkspace(parserWorkspaceId, (prev) => [
@@ -1542,6 +1715,33 @@ export default function Index() {
   const deleteParserSelectionRow = (index: number) => {
     if (!parserWorkspaceId) return;
     updateParserSelectionsForWorkspace(parserWorkspaceId, (prev) => prev.filter((_, rowIndex) => rowIndex !== index));
+  };
+
+  const addManualHtmlPath = () => {
+    addHtmlPathToParser({
+      path: "//div",
+      selector: "//div",
+      selectorType: "xpath",
+      outputKey: uniqueOutputKey("value", htmlParserSelections),
+      valueMode: "text",
+    });
+  };
+
+  const deleteHtmlParserSelectionRow = (index: number) => {
+    if (!parserWorkspaceId) return;
+    const targetCollection = isParserRoute ? parserCollection : activeCollection;
+    const targetNames = targetCollection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(targetCollection.snippets);
+    const workspaceIndex = targetCollection.snippets.findIndex((snippet) => snippet.id === parserWorkspaceId);
+    if (workspaceIndex === -1) return;
+    const workspaceName = targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
+    const requestKey = `${targetCollection.id}:${parserWorkspaceId}`;
+
+    setHtmlParserSelectionsByRequest((prev) => {
+      const currentSelections = prev[requestKey] ?? targetCollection.workspaceArtifacts?.[parserWorkspaceId]?.htmlParserSelections ?? [];
+      const nextSelections = currentSelections.filter((_, rowIndex) => rowIndex !== index);
+      writeHtmlParserSelectionsToArtifact(targetCollection.id, parserWorkspaceId, workspaceName, nextSelections);
+      return { ...prev, [requestKey]: nextSelections };
+    });
   };
 
   const saveParserJson = () => {
@@ -1560,6 +1760,20 @@ export default function Index() {
     }
   };
 
+  const saveParserHtml = () => {
+    if (!parserWorkspaceId) return;
+    if (!parserHtmlDraft.trim()) {
+      toast.error("HTML cannot be empty.");
+      return;
+    }
+    setManualParserHtmlByWorkspace((prev) => ({
+      ...prev,
+      [parserWorkspaceId]: parserHtmlDraft,
+    }));
+    setIsEditingParserHtml(false);
+    toast.success("HTML saved");
+  };
+
   const optimizeParserForWorkspace = (workspaceId: string) => {
     if (!workspaceId) return;
     const targetCollection = isParserRoute ? parserCollection : activeCollection;
@@ -1573,6 +1787,24 @@ export default function Index() {
     setParserSelectionsByRequest((prev) => ({
       ...prev,
       [`${targetCollection.id}:${workspaceId}`]: selections,
+    }));
+    toast.success("Parser optimized");
+  };
+
+  const optimizeHtmlParserForWorkspace = (workspaceId: string) => {
+    if (!workspaceId) return;
+    const targetCollection = isParserRoute ? parserCollection : activeCollection;
+    const targetNames = targetCollection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(targetCollection.snippets);
+    const workspaceIndex = targetCollection.snippets.findIndex((snippet) => snippet.id === workspaceId);
+    if (workspaceIndex === -1) return;
+    const workspaceName = targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
+    const requestKey = `${targetCollection.id}:${workspaceId}`;
+    const currentSelections = htmlParserSelectionsByRequest[requestKey] ?? targetCollection.workspaceArtifacts?.[workspaceId]?.htmlParserSelections ?? [];
+    const selections = optimizeHtmlParserSelections(currentSelections);
+    writeHtmlParserSelectionsToArtifact(targetCollection.id, workspaceId, workspaceName, selections);
+    setHtmlParserSelectionsByRequest((prev) => ({
+      ...prev,
+      [requestKey]: selections,
     }));
     toast.success("Parser optimized");
   };
@@ -1596,13 +1828,18 @@ export default function Index() {
     }
   };
 
-  const openParserPage = () => {
+  const openParserPage = (mode?: ParserBuilderMode) => {
     const workspaceId = activeResponseTab?.workspaceId || activeWorkspaceId;
+    const nextMode = mode ?? (activeResponseIsHtml && !activeResponseIsJson ? "html" : "json");
     if (!workspaceId) {
-      navigate("/parser");
+      setParserBuilderMode(nextMode);
+      setParserPageTab(nextMode === "html" ? "html" : "json");
+      navigate("/parser", { state: { parserMode: nextMode } });
       return;
     }
 
+    setParserBuilderMode(nextMode);
+    setParserPageTab(nextMode === "html" ? "html" : "json");
     setActiveWorkspaceId(workspaceId);
     setActiveWorkspaceFile("parser.py");
     navigate(`/parser/${encodeURIComponent(activeCollection.id)}/${encodeURIComponent(workspaceId)}`, {
@@ -1610,6 +1847,7 @@ export default function Index() {
         collectionId: activeCollection.id,
         snippetId: workspaceId,
         responseFile: workspaceArtifacts[workspaceId]?.responseFileName,
+        parserMode: nextMode,
       },
     });
   };
@@ -1902,8 +2140,11 @@ export default function Index() {
   if (isParserRoute) {
     const canUseParser = !!parserWorkspaceId;
     const hasResponse = !!parserResponseJson;
+    const hasHtml = !!parserResponseHtml;
     const canShowJsonParser = hasResponse && parserResponseIsJson;
-    const parserJsonEditorVisible = parserPageTab === "json" && isEditingParserJson;
+    const parserJsonEditorVisible = parserBuilderMode === "json" && parserPageTab === "json" && isEditingParserJson;
+    const parserHtmlEditorVisible = parserBuilderMode === "html" && parserPageTab === "html" && isEditingParserHtml;
+    const parserTabs: ParserPageTab[] = parserBuilderMode === "html" ? ["html", "paths", "parser"] : ["json", "jmespath", "parser"];
 
     return (
       <div className="flex h-screen flex-col bg-background text-foreground">
@@ -1927,7 +2168,7 @@ export default function Index() {
                 {selectedParserPath} {"->"} {selectedParserOutputKey || "value"}
               </span>
             )}
-            {parserPageTab === "json" && (
+            {parserBuilderMode === "json" && parserPageTab === "json" && (
               <>
                 <button
                   onClick={() => void copyText(parserJsonEditorVisible ? parserJsonDraft : parserResponseJson ?? parserJsonDraft, "Copied JSON")}
@@ -1956,13 +2197,42 @@ export default function Index() {
                 )}
               </>
             )}
+            {parserBuilderMode === "html" && parserPageTab === "html" && (
+              <>
+                <button
+                  onClick={() => void copyText(parserHtmlEditorVisible ? parserHtmlDraft : parserResponseHtml || parserHtmlDraft, "Copied HTML")}
+                  disabled={!canUseParser || (!parserResponseHtml && !parserHtmlDraft)}
+                  className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Copy className="h-3 w-3" strokeWidth={2} />
+                  Copy HTML
+                </button>
+                {parserHtmlEditorVisible ? (
+                  <button
+                    onClick={saveParserHtml}
+                    disabled={!canUseParser}
+                    className="flex items-center gap-1.5 rounded-sm border border-primary/60 bg-primary/10 px-2.5 py-1 text-[11px] text-primary transition-colors hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Save HTML
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setIsEditingParserHtml(true)}
+                    disabled={!canUseParser}
+                    className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Edit HTML
+                  </button>
+                )}
+              </>
+            )}
             {parserPageTab === "parser" && (
               <>
                 <button
-                  onClick={() => parserWorkspaceId && optimizeParserForWorkspace(parserWorkspaceId)}
+                  onClick={() => parserWorkspaceId && (parserBuilderMode === "html" ? optimizeHtmlParserForWorkspace(parserWorkspaceId) : optimizeParserForWorkspace(parserWorkspaceId))}
                   disabled={!canUseParser}
                   className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                  title="Rebuild parser from selected JSON paths"
+                  title={parserBuilderMode === "html" ? "Merge and clean HTML selectors" : "Rebuild parser from selected JSON paths"}
                 >
                   Optimize Parser
                 </button>
@@ -1990,7 +2260,7 @@ export default function Index() {
         <main className="flex min-h-0 flex-1 flex-col">
           <div className="flex items-center justify-between border-b border-border bg-surface">
             <div className="flex min-w-0 flex-1 items-center gap-0 overflow-x-auto scrollbar-thin">
-              {(["json", "jmespath", "parser"] as const).map((tab) => (
+              {parserTabs.map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setParserPageTab(tab)}
@@ -2001,13 +2271,13 @@ export default function Index() {
                       : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground"
                   )}
                 >
-                  {tab === "json" ? "JSON" : tab === "jmespath" ? "JMESPath" : "Parser"}
+                  {tab === "json" ? "JSON" : tab === "jmespath" ? "JMESPath" : tab === "html" ? "HTML" : tab === "paths" ? "Paths" : "Parser"}
                 </button>
               ))}
             </div>
           </div>
 
-          {parserPageTab === "json" ? (
+          {parserBuilderMode === "json" && parserPageTab === "json" ? (
             <div className="relative min-h-0 flex-1 overflow-auto">
               {parserJsonEditorVisible ? (
                 <textarea
@@ -2042,7 +2312,7 @@ export default function Index() {
                 <div className="px-4 py-3 text-[11px] text-muted-foreground">JSON parser builder works only for JSON responses.</div>
               )}
             </div>
-          ) : parserPageTab === "jmespath" ? (
+          ) : parserBuilderMode === "json" && parserPageTab === "jmespath" ? (
             <div className="flex min-h-0 flex-1 flex-col">
               <div className="flex items-center justify-between border-b border-border bg-background px-4 py-1.5">
                 <span className="font-mono text-[11px] text-muted-foreground">{parserSelections.length} selected path{parserSelections.length === 1 ? "" : "s"}</span>
@@ -2088,6 +2358,97 @@ export default function Index() {
                         </div>
                       );
                     })}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : parserBuilderMode === "html" && parserPageTab === "html" ? (
+            <div className="relative min-h-0 flex-1 overflow-auto">
+              {parserHtmlEditorVisible || !hasHtml ? (
+                <textarea
+                  value={parserHtmlDraft}
+                  onChange={(event) => {
+                    setParserHtmlDraft(event.target.value);
+                    setIsEditingParserHtml(true);
+                  }}
+                  onPaste={() => setIsEditingParserHtml(true)}
+                  spellCheck={false}
+                  placeholder={"<html>\n  <body></body>\n</html>"}
+                  className="block h-full min-h-full w-full resize-none bg-background px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground caret-primary outline-none placeholder:text-muted-foreground/50"
+                />
+              ) : (
+                <HtmlResponseViewer
+                  html={parserResponseHtml}
+                  addedPaths={addedHtmlPaths}
+                  onAddToParser={addHtmlPathToParser}
+                />
+              )}
+            </div>
+          ) : parserBuilderMode === "html" && parserPageTab === "paths" ? (
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className="flex items-center justify-between border-b border-border bg-background px-4 py-1.5">
+                <span className="font-mono text-[11px] text-muted-foreground">{htmlParserSelections.length} selected path{htmlParserSelections.length === 1 ? "" : "s"}</span>
+                <button
+                  onClick={addManualHtmlPath}
+                  disabled={!canUseParser}
+                  className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Plus className="h-3 w-3" strokeWidth={2} />
+                  Add Path
+                </button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
+                {htmlParserSelections.length === 0 ? (
+                  <div className="text-[11px] text-muted-foreground">No paths selected</div>
+                ) : (
+                  <div className="space-y-2">
+                    {htmlParserSelections.map((selection, index) => (
+                      <div key={`${selection.selector || selection.path}-${index}`} className="grid gap-1 md:grid-cols-[96px_minmax(0,1fr)_180px_120px_150px_28px] md:items-start">
+                        <select
+                          value={selection.selectorType ?? "xpath"}
+                          onChange={(event) => updateHtmlParserSelectionRow(index, { selectorType: event.target.value as "xpath" | "css" })}
+                          className="h-8 rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
+                        >
+                          <option value="xpath">xpath</option>
+                          <option value="css">css</option>
+                        </select>
+                        <input
+                          value={selection.selector || selection.path}
+                          onChange={(event) => updateHtmlParserSelectionRow(index, { selector: event.target.value, path: event.target.value })}
+                          className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
+                          placeholder="selector"
+                        />
+                        <input
+                          value={selection.outputKey}
+                          onChange={(event) => updateHtmlParserSelectionRow(index, { outputKey: event.target.value })}
+                          className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
+                          placeholder="output field"
+                        />
+                        <select
+                          value={selection.valueMode ?? "text"}
+                          onChange={(event) => updateHtmlParserSelectionRow(index, { valueMode: event.target.value as "text" | "attr" | "html" })}
+                          className="h-8 rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
+                        >
+                          <option value="text">text</option>
+                          <option value="attr">attr</option>
+                          <option value="html">html</option>
+                        </select>
+                        <input
+                          value={selection.attrName ?? ""}
+                          onChange={(event) => updateHtmlParserSelectionRow(index, { attrName: event.target.value })}
+                          disabled={(selection.valueMode ?? "text") !== "attr"}
+                          className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong disabled:cursor-not-allowed disabled:opacity-40"
+                          placeholder="attr name"
+                        />
+                        <button
+                          onClick={() => deleteHtmlParserSelectionRow(index)}
+                          className="flex h-8 w-8 items-center justify-center rounded-sm border border-border bg-transparent text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
+                          aria-label={`Delete ${selection.selector || selection.path}`}
+                        >
+                          <Trash2 className="h-3 w-3" strokeWidth={2} />
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
@@ -2771,15 +3132,27 @@ export default function Index() {
                 ))}
               </div>
               <div className="flex items-center gap-2 pr-3">
-                <button
-                  onClick={openParserPage}
-                  disabled={!activeWorkspaceId}
-                  className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                  title={activeWorkspaceId ? `Open parser for ${activeWorkspaceDisplayName}` : "Select a workspace to parse"}
-                >
-                  <FileCode className="h-4 w-4" strokeWidth={2} />
-                  Parser
-                </button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      disabled={!activeWorkspaceId}
+                      className="flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                      title={activeWorkspaceId ? `Open parser for ${activeWorkspaceDisplayName}` : "Select a workspace to parse"}
+                    >
+                      <FileCode className="h-4 w-4" strokeWidth={2} />
+                      Parser
+                      <ChevronDown className="h-3 w-3" strokeWidth={2} />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="border-border bg-background text-foreground">
+                    <DropdownMenuItem className="text-[11px]" onClick={() => openParserPage("json")}>
+                      JSON Parser
+                    </DropdownMenuItem>
+                    <DropdownMenuItem className="text-[11px]" onClick={() => openParserPage("html")}>
+                      HTML Parser
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <button
                   onClick={() => void handleRunActiveWorkspace()}
                   disabled={!activeWorkspaceId || isRunning}
@@ -3039,6 +3412,22 @@ function detectResponseMode(source: string): ResponseMode {
     return { kind: "json", value: parsed };
   } catch {
     return { kind: "html", value: source };
+  }
+}
+
+function isHtmlResponse(source: string, contentType?: string) {
+  const type = (contentType || "").toLowerCase();
+  if (type.includes("text/html") || type.includes("html")) return true;
+  const trimmed = source.trim().toLowerCase();
+  return trimmed.startsWith("<!doctype html") || trimmed.startsWith("<html") || /<body[\s>]/i.test(source);
+}
+
+function normalizeHtmlSource(source: string) {
+  try {
+    const parsed = JSON.parse(source);
+    return typeof parsed === "string" ? parsed : source;
+  } catch {
+    return source;
   }
 }
 
@@ -3311,6 +3700,156 @@ function generateParserCode(workspaceName: string, selections: ParserSelection[]
   return lines.join("\n");
 }
 
+function getOutputKeyFromHtmlSelector(selector: string) {
+  const match = selector.match(/[#.]([A-Za-z0-9_-]+)(?!.*[#.][A-Za-z0-9_-]+)/) || selector.match(/([A-Za-z][A-Za-z0-9_-]*)\s*$/);
+  return sanitizeOutputKey(match?.[1] || "value");
+}
+
+function getHtmlSelectionKey(selection: ParserSelection) {
+  return `${selection.selectorType || "xpath"}:${selection.selector || selection.path}:${selection.valueMode || "text"}:${selection.attrName || ""}`;
+}
+
+function optimizeHtmlParserSelections(selections: ParserSelection[]) {
+  const used = new Set<string>();
+  const optimized: ParserSelection[] = [];
+
+  selections.forEach((selection) => {
+    const selector = (selection.selector || selection.path || "").trim();
+    if (!selector) return;
+    const normalized: ParserSelection = {
+      ...selection,
+      path: selector,
+      selector,
+      selectorType: selection.selectorType ?? "xpath",
+      valueMode: selection.valueMode ?? "text",
+      attrName: selection.valueMode === "attr" ? selection.attrName?.trim() || "href" : "",
+      outputKey: uniqueOutputKey(sanitizeOutputKey(selection.outputKey || getOutputKeyFromHtmlSelector(selector)), optimized),
+      parentSelector: selection.parentSelector,
+      parentSelectorType: selection.parentSelectorType,
+      relativeSelector: selection.relativeSelector,
+    };
+    const key = getHtmlSelectionKey(normalized);
+    if (used.has(key)) return;
+    used.add(key);
+    optimized.push(normalized);
+  });
+
+  return optimized;
+}
+
+function pythonSelectorCall(variable: string, selection: ParserSelection) {
+  const selectorType = selection.selectorType ?? "xpath";
+  const selector = selection.selector || selection.path;
+  const mode = selection.valueMode ?? "text";
+  if (selectorType === "css") {
+    if (mode === "attr") return `${variable}.css(${pythonString(`${selector}::attr(${selection.attrName || "href"})`)}).get()`;
+    if (mode === "html") return `${variable}.css(${pythonString(selector)}).get()`;
+    return `${variable}.css(${pythonString(`${selector}::text`)}).get()`;
+  }
+  if (mode === "attr") return `${variable}.xpath(${pythonString(`${selector}/@${selection.attrName || "href"}`)}).get()`;
+  if (mode === "html") return `${variable}.xpath(${pythonString(selector)}).get()`;
+  return `${variable}.xpath(${pythonString(`${selector}/text()`)}).get()`;
+}
+
+function makeRelativeHtmlSelection(selection: ParserSelection, parentSelector: string) {
+  if (selection.relativeSelector) {
+    return { ...selection, selector: selection.relativeSelector, path: selection.relativeSelector };
+  }
+  const selector = selection.selector || selection.path;
+  if ((selection.selectorType ?? "xpath") !== "xpath") return selection;
+  if (selector.startsWith(".//") || selector.startsWith("./")) return selection;
+  if (selector.startsWith(parentSelector)) {
+    const rest = selector.slice(parentSelector.length).replace(/^\/+/, "");
+    return { ...selection, selector: rest ? `.//${rest}` : ".", path: rest ? `.//${rest}` : "." };
+  }
+  return selection;
+}
+
+function getRepeatedParentGroups(selections: ParserSelection[]) {
+  const groups = new Map<string, ParserSelection[]>();
+  selections.forEach((selection) => {
+    if (!selection.parentSelector) return;
+    const key = `${selection.parentSelectorType || selection.selectorType || "xpath"}:${selection.parentSelector}`;
+    groups.set(key, [...(groups.get(key) || []), selection]);
+  });
+  return Array.from(groups.entries()).filter(([, items]) => items.length > 1);
+}
+
+function generateHtmlParserCode(workspaceName: string, selections: ParserSelection[]) {
+  const functionName = `${sanitizePythonName(workspaceName || "request")}_parser`;
+  const optimized = optimizeHtmlParserSelections(selections);
+  const repeatedGroups = getRepeatedParentGroups(optimized);
+  const groupedKeys = new Set(repeatedGroups.flatMap(([, items]) => items.map(getHtmlSelectionKey)));
+  const rootSelections = optimized.filter((selection) => !groupedKeys.has(getHtmlSelectionKey(selection)));
+
+  const lines = [
+    "from parsel import Selector",
+    "",
+    "",
+    `def ${functionName}(response):`,
+    "    try:",
+    "        html = response.text",
+    "    except Exception:",
+    "        return []",
+    "",
+    "    if not html:",
+    "        return []",
+    "",
+    "    selector = Selector(text=html)",
+    "",
+  ];
+
+  if (repeatedGroups.length === 0) {
+    lines.push("    return {");
+    rootSelections.forEach((selection, index) => {
+      const comma = index < rootSelections.length - 1 ? "," : "";
+      lines.push(`        ${pythonString(sanitizeOutputKey(selection.outputKey || getOutputKeyFromHtmlSelector(selection.selector || selection.path)))}: ${pythonSelectorCall("selector", selection)}${comma}`);
+    });
+    if (rootSelections.length === 0) lines.push("        # Add selectors in the Paths tab.");
+    lines.push("    }");
+    lines.push("");
+    return lines.join("\n");
+  }
+
+  lines.push("    results = []");
+  lines.push("");
+  repeatedGroups.forEach(([key, items], groupIndex) => {
+    const [parentType, ...selectorParts] = key.split(":");
+    const parentSelector = selectorParts.join(":");
+    const parentCall = parentType === "css"
+      ? `selector.css(${pythonString(parentSelector)})`
+      : `selector.xpath(${pythonString(parentSelector)})`;
+    if (groupIndex > 0) lines.push("");
+    lines.push(`    items = ${parentCall}`);
+    lines.push("");
+    lines.push("    for item in items:");
+    lines.push("        results.append({");
+    items.forEach((selection, index) => {
+      const relative = makeRelativeHtmlSelection(selection, parentSelector);
+      const comma = index < items.length - 1 ? "," : "";
+      lines.push(`            ${pythonString(sanitizeOutputKey(selection.outputKey || getOutputKeyFromHtmlSelector(selection.selector || selection.path)))}: ${pythonSelectorCall("item", relative)}${comma}`);
+    });
+    lines.push("        })");
+  });
+
+  if (rootSelections.length > 0) {
+    lines.push("");
+    lines.push("    summary = {");
+    rootSelections.forEach((selection, index) => {
+      const comma = index < rootSelections.length - 1 ? "," : "";
+      lines.push(`        ${pythonString(sanitizeOutputKey(selection.outputKey || getOutputKeyFromHtmlSelector(selection.selector || selection.path)))}: ${pythonSelectorCall("selector", selection)}${comma}`);
+    });
+    lines.push("    }");
+    lines.push("    if any(value is not None for value in summary.values()):");
+    lines.push("        results.append(summary)");
+  }
+
+  lines.push("");
+  lines.push("    return results");
+  lines.push("");
+  return lines.join("\n");
+}
+
 async function copyToClipboard(text: string) {
   if (navigator.clipboard && window.isSecureContext) {
     await navigator.clipboard.writeText(text);
@@ -3362,10 +3901,18 @@ function getXPath(element: Element): string {
   if (element.id) {
     return `//*[@id=${xpathLiteral(element.id)}]`;
   }
+  const className = element.getAttribute("class")?.trim().split(/\s+/).find(Boolean);
+  if (className) {
+    return `//${element.tagName.toLowerCase()}[contains(concat(' ', normalize-space(@class), ' '), ${xpathLiteral(` ${className} `)})]`;
+  }
+  const dataAttr = Array.from(element.attributes).find((attr) => attr.name.startsWith("data-") && attr.value);
+  if (dataAttr) {
+    return `//${element.tagName.toLowerCase()}[@${dataAttr.name}=${xpathLiteral(dataAttr.value)}]`;
+  }
 
   const parts: string[] = [];
   let current: Element | null = element;
-  while (current && current.nodeType === Node.ELEMENT_NODE) {
+  while (current && current.nodeType === Node.ELEMENT_NODE && current.tagName.toLowerCase() !== "html") {
     let index = 1;
     let sibling = current.previousElementSibling;
     while (sibling) {
@@ -3376,7 +3923,7 @@ function getXPath(element: Element): string {
     current = current.parentElement;
   }
 
-  return `/${parts.join("/")}`;
+  return `//${parts.join("/")}`;
 }
 
 function getCssSelector(element: Element): string {
@@ -3388,6 +3935,12 @@ function getCssSelector(element: Element): string {
   let current: Element | null = element;
   while (current && current.nodeType === Node.ELEMENT_NODE && current.tagName.toLowerCase() !== "html") {
     let selector = current.tagName.toLowerCase();
+    const dataAttr = Array.from(current.attributes).find((attr) => attr.name.startsWith("data-") && attr.value);
+    if (dataAttr) {
+      selector += `[${dataAttr.name}="${dataAttr.value.replace(/"/g, "\\\"")}"]`;
+      parts.unshift(selector);
+      break;
+    }
     const className = current.getAttribute("class");
     if (className) {
       const firstClass = className.trim().split(/\s+/)[0];
@@ -3405,6 +3958,39 @@ function getCssSelector(element: Element): string {
   }
 
   return parts.join(" > ");
+}
+
+function getRepeatedParent(element: Element): Element | null {
+  let current: Element | null = element.parentElement;
+  while (current && current.tagName.toLowerCase() !== "html") {
+    const parent = current.parentElement;
+    if (!parent) return null;
+    const className = current.getAttribute("class")?.trim().split(/\s+/).find(Boolean);
+    const matches = Array.from(parent.children).filter((child) => {
+      if (child.tagName !== current?.tagName) return false;
+      if (!className) return true;
+      return child.classList.contains(className);
+    });
+    if (matches.length > 1) return current;
+    current = parent;
+  }
+  return null;
+}
+
+function getRelativeXPath(parent: Element, element: Element) {
+  if (parent === element) return ".";
+  const parts: string[] = [];
+  let current: Element | null = element;
+  while (current && current !== parent) {
+    let selector = current.tagName.toLowerCase();
+    const className = current.getAttribute("class")?.trim().split(/\s+/).find(Boolean);
+    if (className) {
+      selector += `[contains(concat(' ', normalize-space(@class), ' '), ${xpathLiteral(` ${className} `)})]`;
+    }
+    parts.unshift(selector);
+    current = current.parentElement;
+  }
+  return parts.length ? `.//${parts.join("/")}` : ".";
 }
 
 function ResponseBodyViewer({
@@ -3620,14 +4206,28 @@ function JsonTreeNode({
   );
 }
 
-function HtmlResponseViewer({ html }: { html: string }) {
+function HtmlResponseViewer({
+  html,
+  addedPaths,
+  onAddToParser,
+}: {
+  html: string;
+  addedPaths?: Set<string>;
+  onAddToParser?: (selection: ParserSelection) => void;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const documentNode = useMemo(() => new DOMParser().parseFromString(html, "text/html"), [html]);
+  const [showFullHtml, setShowFullHtml] = useState(html.length < 200000);
+  const visibleHtml = showFullHtml ? html : html.slice(0, 200000);
+  const documentNode = useMemo(() => new DOMParser().parseFromString(visibleHtml, "text/html"), [visibleHtml]);
   const [selectedElement, setSelectedElement] = useState<{ element: Element; x: number; y: number } | null>(null);
   const root = documentNode.documentElement;
   const xpath = selectedElement ? getXPath(selectedElement.element) : "";
   const cssSelector = selectedElement ? getCssSelector(selectedElement.element) : "";
-  useEffect(() => setSelectedElement(null), [html]);
+  const repeatedParent = selectedElement ? getRepeatedParent(selectedElement.element) : null;
+  useEffect(() => {
+    setSelectedElement(null);
+    setShowFullHtml(html.length < 200000);
+  }, [html]);
 
   return (
     <div
@@ -3661,6 +4261,36 @@ function HtmlResponseViewer({ html }: { html: string }) {
           >
             Copy Text
           </button>
+          {onAddToParser && (
+            <button
+              onClick={() => {
+                onAddToParser({
+                  path: xpath,
+                  selector: xpath,
+                  selectorType: "xpath",
+                  outputKey: getOutputKeyFromHtmlSelector(cssSelector || xpath),
+                  valueMode: "text",
+                  parentSelector: repeatedParent ? getXPath(repeatedParent) : undefined,
+                  parentSelectorType: repeatedParent ? "xpath" : undefined,
+                  relativeSelector: repeatedParent ? getRelativeXPath(repeatedParent, selectedElement.element) : undefined,
+                });
+              }}
+              className="text-primary hover:text-foreground"
+            >
+              Add to Parser
+            </button>
+          )}
+        </div>
+      )}
+      {!showFullHtml && (
+        <div className="mb-3 flex items-center justify-between rounded-sm border border-border bg-surface px-3 py-2 text-[11px] text-muted-foreground">
+          <span>Large HTML preview loaded</span>
+          <button
+            onClick={() => setShowFullHtml(true)}
+            className="text-primary hover:text-foreground"
+          >
+            Load full HTML
+          </button>
         </div>
       )}
       {root ? (
@@ -3673,6 +4303,7 @@ function HtmlResponseViewer({ html }: { html: string }) {
           <HtmlTreeNode
             element={root}
             selectedElement={selectedElement?.element ?? null}
+            addedPaths={addedPaths}
             onSelect={(element, event) => {
               const rect = containerRef.current?.getBoundingClientRect();
               setSelectedElement({
@@ -3693,10 +4324,12 @@ function HtmlResponseViewer({ html }: { html: string }) {
 function HtmlTreeNode({
   element,
   selectedElement,
+  addedPaths,
   onSelect,
 }: {
   element: Element;
   selectedElement: Element | null;
+  addedPaths?: Set<string>;
   onSelect: (element: Element, event: React.MouseEvent) => void;
 }) {
   const children = Array.from(element.children);
@@ -3711,6 +4344,7 @@ function HtmlTreeNode({
     .join(" ")
     .slice(0, 80);
   const isSelected = selectedElement === element;
+  const isAdded = addedPaths?.has(getXPath(element)) || addedPaths?.has(getCssSelector(element));
 
   return (
     <div className="pl-3">
@@ -3721,7 +4355,11 @@ function HtmlTreeNode({
         }}
         className={cn(
           "block text-left font-mono text-[12px] leading-[1.6] hover:text-foreground",
-          isSelected ? "text-primary" : "text-muted-foreground"
+          isSelected
+            ? "rounded-sm bg-emerald-500/10 text-primary outline outline-1 outline-emerald-500/45 outline-offset-1"
+            : isAdded
+              ? "rounded-sm bg-emerald-500/15 text-foreground outline outline-1 outline-emerald-500/70 outline-offset-1"
+              : "text-muted-foreground"
         )}
       >
         <span className="text-syntax-function">&lt;{element.tagName.toLowerCase()}</span>
@@ -3734,6 +4372,7 @@ function HtmlTreeNode({
           key={`${child.tagName}-${index}`}
           element={child}
           selectedElement={selectedElement}
+          addedPaths={addedPaths}
           onSelect={onSelect}
         />
       ))}
