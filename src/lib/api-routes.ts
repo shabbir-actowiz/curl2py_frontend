@@ -21,6 +21,8 @@ export const apiRoutes = {
   listIssuesFallback: "/issues",
   getIssue: (issueId: string) => `/api/v1/issues/${encodeURIComponent(issueId)}`,
   getIssueFallback: (issueId: string) => `/issues/${encodeURIComponent(issueId)}`,
+  issueFile: (issueId: string, fileIndex: number) => `/api/v1/issues/${encodeURIComponent(issueId)}/files/${fileIndex}`,
+  issueFileFallback: (issueId: string, fileIndex: number) => `/issues/${encodeURIComponent(issueId)}/files/${fileIndex}`,
   listIssuesAdmin: "/api/v1/issues/admin",
   listIssuesAdminFallback: "/issues/admin",
   resolveIssue: (issueId: string) => `/api/v1/issues/admin/${encodeURIComponent(issueId)}/resolve`,

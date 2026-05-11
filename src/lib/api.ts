@@ -159,7 +159,7 @@ export interface IssueFileMetadata {
   filename: string;
   content_type: string;
   size: number;
-  storage_path?: string | null;
+  index: number;
 }
 
 export interface Issue {
@@ -439,6 +439,69 @@ export async function getHealth(): Promise<HealthResponse> {
   return request<HealthResponse>(apiRoutes.health, {
     method: "GET",
   });
+}
+
+export function getIssueFileUrl(issueId: string, fileIndex: number): string {
+  return buildUrl(apiRoutes.issueFile(issueId, fileIndex));
+}
+
+async function fetchIssueFile(path: string): Promise<Response> {
+  const response = await fetch(buildUrl(path), {
+    method: "GET",
+  });
+
+  if (response.ok) {
+    return response;
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+  let payload: unknown = undefined;
+
+  if (contentType.includes("application/json")) {
+    try {
+      payload = await response.json();
+    } catch {
+      payload = undefined;
+    }
+  } else {
+    payload = await response.text();
+  }
+
+  throw new ApiError(response.status, extractErrorMessage(payload, `File download failed with status ${response.status}`), payload);
+}
+
+export async function downloadIssueFile(issueId: string, fileIndex: number, filename: string): Promise<void> {
+  let response: Response;
+
+  try {
+    response = await fetchIssueFile(apiRoutes.issueFile(issueId, fileIndex));
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      response = await fetchIssueFile(apiRoutes.issueFileFallback(issueId, fileIndex)).catch((fallbackError) => {
+        if (fallbackError instanceof ApiError && fallbackError.status === 404) {
+          throw new ApiError(
+            404,
+            "File not found on backend storage.",
+            fallbackError.payload,
+          );
+        }
+        throw fallbackError;
+      });
+    } else {
+      throw error;
+    }
+  }
+
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename || `issue-file-${fileIndex + 1}`;
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(objectUrl);
 }
 
 export async function createIssue(formData: FormData): Promise<CreateIssueResponse> {

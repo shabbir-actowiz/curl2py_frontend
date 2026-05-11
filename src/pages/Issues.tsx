@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { extractApiErrorMessage, listIssues, listIssuesAdmin, resolveIssue, type Issue } from "@/lib/api";
+import { downloadIssueFile, extractApiErrorMessage, listIssues, listIssuesAdmin, resolveIssue, type Issue } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 type StatusFilter = "all" | "open" | "resolved";
@@ -14,6 +14,7 @@ export default function Issues({ admin = false }: { admin?: boolean }) {
   const [selected, setSelected] = useState<Issue | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [resolvingId, setResolvingId] = useState("");
+  const [downloadingFileKey, setDownloadingFileKey] = useState("");
 
   const loadIssues = async () => {
     try {
@@ -47,6 +48,18 @@ export default function Issues({ admin = false }: { admin?: boolean }) {
       toast.error(extractApiErrorMessage(error));
     } finally {
       setResolvingId("");
+    }
+  };
+
+  const handleDownloadFile = async (issueId: string, fileIndex: number, filename: string) => {
+    const fileKey = `${issueId}:${fileIndex}`;
+    try {
+      setDownloadingFileKey(fileKey);
+      await downloadIssueFile(issueId, fileIndex, filename);
+    } catch (error) {
+      toast.error(extractApiErrorMessage(error));
+    } finally {
+      setDownloadingFileKey("");
     }
   };
 
@@ -158,11 +171,20 @@ export default function Issues({ admin = false }: { admin?: boolean }) {
               </div>
               <div>
                 <div className="mb-1 text-muted-foreground">Files:</div>
-                {selected.files.length ? selected.files.map((file) => (
-                  <div key={`${file.filename}-${file.size}`} className="text-muted-foreground">
-                    {file.filename} ({file.size} bytes)
-                  </div>
-                )) : <div className="text-muted-foreground">No files</div>}
+                {selected.files.length ? selected.files.map((file, index) => {
+                  const fileIndex = typeof file.index === "number" ? file.index : index;
+                  return (
+                    <button
+                      key={`${file.filename}-${file.size}-${fileIndex}`}
+                      type="button"
+                      onClick={() => void handleDownloadFile(selected.issue_id, fileIndex, file.filename)}
+                      disabled={downloadingFileKey === `${selected.issue_id}:${fileIndex}`}
+                      className="block text-left text-primary hover:text-foreground disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {downloadingFileKey === `${selected.issue_id}:${fileIndex}` ? "Downloading..." : `${file.filename} (${file.size} bytes)`}
+                    </button>
+                  );
+                }) : <div className="text-muted-foreground">No files</div>}
               </div>
             </div>
           ) : (
