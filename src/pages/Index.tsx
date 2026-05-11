@@ -5118,18 +5118,62 @@ function JsonResponseViewer({
   onSelectedPathChange?: (path: string | null, value?: unknown) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const selectedAnchorRef = useRef<HTMLElement | null>(null);
   const [selected, setSelected] = useState<JsonValueSelection | null>(null);
+  const [toolbarPosition, setToolbarPosition] = useState<{ left: number; top: number } | null>(null);
+  const updateToolbarPosition = useCallback(() => {
+    const anchor = selectedAnchorRef.current;
+    if (!anchor) {
+      setToolbarPosition(null);
+      return;
+    }
+
+    const rect = anchor.getBoundingClientRect();
+    const toolbar = toolbarRef.current;
+    const toolbarWidth = toolbar?.offsetWidth || 260;
+    const toolbarHeight = toolbar?.offsetHeight || 32;
+    const gap = 8;
+    let left = rect.right + gap;
+    let top = rect.top + rect.height / 2;
+
+    if (left + toolbarWidth > window.innerWidth - gap) {
+      left = rect.left - toolbarWidth - gap;
+    }
+
+    const minCenterTop = gap + toolbarHeight / 2;
+    const maxCenterTop = window.innerHeight - gap - toolbarHeight / 2;
+    if (top < minCenterTop) top = minCenterTop;
+    if (top > maxCenterTop) top = maxCenterTop;
+    if (left < gap) left = gap;
+
+    setToolbarPosition({ left, top });
+  }, []);
+
   useEffect(() => {
     setSelected(null);
+    selectedAnchorRef.current = null;
+    setToolbarPosition(null);
   }, [value]);
+
+  useEffect(() => {
+    if (!selected) return;
+    const handleResize = () => updateToolbarPosition();
+    window.addEventListener("resize", handleResize);
+    updateToolbarPosition();
+    return () => window.removeEventListener("resize", handleResize);
+  }, [selected, updateToolbarPosition]);
 
   return (
     <div
       ref={containerRef}
       className="relative h-full min-h-0 overflow-auto px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground"
+      onScroll={updateToolbarPosition}
       onClick={(e) => {
         if (e.target === e.currentTarget) {
           setSelected(null);
+          selectedAnchorRef.current = null;
+          setToolbarPosition(null);
           onSelectedPathChange?.(null);
         }
       }}
@@ -5141,8 +5185,13 @@ function JsonResponseViewer({
       )}
       {selected && (
         <div
-          className="absolute z-20 flex items-center gap-2 rounded-sm border border-border bg-background px-2 py-1 text-[11px] shadow-sm"
-          style={{ left: selected.x, top: selected.y + 18 }}
+          ref={toolbarRef}
+          className="fixed z-50 flex items-center gap-2 rounded-sm border border-border bg-background px-2 py-1 text-[11px] shadow-sm"
+          style={{
+            left: toolbarPosition?.left ?? 8,
+            top: toolbarPosition?.top ?? 8,
+            transform: "translateY(-50%)",
+          }}
         >
           <span className="max-w-[32ch] truncate text-muted-foreground">{selected.keyName}</span>
           <button
@@ -5173,19 +5222,20 @@ function JsonResponseViewer({
         selectedPath={selectedPath}
         addedPaths={addedPaths}
         onSelect={(path, nodeValue, event) => {
-          const rect = containerRef.current?.getBoundingClientRect();
           const nextPath = formatJsonPath(path);
           const valueText = stringifyJsonValue(nodeValue);
           const key = path.length ? String(path[path.length - 1]) : "root";
+          selectedAnchorRef.current = event.currentTarget as HTMLElement;
           setSelected({
             keyName: key,
             path: nextPath,
             valueType: getJsonValueType(nodeValue),
             valueText,
             valuePreview: getJsonValuePreview(nodeValue),
-            x: rect ? event.clientX - rect.left : 12,
-            y: rect ? event.clientY - rect.top : 12,
+            x: 0,
+            y: 0,
           });
+          window.requestAnimationFrame(updateToolbarPosition);
           onSelectedPathChange?.(nextPath, nodeValue);
         }}
       />
