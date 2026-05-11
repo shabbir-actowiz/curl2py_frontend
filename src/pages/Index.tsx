@@ -60,7 +60,8 @@ type InputPanelTab = "input" | "proxy";
 type ThemeMode = "dark" | "light";
 type WorkspaceFile = string;
 type ParserBuilderMode = "json" | "html";
-type ParserPageTab = "json" | "jmespath" | "html" | "paths" | "parser";
+type ParserPageTab = "source" | "paths" | "parser" | "output";
+type ParserOutputView = "json" | "table";
 
 interface ParserSelection {
   id?: string;
@@ -95,6 +96,14 @@ interface HtmlElementSelection {
   scriptJson?: { ok: true; value: unknown } | { ok: false; error: string };
   x: number;
   y: number;
+}
+
+interface ParserRunState {
+  status: "idle" | "loading" | "success" | "error";
+  output: unknown | null;
+  error: string | null;
+  itemCount: number;
+  updatedAt?: number;
 }
 
 interface JsonValueSelection {
@@ -406,7 +415,7 @@ export default function Index() {
   const [activeInputTab, setActiveInputTab] = useState<InputPanelTab>("input");
   const [activePanelTab, setActivePanelTab] = useState<WorkspacePanelTab>("code");
   const [parserBuilderMode, setParserBuilderMode] = useState<ParserBuilderMode>("json");
-  const [parserPageTab, setParserPageTab] = useState<ParserPageTab>("json");
+  const [parserPageTab, setParserPageTab] = useState<ParserPageTab>("source");
   const [selectedParserPath, setSelectedParserPath] = useState<string | null>(null);
   const [selectedParserValue, setSelectedParserValue] = useState<unknown>(null);
   const [selectedParserOutputKey, setSelectedParserOutputKey] = useState("");
@@ -419,6 +428,8 @@ export default function Index() {
   const [isEditingParserHtml, setIsEditingParserHtml] = useState(false);
   const [parserJsonDraft, setParserJsonDraft] = useState("");
   const [parserHtmlDraft, setParserHtmlDraft] = useState("");
+  const [parserRunsByRequest, setParserRunsByRequest] = useState<Record<string, ParserRunState>>({});
+  const [parserOutputView, setParserOutputView] = useState<ParserOutputView>("json");
   const [theme, setTheme] = useState<ThemeMode>(() => {
     try {
       return window.localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark";
@@ -590,16 +601,10 @@ export default function Index() {
         filename: "generated_script.py",
         code: backendMergedOutput ?? BACKEND_PLACEHOLDER,
       });
-      tabs.push({
-        id: "parser",
-        kind: "parser",
-        filename: "parser.py",
-        code: backendParserOutput ?? BACKEND_PLACEHOLDER,
-      });
     }
 
     return tabs;
-  }, [blocks, outputs, mergeMode, validBlocks, backendMergedOutput, backendParserOutput]);
+  }, [blocks, outputs, mergeMode, validBlocks, backendMergedOutput]);
 
   const visibleTabs = useMemo(
     () => allTabs.filter((t) => !closedTabIds.has(t.id)),
@@ -612,10 +617,8 @@ export default function Index() {
   const activeWorkspaceName = activeWorkspaceIdx >= 0 ? effectiveNames[activeWorkspaceIdx] : "";
   const activeWorkspaceArtifact = activeWorkspaceId ? workspaceArtifacts[activeWorkspaceId] : undefined;
   const activeRequestCode = activeTab?.code ?? "";
-  const activeCodeFilename = activeWorkspaceFile === "parser.py" ? "parser.py" : activeTab?.filename || "-";
-  const activeCodeContent = activeWorkspaceFile === "parser.py"
-    ? activeWorkspaceArtifact?.parserCode ?? buildParserStub(activeWorkspaceName || "request")
-    : activeRequestCode;
+  const activeCodeFilename = activeTab?.filename || "-";
+  const activeCodeContent = activeRequestCode;
   const panelCodeFilename = activeTab?.kind === "merged" || activeTab?.kind === "parser"
     ? activeTab.filename
     : activeCodeFilename;
@@ -685,6 +688,15 @@ export default function Index() {
     () => new Set(htmlParserSelections.map((selection) => selection.selector || selection.path)),
     [htmlParserSelections]
   );
+  const activeParserRun = activeParserRequestKey ? parserRunsByRequest[activeParserRequestKey] : undefined;
+  const parserOutputContent = activeParserRun?.output !== undefined && activeParserRun?.output !== null
+    ? JSON.stringify(activeParserRun.output, null, 2)
+    : "";
+  const currentJsonLoop = useMemo(() => getPrimaryJsonLoopContext(parserSelections), [parserSelections]);
+  const currentHtmlLoop = useMemo(() => getPrimaryHtmlLoopContext(htmlParserSelections), [htmlParserSelections]);
+  const parserLoopCount = parserBuilderMode === "html"
+    ? getHtmlLoopContexts(htmlParserSelections).length
+    : getJsonLoopContexts(parserSelections).length;
   const parserCode = parserBuilderMode === "html"
     ? safeGenerateHtmlParserCode(parserWorkspaceName, htmlParserSelections)
     : parserSelections.length > 0
@@ -740,8 +752,7 @@ export default function Index() {
     const nextMode = (location.state as { parserMode?: ParserBuilderMode } | null)?.parserMode ?? detectedParserMode;
     setParserBuilderMode(nextMode);
     setParserPageTab((current) => {
-      if (nextMode === "html") return current === "paths" || current === "parser" ? current : "html";
-      return current === "jmespath" || current === "parser" ? current : "json";
+      return current === "paths" || current === "parser" || current === "output" ? current : "source";
     });
   }, [detectedParserMode, isParserRoute, location.state, parserWorkspaceId]);
 
@@ -802,7 +813,7 @@ export default function Index() {
           if (workspace.activeCollectionId && loadedCollections[workspace.activeCollectionId]) {
             setActiveCollectionId(workspace.activeCollectionId);
           }
-          setOpenResponseTabs((workspace.openResponseTabs as ResponseTab[]) || []);
+          setOpenResponseTabs((workspace.openResponseTabs as unknown as ResponseTab[]) || []);
           setActiveResponseTabId(workspace.activeResponseTabId || null);
         }
         if (workspace.theme === "light" || workspace.theme === "dark") {
@@ -826,7 +837,7 @@ export default function Index() {
         collections: sanitizeCollectionsForStorage(collections),
         activeCollectionId,
         theme,
-        openResponseTabs,
+        openResponseTabs: openResponseTabs as unknown as Record<string, unknown>[],
         activeResponseTabId,
       }, accessToken).catch(() => {
         setStatusKind("error");
@@ -1964,6 +1975,17 @@ export default function Index() {
   const handleRunParserForWorkspace = async (workspaceId: string) => {
     if (!workspaceId || isRunningParser) return;
     setIsRunningParser(true);
+    const initialRunKey = `${(isParserRoute ? parserCollection : activeCollection).id}:${workspaceId}`;
+    setParserRunsByRequest((prev) => ({
+      ...prev,
+      [initialRunKey]: {
+        status: "loading",
+        output: prev[initialRunKey]?.output ?? null,
+        error: null,
+        itemCount: prev[initialRunKey]?.itemCount ?? 0,
+        updatedAt: Date.now(),
+      },
+    }));
     try {
       const targetCollection = isParserRoute ? parserCollection : activeCollection;
       const targetNames = targetCollection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(targetCollection.snippets);
@@ -1971,7 +1993,9 @@ export default function Index() {
       if (workspaceIndex === -1) return;
       const workspaceName = targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
       let artifact = targetCollection.workspaceArtifacts[workspaceId];
-      let responseContent = artifact?.responseJson ?? "";
+      let responseContent = workspaceId === parserWorkspaceId
+        ? (parserBuilderMode === "html" ? parserResponseHtml : parserResponseJson ?? "")
+        : artifact?.responseJson ?? "";
       let responseContentType = artifact?.responseContentType ?? "";
 
       if (!responseContent && targetCollection.id === activeCollection.id) {
@@ -1992,7 +2016,9 @@ export default function Index() {
 
       const parserSource = workspaceId === parserWorkspaceId ? parserCode : artifact?.parserCode ?? buildParserStub(workspaceName);
       const parserFunctionName = `${sanitizePythonName(workspaceName || "request")}_parser`;
-      const responseType: "html" | "json" = scriptJsonParserByWorkspace[workspaceId] || isHtmlResponse(responseContent, responseContentType) ? "html" : "json";
+      const responseType: "html" | "json" = (isParserRoute && workspaceId === parserWorkspaceId)
+        ? parserBuilderMode
+        : scriptJsonParserByWorkspace[workspaceId] || isHtmlResponse(responseContent, responseContentType) ? "html" : "json";
       const responseContentForParser = responseType === "html" ? normalizeHtmlSource(responseContent) : responseContent;
       const data = await runParserWithBackend({
         response_content: responseContentForParser,
@@ -2002,7 +2028,19 @@ export default function Index() {
       });
 
       if (!data.success) {
-        toast.error(data.error || "Parser failed");
+        const message = data.error || "Parser failed";
+        setParserRunsByRequest((prev) => ({
+          ...prev,
+          [`${targetCollection.id}:${workspaceId}`]: {
+            status: "error",
+            output: null,
+            error: message,
+            itemCount: 0,
+            updatedAt: Date.now(),
+          },
+        }));
+        if (isParserRoute) setParserPageTab("output");
+        toast.error(message);
         return;
       }
 
@@ -2014,6 +2052,17 @@ export default function Index() {
         size: formatSize(outputContent.length),
         content_type: "application/json",
       }, null, 2);
+
+      setParserRunsByRequest((prev) => ({
+        ...prev,
+        [`${targetCollection.id}:${workspaceId}`]: {
+          status: "success",
+          output: data.output ?? null,
+          error: null,
+          itemCount: getParserOutputItemCount(data.output),
+          updatedAt: Date.now(),
+        },
+      }));
 
       setCollections((prev) => {
         const collection = prev[targetCollection.id];
@@ -2048,10 +2097,28 @@ export default function Index() {
           },
         };
       });
-      openResponseFile(targetCollection.id, workspaceId, outputFileName, { preserveWorkspaceTabs: true });
+      if (isParserRoute) {
+        setParserOutputView("json");
+        setParserPageTab("output");
+      } else {
+        openResponseFile(targetCollection.id, workspaceId, outputFileName, { preserveWorkspaceTabs: true });
+      }
       toast.success("Parser ran");
     } catch (error) {
-      toast.error(extractApiErrorMessage(error));
+      const message = extractApiErrorMessage(error);
+      const targetCollection = isParserRoute ? parserCollection : activeCollection;
+      setParserRunsByRequest((prev) => ({
+        ...prev,
+        [`${targetCollection.id}:${workspaceId}`]: {
+          status: "error",
+          output: null,
+          error: message,
+          itemCount: 0,
+          updatedAt: Date.now(),
+        },
+      }));
+      if (isParserRoute) setParserPageTab("output");
+      toast.error(message);
     } finally {
       setIsRunningParser(false);
     }
@@ -2066,13 +2133,13 @@ export default function Index() {
     const nextMode = mode ?? (activeResponseIsHtml && !activeResponseIsJson ? "html" : "json");
     if (!workspaceId) {
       setParserBuilderMode(nextMode);
-      setParserPageTab(nextMode === "html" ? "html" : "json");
+      setParserPageTab("source");
       navigate("/parser", { state: { parserMode: nextMode } });
       return;
     }
 
     setParserBuilderMode(nextMode);
-    setParserPageTab(nextMode === "html" ? "html" : "json");
+    setParserPageTab("source");
     setActiveWorkspaceId(workspaceId);
     setActiveWorkspaceFile("parser.py");
     navigate(`/parser/${encodeURIComponent(activeCollection.id)}/${encodeURIComponent(workspaceId)}`, {
@@ -2375,22 +2442,28 @@ export default function Index() {
     const hasResponse = !!parserResponseJson;
     const hasHtml = !!parserResponseHtml;
     const canShowJsonParser = hasResponse && parserResponseIsJson;
-    const parserJsonEditorVisible = parserBuilderMode === "json" && parserPageTab === "json" && isEditingParserJson;
-    const parserHtmlEditorVisible = parserBuilderMode === "html" && parserPageTab === "html" && isEditingParserHtml;
-    const parserTabs: ParserPageTab[] = parserBuilderMode === "html" ? ["html", "paths", "parser"] : ["json", "jmespath", "parser"];
+    const parserJsonEditorVisible = parserBuilderMode === "json" && parserPageTab === "source" && isEditingParserJson;
+    const parserHtmlEditorVisible = parserBuilderMode === "html" && parserPageTab === "source" && isEditingParserHtml;
+    const parserTabs: ParserPageTab[] = ["source", "paths", "parser", "output"];
+    const currentLoop = parserBuilderMode === "html" ? currentHtmlLoop : currentJsonLoop;
+    const canShowTableOutput = isListOfRecords(activeParserRun?.output);
 
     return (
       <div className="flex h-screen flex-col bg-background text-foreground">
         <header className="flex h-12 items-center justify-between border-b border-border bg-surface/70 px-4">
           <div className="flex min-w-0 items-center gap-3">
             <button
-              onClick={() => navigate("/")}
+              onClick={() => {
+                setActiveWorkspaceFile("request.py");
+                setActivePanelTab("code");
+                navigate("/");
+              }}
               className={quietToolbarButtonClass}
             >
               Back to workspace
             </button>
             <div className="min-w-0 font-mono text-[12px]">
-              <span className="font-semibold text-syntax-function">PARSER</span>
+              <span className="font-semibold text-syntax-function">PARSER · {parserBuilderMode.toUpperCase()}</span>
               <span className="px-2 text-syntax-comment">|</span>
               <span className="truncate text-muted-foreground">{parserWorkspaceName}</span>
             </div>
@@ -2401,7 +2474,7 @@ export default function Index() {
                 {selectedParserPath} {"->"} {selectedParserOutputKey || "value"}
               </span>
             )}
-            {parserBuilderMode === "json" && parserPageTab === "json" && (
+            {parserBuilderMode === "json" && parserPageTab === "source" && (
               <>
                 <button
                   onClick={() => void copyText(parserJsonEditorVisible ? parserJsonDraft : parserResponseJson ?? parserJsonDraft, "Copied JSON")}
@@ -2430,7 +2503,7 @@ export default function Index() {
                 )}
               </>
             )}
-            {parserBuilderMode === "html" && parserPageTab === "html" && (
+            {parserBuilderMode === "html" && parserPageTab === "source" && (
               <>
                 <button
                   onClick={() => void copyText(parserHtmlEditorVisible ? parserHtmlDraft : parserResponseHtml || parserHtmlDraft, "Copied HTML")}
@@ -2495,6 +2568,40 @@ export default function Index() {
                 </button>
               </>
             )}
+            {parserPageTab === "output" && (
+              <>
+                <button
+                  onClick={() => void copyText(activeParserRun?.error || parserOutputContent, "Copied output")}
+                  disabled={!activeParserRun || activeParserRun.status === "loading" || (!parserOutputContent && !activeParserRun.error)}
+                  className={quietToolbarButtonClass}
+                >
+                  <Copy className="h-3 w-3" strokeWidth={2} />
+                  Copy Output
+                </button>
+                <button
+                  onClick={() => downloadFile("parser_output.json", parserOutputContent || JSON.stringify({ error: activeParserRun?.error }, null, 2))}
+                  disabled={!activeParserRun || activeParserRun.status === "loading" || (!parserOutputContent && !activeParserRun.error)}
+                  className={quietToolbarButtonClass}
+                >
+                  <Download className="h-3 w-3" strokeWidth={2} />
+                  Download Output
+                </button>
+                <button
+                  onClick={() => {
+                    if (!activeParserRequestKey) return;
+                    setParserRunsByRequest((prev) => {
+                      const next = { ...prev };
+                      delete next[activeParserRequestKey];
+                      return next;
+                    });
+                  }}
+                  disabled={!activeParserRun}
+                  className={quietToolbarButtonClass}
+                >
+                  Clear Output
+                </button>
+              </>
+            )}
           </div>
         </header>
 
@@ -2512,14 +2619,14 @@ export default function Index() {
                       : "text-muted-foreground hover:bg-surface-elevated/80 hover:text-foreground"
                   )}
                 >
-                  {tab === "json" ? "JSON" : tab === "jmespath" ? "JMESPath" : tab === "html" ? "HTML" : tab === "paths" ? "Paths" : "Parser"}
+                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
                 </button>
               ))}
             </div>
           </div>
 
           <ParserInspectorErrorBoundary resetKey={`${parserWorkspaceId}:${parserBuilderMode}:${parserPageTab}:${parserResponseHtml.length}:${parserResponseJson?.length ?? 0}`}>
-          {parserBuilderMode === "json" && parserPageTab === "json" ? (
+          {parserBuilderMode === "json" && parserPageTab === "source" ? (
             <div className="relative min-h-0 flex-1 overflow-auto">
               {parserJsonEditorVisible ? (
                 <textarea
@@ -2554,10 +2661,20 @@ export default function Index() {
                 <div className="px-4 py-3 text-[11px] text-muted-foreground">JSON parser builder works only for JSON responses.</div>
               )}
             </div>
-          ) : parserBuilderMode === "json" && parserPageTab === "jmespath" ? (
+          ) : parserBuilderMode === "json" && parserPageTab === "paths" ? (
             <div className="flex min-h-0 flex-1 flex-col">
-              <div className="flex items-center justify-between border-b border-border bg-background px-4 py-1.5">
-                <span className="font-mono text-[11px] text-muted-foreground">{parserSelections.length} selected path{parserSelections.length === 1 ? "" : "s"}</span>
+              <div className="flex items-center justify-between gap-3 border-b border-border bg-background px-4 py-1.5">
+                <div className="min-w-0 font-mono text-[11px] text-muted-foreground">
+                  <span>{parserSelections.length} path{parserSelections.length === 1 ? "" : "s"} selected</span>
+                  <span className="px-2 text-syntax-comment">|</span>
+                  <span>{parserLoopCount} loop{parserLoopCount === 1 ? "" : "s"} detected</span>
+                  {currentLoop && (
+                    <>
+                      <span className="px-2 text-syntax-comment">|</span>
+                      <span className="truncate">Current loop: {currentLoop}</span>
+                    </>
+                  )}
+                </div>
                 <button
                   onClick={addManualParserPath}
                   disabled={!canUseParser}
@@ -2604,7 +2721,7 @@ export default function Index() {
                 )}
               </div>
             </div>
-          ) : parserBuilderMode === "html" && parserPageTab === "html" ? (
+          ) : parserBuilderMode === "html" && parserPageTab === "source" ? (
             <div className="relative min-h-0 flex-1 overflow-auto">
               {parserHtmlEditorVisible || !hasHtml ? (
                 <textarea
@@ -2630,7 +2747,7 @@ export default function Index() {
                     setScriptJsonParserByWorkspace((prev) => ({ ...prev, [parserWorkspaceId]: true }));
                     setParserJsonDraft(pretty);
                     setParserBuilderMode("json");
-                    setParserPageTab("json");
+                    setParserPageTab("source");
                     setIsEditingParserJson(false);
                     toast.success("Script JSON opened");
                   }}
@@ -2639,8 +2756,18 @@ export default function Index() {
             </div>
           ) : parserBuilderMode === "html" && parserPageTab === "paths" ? (
             <div className="flex min-h-0 flex-1 flex-col">
-              <div className="flex items-center justify-between border-b border-border bg-background px-4 py-1.5">
-                <span className="font-mono text-[11px] text-muted-foreground">{htmlParserSelections.length} selected path{htmlParserSelections.length === 1 ? "" : "s"}</span>
+              <div className="flex items-center justify-between gap-3 border-b border-border bg-background px-4 py-1.5">
+                <div className="min-w-0 font-mono text-[11px] text-muted-foreground">
+                  <span>{htmlParserSelections.length} path{htmlParserSelections.length === 1 ? "" : "s"} selected</span>
+                  <span className="px-2 text-syntax-comment">|</span>
+                  <span>{parserLoopCount} loop{parserLoopCount === 1 ? "" : "s"} detected</span>
+                  {currentLoop && (
+                    <>
+                      <span className="px-2 text-syntax-comment">|</span>
+                      <span className="truncate">Current loop: {currentLoop}</span>
+                    </>
+                  )}
+                </div>
                 <button
                   onClick={addManualHtmlPath}
                   disabled={!canUseParser}
@@ -2716,7 +2843,7 @@ export default function Index() {
                 )}
               </div>
             </div>
-          ) : (
+          ) : parserPageTab === "parser" ? (
             <div className="relative min-h-0 flex-1 overflow-auto">
               {parserCode === buildParserStub(parserWorkspaceName) ? (
                 <EmptyState title="No parser output yet" detail="Select JSON paths or HTML elements to generate parser code." />
@@ -2725,6 +2852,56 @@ export default function Index() {
                   <HighlightedPython code={parserCode} />
                 </pre>
               )}
+            </div>
+          ) : (
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className="flex items-center justify-between border-b border-border bg-background px-4 py-1.5 font-mono text-[11px]">
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className={cn(
+                    "font-semibold",
+                    activeParserRun?.status === "success" && "text-success",
+                    activeParserRun?.status === "error" && "text-destructive",
+                    (!activeParserRun || activeParserRun.status === "idle" || activeParserRun.status === "loading") && "text-muted-foreground"
+                  )}>
+                    {activeParserRun?.status === "success" ? "success" : activeParserRun?.status === "error" ? "error" : activeParserRun?.status === "loading" ? "running" : "idle"}
+                  </span>
+                  <span className="text-syntax-comment">|</span>
+                  <span className="text-muted-foreground">{activeParserRun?.itemCount ?? 0} item{(activeParserRun?.itemCount ?? 0) === 1 ? "" : "s"}</span>
+                </div>
+                {canShowTableOutput && (
+                  <div className="flex items-center gap-1">
+                    {(["json", "table"] as ParserOutputView[]).map((view) => (
+                      <button
+                        key={view}
+                        onClick={() => setParserOutputView(view)}
+                        className={cn(
+                          "h-6 rounded-sm border px-2 text-[10px] transition-colors",
+                          parserOutputView === view
+                            ? "border-primary/60 bg-primary/10 text-primary"
+                            : "border-border bg-background/40 text-muted-foreground hover:border-border-strong hover:text-foreground"
+                        )}
+                      >
+                        {view === "json" ? "JSON View" : "Table View"}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="relative min-h-0 flex-1 overflow-auto">
+                {activeParserRun?.status === "loading" ? (
+                  <EmptyState title="Parser running" detail="Output will appear here when the run finishes." />
+                ) : activeParserRun?.status === "error" ? (
+                  <div className="m-4 rounded-sm border border-destructive/40 bg-destructive/5 px-4 py-3 font-mono text-[12px] text-destructive">
+                    {activeParserRun.error || "Parser failed"}
+                  </div>
+                ) : activeParserRun?.status === "success" && parserOutputView === "table" && canShowTableOutput ? (
+                  <ParserOutputTable value={activeParserRun.output} />
+                ) : activeParserRun?.status === "success" ? (
+                  <pre className="px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground">{parserOutputContent}</pre>
+                ) : (
+                  <EmptyState title="No parser output yet" detail="Run Parser from the Parser tab to see results here." />
+                )}
+              </div>
             </div>
           )}
           </ParserInspectorErrorBoundary>
@@ -2986,7 +3163,7 @@ export default function Index() {
                             const hasError = !b.raw.trim() || !!b.parsed.error;
                             const method = (b.parsed.method || "GET").toUpperCase();
                             const artifact = collection.workspaceArtifacts[b.id];
-                            const files: WorkspaceFile[] = ["request.py", "parser.py", artifact?.responseFileName ?? defaultResponseFileName(collectionNames[i])];
+                            const files: WorkspaceFile[] = ["request.py", artifact?.responseFileName ?? defaultResponseFileName(collectionNames[i])];
                             return (
                               <div key={b.id}>
                                 <div
@@ -3055,32 +3232,18 @@ export default function Index() {
                           })}
 
                           {isActiveCollection && mergeMode && validBlocks.length > 0 && (
-                            <>
-                              <button
-                                onClick={() => { setActivePanelTab("code"); setActiveWorkspaceFile("request.py"); setActiveTabId("merged"); setClosedTabIds((p) => { const n = new Set(p); n.delete("merged"); return n; }); }}
-                                className={cn(
-                                  "flex w-full items-center gap-2 px-3 py-1 text-left font-mono transition-colors",
-                                  activeTab?.id === "merged"
-                                    ? "bg-primary/[0.07] text-foreground"
-                                    : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground"
-                                )}
-                              >
-                                <FileCode className="h-3 w-3 shrink-0" strokeWidth={2} />
-                                <span className="truncate text-[10px]">generated_script.py</span>
-                              </button>
-                              <button
-                                onClick={() => { setActivePanelTab("code"); setActiveWorkspaceFile("request.py"); setActiveTabId("parser"); setClosedTabIds((p) => { const n = new Set(p); n.delete("parser"); return n; }); }}
-                                className={cn(
-                                  "flex w-full items-center gap-2 px-3 py-1 text-left font-mono transition-colors",
-                                  activeTab?.id === "parser"
-                                    ? "bg-primary/[0.07] text-foreground"
-                                    : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground"
-                                )}
-                              >
-                                <FileCode className="h-3 w-3 shrink-0" strokeWidth={2} />
-                                <span className="truncate text-[10px]">parser.py</span>
-                              </button>
-                            </>
+                            <button
+                              onClick={() => { setActivePanelTab("code"); setActiveWorkspaceFile("request.py"); setActiveTabId("merged"); setClosedTabIds((p) => { const n = new Set(p); n.delete("merged"); return n; }); }}
+                              className={cn(
+                                "flex w-full items-center gap-2 px-3 py-1 text-left font-mono transition-colors",
+                                activeTab?.id === "merged"
+                                  ? "bg-primary/[0.07] text-foreground"
+                                  : "text-muted-foreground hover:bg-surface-elevated hover:text-foreground"
+                              )}
+                            >
+                              <FileCode className="h-3 w-3 shrink-0" strokeWidth={2} />
+                              <span className="truncate text-[10px]">generated_script.py</span>
+                            </button>
                           )}
                         </div>
                       )}
@@ -3421,24 +3584,6 @@ export default function Index() {
                   </DropdownMenuContent>
                 </DropdownMenu>
                 <button
-                  onClick={() => void handleRunActiveParser()}
-                  disabled={!activeWorkspaceId || isRunningParser}
-                  className={cn(
-                    toolbarButtonClass,
-                    activeWorkspaceId
-                      ? "border-primary/60 bg-primary/10 text-primary hover:bg-primary/15"
-                      : "border-border bg-background/40 text-muted-foreground hover:border-border-strong hover:bg-surface-elevated hover:text-foreground"
-                  )}
-                  title={activeWorkspaceId ? `Run parser for ${activeWorkspaceDisplayName}` : "Select a workspace to run parser"}
-                >
-                  {isRunningParser ? (
-                    <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
-                  ) : (
-                    <Play className="h-4 w-4" strokeWidth={2} />
-                  )}
-                  {isRunningParser ? "Running..." : "Run Parser"}
-                </button>
-                <button
                   onClick={() => void handleRunActiveWorkspace()}
                   disabled={!activeWorkspaceId || isRunning}
                   className={cn(
@@ -3597,29 +3742,9 @@ export default function Index() {
                 </div>
                 <div className="relative min-h-0 flex-1 overflow-auto">
                   {activeResponseJson ? (
-                    <ResponseBodyViewer source={activeResponseJson} onAddToParser={addPathToParser} />
+                    <ResponseBodyViewer source={activeResponseJson} />
                   ) : (
                     <EmptyState title="No response yet" detail="Run the selected request to inspect its response." />
-                  )}
-                </div>
-              </div>
-            ) : activePanelTab === "parser" ? (
-              <div className="flex min-h-0 flex-1 flex-col">
-                <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-1.5 font-mono text-[12px]">
-                  <span className="font-semibold text-syntax-function">PARSER</span>
-                  <span className="text-syntax-comment">|</span>
-                  <span className="text-muted-foreground">{activeWorkspaceDisplayName || "request"}</span>
-                  {currentFileActions}
-                </div>
-                <div className="relative min-h-0 flex-1 overflow-auto">
-                  {activeResponseJson && !activeResponseIsJson ? (
-                    <EmptyState title="No parser output yet" detail="JSON parser builder works only for JSON responses." />
-                  ) : !activeWorkspaceArtifact?.parserCode || activeWorkspaceArtifact.parserCode === buildParserStub(activeWorkspaceDisplayName || "request") ? (
-                    <EmptyState title="No parser output yet" detail="Open the parser and select fields to generate parser code." />
-                  ) : (
-                    <pre className="px-4 py-3">
-                      <HighlightedPython code={activeWorkspaceArtifact?.parserCode ?? buildParserStub(activeWorkspaceDisplayName || "request")} />
-                    </pre>
                   )}
                 </div>
               </div>
@@ -3794,7 +3919,7 @@ function getJsonValuePreview(value: unknown): string {
 }
 
 function formatJsonPath(path: Array<string | number>): string {
-  return path.reduce((acc, part) => {
+  return path.reduce<string>((acc, part) => {
     if (typeof part === "number") return `${acc}[${part}]`;
     if (!acc) return part;
     return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(part) ? `${acc}.${part}` : `${acc}[${JSON.stringify(part)}]`;
@@ -3863,6 +3988,51 @@ function optimizeParserSelections(selections: ParserSelection[]) {
   return optimized;
 }
 
+function getJsonLoopContexts(selections: ParserSelection[]) {
+  const contexts = new Set<string>();
+  selections.forEach((selection) => {
+    const parts = normalizeSelectionParts(selection.path);
+    for (let index = 0; index < parts.length - 1; index += 1) {
+      if (typeof parts[index] === "string" && typeof parts[index + 1] === "number") {
+        const parent = parts.slice(0, index + 1).filter((part): part is string => typeof part === "string");
+        contexts.add(`${parent.join(".")}[*]`);
+      }
+    }
+  });
+  return Array.from(contexts);
+}
+
+function getPrimaryJsonLoopContext(selections: ParserSelection[]) {
+  return getJsonLoopContexts(selections)[0] ?? "";
+}
+
+function getHtmlLoopContexts(selections: ParserSelection[]) {
+  const contexts = new Set<string>();
+  selections.forEach((selection) => {
+    const selector = selection.parentSelector || selection.parentXpath || selection.parentCss;
+    if (selector) contexts.add(selector);
+  });
+  return Array.from(contexts);
+}
+
+function getPrimaryHtmlLoopContext(selections: ParserSelection[]) {
+  return getHtmlLoopContexts(selections)[0] ?? "";
+}
+
+function getParserOutputItemCount(output: unknown) {
+  if (Array.isArray(output)) return output.length;
+  if (output && typeof output === "object") return 1;
+  return output == null ? 0 : 1;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function isListOfRecords(value: unknown): value is Record<string, unknown>[] {
+  return Array.isArray(value) && value.length > 0 && value.every(isRecord);
+}
+
 function sanitizePythonName(value: string) {
   const name = sanitizeOutputKey(value);
   return /^[0-9]/.test(name) ? `item_${name}` : name;
@@ -3876,6 +4046,7 @@ interface ParserField {
 interface ParserArrayGroup {
   prop: string;
   accessPath: string[];
+  fullPath: string[];
   fields: ParserField[];
   children: ParserArrayGroup[];
 }
@@ -3888,8 +4059,7 @@ function singularName(value: string) {
 }
 
 function normalizeSelectionParts(path: string) {
-  const parts = parseJsonPath(path);
-  return parts[0] === "response" ? parts.slice(1) : parts;
+  return parseJsonPath(path);
 }
 
 function findNextArray(parts: Array<string | number>) {
@@ -3901,11 +4071,11 @@ function findNextArray(parts: Array<string | number>) {
   return -1;
 }
 
-function getOrCreateArrayGroup(groups: ParserArrayGroup[], prop: string, accessPath: string[]) {
-  const key = accessPath.join(".");
-  let group = groups.find((item) => item.accessPath.join(".") === key);
+function getOrCreateArrayGroup(groups: ParserArrayGroup[], prop: string, accessPath: string[], fullPath = accessPath) {
+  const key = fullPath.join(".");
+  let group = groups.find((item) => item.fullPath.join(".") === key);
   if (!group) {
-    group = { prop, accessPath, fields: [], children: [] };
+    group = { prop, accessPath, fullPath, fields: [], children: [] };
     groups.push(group);
   }
   return group;
@@ -3915,7 +4085,8 @@ function addSelectionToGroups(groups: ParserArrayGroup[], selection: ParserSelec
   const arrayIndex = findNextArray(parts);
   if (arrayIndex === -1) return;
   const prop = String(parts[arrayIndex]);
-  const group = getOrCreateArrayGroup(groups, prop, parts.slice(0, arrayIndex + 1) as string[]);
+  const accessPath = parts.slice(0, arrayIndex + 1).filter((part): part is string => typeof part === "string");
+  const group = getOrCreateArrayGroup(groups, prop, accessPath, accessPath);
   addSelectionRemainder(group, selection, parts.slice(arrayIndex + 2));
 }
 
@@ -3923,7 +4094,8 @@ function addSelectionRemainder(group: ParserArrayGroup, selection: ParserSelecti
   const arrayIndex = findNextArray(remainder);
   if (arrayIndex !== -1) {
     const prop = String(remainder[arrayIndex]);
-    const child = getOrCreateArrayGroup(group.children, prop, remainder.slice(0, arrayIndex + 1) as string[]);
+    const accessPath = remainder.slice(0, arrayIndex + 1).filter((part): part is string => typeof part === "string");
+    const child = getOrCreateArrayGroup(group.children, prop, accessPath, [...group.fullPath, ...accessPath]);
     addSelectionRemainder(child, selection, remainder.slice(arrayIndex + 2));
     return;
   }
@@ -3983,6 +4155,45 @@ function emitArrayGroup(lines: string[], group: ParserArrayGroup, base: string, 
   });
 }
 
+function uniquePythonVar(base: string, usedVars: Set<string>) {
+  let variable = sanitizePythonName(base);
+  if (!usedVars.has(variable)) {
+    usedVars.add(variable);
+    return variable;
+  }
+  let index = 2;
+  while (usedVars.has(`${variable}_${index}`)) index += 1;
+  variable = `${variable}_${index}`;
+  usedVars.add(variable);
+  return variable;
+}
+
+function emitArrayGroupRows(lines: string[], group: ParserArrayGroup, base: string, indent: string, usedVars: Set<string>) {
+  const itemVar = uniquePythonVar(singularName(group.prop), usedVars);
+  const collectionVar = uniquePythonVar(`${itemVar}s`, usedVars);
+  const iterVar = uniquePythonVar(`${collectionVar}_iter`, usedVars);
+  const rowsVar = uniquePythonVar(`${itemVar}_rows`, usedVars);
+  const rowVar = uniquePythonVar(`${itemVar}_row`, usedVars);
+
+  lines.push(`${indent}${collectionVar} = ${collectionExpression(base, group.accessPath)}`);
+  lines.push(`${indent}${iterVar} = _iter_items(${collectionVar})`);
+  lines.push(`${indent}${rowsVar} = []`);
+  lines.push("");
+  lines.push(`${indent}for ${itemVar} in ${iterVar}:`);
+  lines.push(`${indent}    if not isinstance(${itemVar}, dict):`);
+  lines.push(`${indent}        continue`);
+  lines.push(`${indent}    ${rowVar} = {}`);
+  group.fields.forEach((field) => {
+    lines.push(`${indent}    ${rowVar}[${pythonString(field.outputKey)}] = ${getFromExpression(itemVar, field.path)}`);
+  });
+  group.children.forEach((child) => {
+    const childRowsVar = emitArrayGroupRows(lines, child, itemVar, `${indent}    `, usedVars);
+    lines.push(`${indent}    ${rowVar}[${pythonString(sanitizeOutputKey(child.prop))}] = ${childRowsVar}`);
+  });
+  lines.push(`${indent}    ${rowsVar}.append(${rowVar})`);
+  return rowsVar;
+}
+
 function generateParserCode(workspaceName: string, selections: ParserSelection[], source: "response_json" | "script_json" = "response_json") {
   const functionName = `${sanitizePythonName(workspaceName || "request")}_parser`;
   const usedPaths = new Set<string>();
@@ -4040,26 +4251,59 @@ function generateParserCode(workspaceName: string, selections: ParserSelection[]
     "            return value",
     "        return []",
     "",
-    "    results = []",
-    "",
   ];
 
-  if (rootFields.length > 0) {
-    lines.push("    results.append({");
+  if (rootFields.length > 0 && groups.length === 0) {
+    lines.push("    return {");
     rootFields.forEach((field, index) => {
       const comma = index < rootFields.length - 1 ? "," : "";
       lines.push(`        ${pythonString(field.outputKey)}: ${getFromExpression("data", field.path)}${comma}`);
     });
-    lines.push("    })");
-    if (groups.length > 0) lines.push("");
+    lines.push("    }");
+    lines.push("");
+    return lines.join("\n");
   }
 
-  groups.forEach((group, index) => {
-    emitArrayGroup(lines, group, "data", "    ", new Set());
-    if (index < groups.length - 1) lines.push("");
-  });
+  if (rootFields.length === 0 && groups.length > 0) {
+    lines.push("    results = []");
+    lines.push("");
+    groups.forEach((group, index) => {
+      emitArrayGroup(lines, group, "data", "    ", new Set());
+      if (index < groups.length - 1) lines.push("");
+    });
+    lines.push("    return results");
+    lines.push("");
+    return lines.join("\n");
+  }
 
-  lines.push("    return results");
+  if (rootFields.length > 0 && groups.length > 0) {
+    const usedVars = new Set<string>();
+    const groupRows = groups.map((group) => {
+      const rowsVar = emitArrayGroupRows(lines, group, "data", "    ", usedVars);
+      lines.push("");
+      return { group, rowsVar };
+    });
+    lines.push("    return {");
+    const entries = [
+      ...rootFields.map((field) => ({
+        key: field.outputKey,
+        value: getFromExpression("data", field.path),
+      })),
+      ...groupRows.map(({ group, rowsVar }) => ({
+        key: sanitizeOutputKey(group.prop),
+        value: rowsVar,
+      })),
+    ];
+    entries.forEach((entry, index) => {
+      const comma = index < entries.length - 1 ? "," : "";
+      lines.push(`        ${pythonString(entry.key)}: ${entry.value}${comma}`);
+    });
+    lines.push("    }");
+    lines.push("");
+    return lines.join("\n");
+  }
+
+  lines.push("    return {}");
   lines.push("");
   return lines.join("\n");
 }
@@ -4338,7 +4582,7 @@ function xpathLiteral(value: string): string {
 }
 
 function cssEscape(value: string): string {
-  const css = window.CSS as CSS & { escape?: (value: string) => string };
+  const css = window.CSS as typeof window.CSS & { escape?: (value: string) => string };
   if (css?.escape) return css.escape(value);
   return value.replace(/[^a-zA-Z0-9_-]/g, "\\$&");
 }
@@ -4540,83 +4784,76 @@ function JsonResponseViewer({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<JsonValueSelection | null>(null);
-  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   useEffect(() => {
     setSelected(null);
   }, [value]);
 
   return (
-    <div className="flex h-full min-h-0">
-      <div
-        ref={containerRef}
-        className="relative min-w-0 flex-1 overflow-auto px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground"
-        onClick={(e) => {
-          if (e.target === e.currentTarget) {
-            setSelected(null);
-            onSelectedPathChange?.(null);
-          }
+    <div
+      ref={containerRef}
+      className="relative h-full min-h-0 overflow-auto px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          setSelected(null);
+          onSelectedPathChange?.(null);
+        }
+      }}
+    >
+      {!selected && (
+        <div className="mb-3 rounded-sm border border-border bg-surface/35 px-3 py-2 text-[11px] text-muted-foreground">
+          Select a JSON key or value
+        </div>
+      )}
+      {selected && (
+        <div
+          className="absolute z-20 flex items-center gap-2 rounded-sm border border-border bg-background px-2 py-1 text-[11px] shadow-sm"
+          style={{ left: selected.x, top: selected.y + 18 }}
+        >
+          <span className="max-w-[32ch] truncate text-muted-foreground">{selected.keyName}</span>
+          <button
+            onClick={() => void copyText(selected.path, "Copied JSON path")}
+            className="text-primary hover:text-foreground"
+          >
+            Copy Path
+          </button>
+          <button
+            onClick={() => void copyText(selected.valueText, "Copied value")}
+            className="text-primary hover:text-foreground"
+          >
+            Copy Value
+          </button>
+          {onAddToParser && (
+            <button
+              onClick={() => onAddToParser(selected.path)}
+              className="text-primary hover:text-foreground"
+            >
+              Add to Paths
+            </button>
+          )}
+        </div>
+      )}
+      <JsonTreeNode
+        value={value}
+        path={[]}
+        selectedPath={selectedPath}
+        addedPaths={addedPaths}
+        onSelect={(path, nodeValue, event) => {
+          const rect = containerRef.current?.getBoundingClientRect();
+          const nextPath = formatJsonPath(path);
+          const valueText = stringifyJsonValue(nodeValue);
+          const key = path.length ? String(path[path.length - 1]) : "root";
+          setSelected({
+            keyName: key,
+            path: nextPath,
+            valueType: getJsonValueType(nodeValue),
+            valueText,
+            valuePreview: getJsonValuePreview(nodeValue),
+            x: rect ? event.clientX - rect.left : 12,
+            y: rect ? event.clientY - rect.top : 12,
+          });
+          onSelectedPathChange?.(nextPath, nodeValue);
         }}
-      >
-        <JsonTreeNode
-          value={value}
-          path={[]}
-          selectedPath={selectedPath}
-          addedPaths={addedPaths}
-          onSelect={(path, nodeValue, event) => {
-            const rect = containerRef.current?.getBoundingClientRect();
-            const nextPath = formatJsonPath(path);
-            const valueText = stringifyJsonValue(nodeValue);
-            const key = path.length ? String(path[path.length - 1]) : "root";
-            setSelected({
-              keyName: key,
-              path: nextPath,
-              valueType: getJsonValueType(nodeValue),
-              valueText,
-              valuePreview: getJsonValuePreview(nodeValue),
-              x: rect ? event.clientX - rect.left : 12,
-              y: rect ? event.clientY - rect.top : 12,
-            });
-            onSelectedPathChange?.(nextPath, nodeValue);
-          }}
-        />
-      </div>
-      <InspectorPanel
-        title="Inspector"
-        collapsed={inspectorCollapsed}
-        onToggle={() => setInspectorCollapsed((value) => !value)}
-      >
-        {selected ? (
-          <div className="space-y-4">
-            <InspectorRow label="Key">{selected.keyName}</InspectorRow>
-            <InspectorRow label="JSON path">{selected.path || "root"}</InspectorRow>
-            <InspectorRow label="Value type">{selected.valueType}</InspectorRow>
-            <InspectorRow label="Value preview">
-              <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-sm border border-border bg-background/60 p-2 text-[11px] leading-5 text-foreground">
-                {selected.valuePreview}
-              </pre>
-            </InspectorRow>
-            <div className="grid grid-cols-2 gap-2">
-              <InspectorActionButton onClick={() => void copyText(selected.path, "Copied JSON path")}>
-                Copy Path
-              </InspectorActionButton>
-              <InspectorActionButton onClick={() => void copyText(selected.valueText, "Copied value")}>
-                Copy Value
-              </InspectorActionButton>
-              <InspectorActionButton
-                disabled={!onAddToParser}
-                onClick={() => {
-                  if (!onAddToParser) return;
-                  onAddToParser(selected.path);
-                }}
-              >
-                Add Field
-              </InspectorActionButton>
-            </div>
-          </div>
-        ) : (
-          <EmptyState title="Select an element or JSON value to inspect." />
-        )}
-      </InspectorPanel>
+      />
     </div>
   );
 }
@@ -4666,6 +4903,11 @@ function JsonTreeNode({
               e.stopPropagation();
               onSelect(path, value, e);
             }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onSelect(path, value, e);
+            }}
             className="text-syntax-function hover:text-foreground"
           >
             "{displayName}": 
@@ -4673,6 +4915,11 @@ function JsonTreeNode({
         )}
         <button
           onClick={(e) => {
+            e.stopPropagation();
+            onSelect(path, value, e);
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
             e.stopPropagation();
             onSelect(path, value, e);
           }}
@@ -4689,6 +4936,11 @@ function JsonTreeNode({
       {displayName && (
         <button
           onClick={(e) => {
+            e.stopPropagation();
+            onSelect(path, value, e);
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
             e.stopPropagation();
             onSelect(path, value, e);
           }}
@@ -4808,7 +5060,7 @@ function HtmlResponseViewer({
               }}
               className="text-primary hover:text-foreground"
             >
-              Add to Parser
+              Add to Paths
             </button>
           )}
           {onOpenScriptJson && selectedElement.scriptJson?.ok && (
@@ -4899,6 +5151,11 @@ function HtmlTreeNode({
           e.stopPropagation();
           onSelect(element, e);
         }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onSelect(element, e);
+        }}
         className={cn(
           "block text-left font-mono text-[12px] leading-[1.6] hover:text-foreground",
           isSelected
@@ -4945,6 +5202,38 @@ function EmptyState({ title, detail }: { title: string; detail?: string }) {
         <div className="text-[12px] font-semibold text-foreground">{title}</div>
         {detail && <div className="mt-1 text-[11px] leading-5 text-muted-foreground">{detail}</div>}
       </div>
+    </div>
+  );
+}
+
+function ParserOutputTable({ value }: { value: unknown }) {
+  const rows = isListOfRecords(value) ? value : [];
+  const columns = Array.from(new Set(rows.flatMap((row) => Object.keys(row)))).slice(0, 24);
+
+  return (
+    <div className="overflow-auto px-4 py-3">
+      <table className="w-full border-collapse font-mono text-[11px]">
+        <thead>
+          <tr>
+            {columns.map((column) => (
+              <th key={column} className="border border-border bg-surface px-2 py-1.5 text-left font-semibold text-muted-foreground">
+                {column}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, rowIndex) => (
+            <tr key={rowIndex}>
+              {columns.map((column) => (
+                <td key={column} className="max-w-[320px] truncate border border-border px-2 py-1.5 text-foreground" title={stringifyJsonValue(row[column])}>
+                  {stringifyJsonValue(row[column])}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
