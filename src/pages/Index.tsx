@@ -17,6 +17,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   convertWithBackend,
   deleteConversionCollection,
   deleteConversionSnippet,
@@ -437,6 +444,7 @@ export default function Index() {
   const [isSyncingBackend, setIsSyncingBackend] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [isRunningParser, setIsRunningParser] = useState(false);
+  const [raiseIssueOpen, setRaiseIssueOpen] = useState(false);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>("");
   const [activeWorkspaceFile, setActiveWorkspaceFile] = useState<WorkspaceFile>("request.py");
   const [activeInputTab, setActiveInputTab] = useState<InputPanelTab>("input");
@@ -3123,6 +3131,14 @@ export default function Index() {
             {isSyncingBackend ? "Syncing..." : "Sync backend"}
           </button>
 
+          <button
+            onClick={() => setRaiseIssueOpen(true)}
+            className={quietToolbarButtonClass}
+            title="Raise an issue"
+          >
+            Raise Issue
+          </button>
+
           <div className="mx-1 h-4 w-px bg-border" aria-hidden />
 
           {user ? (
@@ -3151,6 +3167,45 @@ export default function Index() {
           )}
         </div>
       </header>
+
+      <Dialog open={raiseIssueOpen} onOpenChange={setRaiseIssueOpen}>
+        <DialogContent className="max-w-sm border-border bg-background font-mono text-foreground">
+          <DialogHeader>
+            <DialogTitle className="text-[15px]">Raise an Issue</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 text-[12px] leading-6">
+            <p className="text-muted-foreground">If you find any issue, contact developer:</p>
+            <div>
+              <div className="text-muted-foreground">Slack:</div>
+              <a
+                href="https://actowizsolutions41121.slack.com/team/U0AKPGHDVGA"
+                target="_blank"
+                rel="noreferrer"
+                className="break-all text-primary hover:text-foreground"
+              >
+                https://actowizsolutions41121.slack.com/team/U0AKPGHDVGA
+              </a>
+            </div>
+            <div>
+              <div className="text-muted-foreground">Mail:</div>
+              <a
+                href="mailto:shabbir.dudhiyawala@actowiz.co.in"
+                className="break-all text-primary hover:text-foreground"
+              >
+                shabbir.dudhiyawala@actowiz.co.in
+              </a>
+            </div>
+          </div>
+          <DialogFooter>
+            <button
+              onClick={() => setRaiseIssueOpen(false)}
+              className={quietToolbarButtonClass}
+            >
+              Close
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* OPTIONS */}
       {/* {optionsOpen && (
@@ -3635,7 +3690,7 @@ export default function Index() {
                 <div className="p-3">
                   <button
                     onClick={handleAddSnippet}
-                    className="flex w-full items-center justify-center gap-1.5 rounded-sm border border-dashed border-border bg-transparent px-3 py-2 text-[11px] font-mono text-muted-foreground transition-colors hover:border-primary/60 hover:bg-primary/[0.04] hover:text-primary"
+                    className="flex w-full items-center justify-center gap-1.5 rounded-sm border border-primary/60 bg-primary/[0.08] px-3 py-2 text-[11px] font-mono text-primary transition-colors hover:bg-primary/[0.14] hover:text-primary"
                   >
                     <Plus className="h-3 w-3" strokeWidth={2} />
                     Add Request
@@ -3689,9 +3744,8 @@ export default function Index() {
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button
-                      disabled={!activeWorkspaceId}
                       className={quietToolbarButtonClass}
-                      title={activeWorkspaceId ? `Open parser for ${activeWorkspaceDisplayName}` : "Select a workspace to parse"}
+                      title={activeWorkspaceId ? `Open parser for ${activeWorkspaceDisplayName}` : "Open parser"}
                     >
                       <FileCode className="h-4 w-4" strokeWidth={2} />
                       Parser
@@ -3702,8 +3756,13 @@ export default function Index() {
                     <DropdownMenuItem className="text-[11px]" onClick={() => openParserPage("json")}>
                       JSON Parser
                     </DropdownMenuItem>
-                    <DropdownMenuItem className="text-[11px]" onClick={() => openParserPage("html")}>
+                    <DropdownMenuItem
+                      className="cursor-not-allowed text-[11px] text-muted-foreground opacity-60 focus:bg-transparent focus:text-muted-foreground"
+                      disabled
+                      title="HTML Parser coming soon"
+                    >
                       HTML Parser
+                      <span className="ml-2 text-[10px] text-muted-foreground/70">coming soon</span>
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
