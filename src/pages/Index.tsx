@@ -1,4 +1,4 @@
-﻿import { Component, type ErrorInfo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { Component, type ErrorInfo, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Check, Copy, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, AlertCircle, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil, Moon, Sun, Play, Loader2 } from "lucide-react";
 import JSZip from "jszip";
@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   convertWithBackend,
+  createIssue,
   deleteConversionCollection,
   deleteConversionSnippet,
   extractApiErrorMessage,
@@ -445,6 +446,12 @@ export default function Index() {
   const [isRunning, setIsRunning] = useState(false);
   const [isRunningParser, setIsRunningParser] = useState(false);
   const [raiseIssueOpen, setRaiseIssueOpen] = useState(false);
+  const [issueType, setIssueType] = useState("Workspace");
+  const [issueDescription, setIssueDescription] = useState("");
+  const [issueEmail, setIssueEmail] = useState("");
+  const [issueFiles, setIssueFiles] = useState<File[]>([]);
+  const [isSubmittingIssue, setIsSubmittingIssue] = useState(false);
+  const [submittedIssueId, setSubmittedIssueId] = useState("");
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>("");
   const [activeWorkspaceFile, setActiveWorkspaceFile] = useState<WorkspaceFile>("request.py");
   const [activeInputTab, setActiveInputTab] = useState<InputPanelTab>("input");
@@ -2235,6 +2242,35 @@ export default function Index() {
     });
   };
 
+  const handleSubmitIssue = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!issueDescription.trim()) {
+      toast.error("Issue description is required");
+      return;
+    }
+    if (!issueEmail.trim()) {
+      toast.error("Your email is required");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("issue_type", issueType.trim() || "Other");
+    formData.append("description", issueDescription.trim());
+    formData.append("email", issueEmail.trim());
+    issueFiles.forEach((file) => formData.append("files", file));
+
+    try {
+      setIsSubmittingIssue(true);
+      const response = await createIssue(formData);
+      setSubmittedIssueId(response.issue_id);
+      toast.success("Issue submitted");
+    } catch (error) {
+      toast.error(extractApiErrorMessage(error));
+    } finally {
+      setIsSubmittingIssue(false);
+    }
+  };
+
   const handleDownloadAll = async () => {
     if (visibleTabs.length === 0) return;
     const zip = new JSZip();
@@ -3132,7 +3168,10 @@ export default function Index() {
           </button>
 
           <button
-            onClick={() => setRaiseIssueOpen(true)}
+            onClick={() => {
+              setSubmittedIssueId("");
+              setRaiseIssueOpen(true);
+            }}
             className={quietToolbarButtonClass}
             title="Raise an issue"
           >
@@ -3169,41 +3208,115 @@ export default function Index() {
       </header>
 
       <Dialog open={raiseIssueOpen} onOpenChange={setRaiseIssueOpen}>
-        <DialogContent className="max-w-sm border-border bg-background font-mono text-foreground">
+        <DialogContent className="max-w-md border-border bg-background font-mono text-foreground">
           <DialogHeader>
             <DialogTitle className="text-[15px]">Raise an Issue</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 text-[12px] leading-6">
-            <p className="text-muted-foreground">If you find any issue, contact developer:</p>
-            <div>
-              <div className="text-muted-foreground">Slack:</div>
-              <a
-                href="https://actowizsolutions41121.slack.com/team/U0AKPGHDVGA"
-                target="_blank"
-                rel="noreferrer"
-                className="break-all text-primary hover:text-foreground"
-              >
-                https://actowizsolutions41121.slack.com/team/U0AKPGHDVGA
-              </a>
+          {submittedIssueId ? (
+            <div className="space-y-4 text-[12px] leading-6">
+              <div className="rounded-sm border border-success/40 bg-success/5 px-3 py-2 text-success">
+                Issue submitted. Your issue ID is: {submittedIssueId}
+                <div className="text-muted-foreground">Please save this ID for tracking.</div>
+              </div>
+              <DialogFooter>
+                <button
+                  onClick={() => {
+                    setRaiseIssueOpen(false);
+                    navigate("/issues");
+                  }}
+                  className={quietToolbarButtonClass}
+                >
+                  Track Issue
+                </button>
+                <button
+                  onClick={() => void copyText(submittedIssueId, "Copied issue ID")}
+                  className={quietToolbarButtonClass}
+                >
+                  <Copy className="h-3 w-3" strokeWidth={2} />
+                  Copy Issue ID
+                </button>
+                <button
+                  onClick={() => setRaiseIssueOpen(false)}
+                  className={quietToolbarButtonClass}
+                >
+                  Close
+                </button>
+              </DialogFooter>
             </div>
-            <div>
-              <div className="text-muted-foreground">Mail:</div>
-              <a
-                href="mailto:shabbir.dudhiyawala@actowiz.co.in"
-                className="break-all text-primary hover:text-foreground"
-              >
-                shabbir.dudhiyawala@actowiz.co.in
-              </a>
-            </div>
-          </div>
-          <DialogFooter>
-            <button
-              onClick={() => setRaiseIssueOpen(false)}
-              className={quietToolbarButtonClass}
-            >
-              Close
-            </button>
-          </DialogFooter>
+          ) : (
+            <form className="space-y-3 text-[12px]" onSubmit={(event) => void handleSubmitIssue(event)}>
+              <label className="block space-y-1">
+                <span className="text-muted-foreground">Issue Type / Page</span>
+                <select
+                  value={issueType}
+                  onChange={(event) => setIssueType(event.target.value)}
+                  className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none focus:border-border-strong"
+                >
+                  <option value="Workspace">Workspace</option>
+                  <option value="Parser">Parser</option>
+                  <option value="Login">Login</option>
+                  <option value="Response Viewer">Response Viewer</option>
+                  <option value="Other">Other</option>
+                </select>
+              </label>
+              <label className="block space-y-1">
+                <span className="text-muted-foreground">Issue Description</span>
+                <textarea
+                  value={issueDescription}
+                  onChange={(event) => setIssueDescription(event.target.value)}
+                  required
+                  className="min-h-24 w-full resize-y rounded-sm border border-border bg-background px-2 py-2 font-mono text-[12px] text-foreground outline-none focus:border-border-strong"
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-muted-foreground">Your Email</span>
+                <input
+                  type="email"
+                  value={issueEmail}
+                  onChange={(event) => setIssueEmail(event.target.value)}
+                  required
+                  className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none focus:border-border-strong"
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-muted-foreground">Upload Files</span>
+                <input
+                  type="file"
+                  multiple
+                  accept=".png,.jpg,.jpeg,.webp,.txt,.log,.json,image/png,image/jpeg,image/webp,text/plain,application/json"
+                  onChange={(event) => setIssueFiles(Array.from(event.target.files ?? []))}
+                  className="block w-full text-[11px] text-muted-foreground file:mr-3 file:rounded-sm file:border file:border-border file:bg-background file:px-2 file:py-1 file:font-mono file:text-foreground"
+                />
+              </label>
+              <DialogFooter>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRaiseIssueOpen(false);
+                    navigate("/issues");
+                  }}
+                  className={quietToolbarButtonClass}
+                >
+                  Track Issue
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRaiseIssueOpen(false)}
+                  className={quietToolbarButtonClass}
+                >
+                  Close
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingIssue}
+                  className={primaryToolbarButtonClass}
+                >
+                  {isSubmittingIssue ? <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} /> : null}
+                  {isSubmittingIssue ? "Sending..." : "Send"}
+                </button>
+              </DialogFooter>
+            </form>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -5835,4 +5948,5 @@ function SegToggle({
     </div>
   );
 }
+
 

@@ -155,6 +155,30 @@ export interface HealthResponse {
   service?: string;
 }
 
+export interface IssueFileMetadata {
+  filename: string;
+  content_type: string;
+  size: number;
+  storage_path?: string | null;
+}
+
+export interface Issue {
+  issue_id: string;
+  issue_type: string;
+  description: string;
+  email: string;
+  files: IssueFileMetadata[];
+  status: "open" | "resolved";
+  created_at: string;
+  resolved_at?: string | null;
+}
+
+export interface CreateIssueResponse {
+  success: boolean;
+  issue_id: string;
+  message: string;
+}
+
 const DEFAULT_API_BASE_URL = "";
 
 export const API_BASE_URL = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? DEFAULT_API_BASE_URL).replace(/\/$/, "");
@@ -415,4 +439,84 @@ export async function getHealth(): Promise<HealthResponse> {
   return request<HealthResponse>(apiRoutes.health, {
     method: "GET",
   });
+}
+
+export async function createIssue(formData: FormData): Promise<CreateIssueResponse> {
+  try {
+    return await request<CreateIssueResponse>(apiRoutes.createIssue, {
+      method: "POST",
+      body: formData,
+    });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      return request<CreateIssueResponse>(apiRoutes.createIssueFallback, {
+        method: "POST",
+        body: formData,
+      }).catch((fallbackError) => {
+        if (fallbackError instanceof ApiError && fallbackError.status === 404) {
+          throw new ApiError(
+            404,
+            "Issue endpoint not found. Backend route is missing or not registered.",
+            fallbackError.payload,
+          );
+        }
+        throw fallbackError;
+      });
+    }
+    throw error;
+  }
+}
+
+export async function listIssues(params: { q?: string; status?: string; skip?: number; limit?: number } = {}): Promise<Issue[]> {
+  const query = new URLSearchParams();
+  if (params.q) query.set("q", params.q);
+  if (params.status) query.set("status", params.status);
+  query.set("skip", String(params.skip ?? 0));
+  query.set("limit", String(params.limit ?? 20));
+  try {
+    return await request<Issue[]>(`${apiRoutes.listIssues}?${query.toString()}`, { method: "GET" });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      return request<Issue[]>(`${apiRoutes.listIssuesFallback}?${query.toString()}`, { method: "GET" });
+    }
+    throw error;
+  }
+}
+
+export async function getIssue(issueId: string): Promise<Issue> {
+  try {
+    return await request<Issue>(apiRoutes.getIssue(issueId), { method: "GET" });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      return request<Issue>(apiRoutes.getIssueFallback(issueId), { method: "GET" });
+    }
+    throw error;
+  }
+}
+
+export async function listIssuesAdmin(params: { q?: string; status?: string; skip?: number; limit?: number } = {}): Promise<Issue[]> {
+  const query = new URLSearchParams();
+  if (params.q) query.set("q", params.q);
+  if (params.status) query.set("status", params.status);
+  query.set("skip", String(params.skip ?? 0));
+  query.set("limit", String(params.limit ?? 20));
+  try {
+    return await request<Issue[]>(`${apiRoutes.listIssuesAdmin}?${query.toString()}`, { method: "GET" });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      return request<Issue[]>(`${apiRoutes.listIssuesAdminFallback}?${query.toString()}`, { method: "GET" });
+    }
+    throw error;
+  }
+}
+
+export async function resolveIssue(issueId: string): Promise<Issue> {
+  try {
+    return await request<Issue>(apiRoutes.resolveIssue(issueId), { method: "PATCH" });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      return request<Issue>(apiRoutes.resolveIssueFallback(issueId), { method: "PATCH" });
+    }
+    throw error;
+  }
 }
