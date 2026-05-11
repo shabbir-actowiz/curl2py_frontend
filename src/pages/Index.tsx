@@ -189,6 +189,7 @@ interface ResponseTab {
 const SESSION_KEY = "curl2py:session:v2";
 const THEME_KEY = "curl2py:theme:v1";
 const SCRIPT_JSON_STORAGE_PREFIX = "curl2py:script-json:";
+const MANUAL_PARSER_WORKSPACE_ID = "__manual_parser_workspace__";
 
 const SAMPLE_SNIPPETS: Snippet[] = [];
 
@@ -701,11 +702,11 @@ export default function Index() {
     : activeCollection;
   const parserSnippets = parserCollection.snippets;
   const parserNames = parserCollection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(parserSnippets);
-  const parserWorkspaceId = parserRouteParams.snippetId || activeResponseTab?.workspaceId || activeWorkspaceId;
+  const parserWorkspaceId = parserRouteParams.snippetId || activeResponseTab?.workspaceId || activeWorkspaceId || MANUAL_PARSER_WORKSPACE_ID;
   const parserWorkspaceIndex = parserSnippets.findIndex((snippet) => snippet.id === parserWorkspaceId);
   const parserWorkspaceName = parserWorkspaceIndex >= 0
     ? parserNames[parserWorkspaceIndex]
-    : activeResponseWorkspaceName || activeWorkspaceDisplayName || "request";
+    : activeResponseWorkspaceName || activeWorkspaceDisplayName || "manual_json";
   const parserArtifact = parserWorkspaceId ? parserCollection.workspaceArtifacts[parserWorkspaceId] : undefined;
   const isScriptJsonRoute = !!parserRouteParams.scriptId;
   const scriptJsonSourceKey = isScriptJsonRoute && parserWorkspaceId && parserRouteParams.scriptId
@@ -1687,8 +1688,11 @@ export default function Index() {
 
     if (!selectedPath || !workspaceId || !requestKey) return;
     const workspaceIndex = targetCollection.snippets.findIndex((snippet) => snippet.id === workspaceId);
-    if (workspaceIndex === -1) return;
-    const workspaceName = targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
+    const hasManualJsonSource = !!manualParserJsonByWorkspace[workspaceId] || (workspaceId === parserWorkspaceId && !!parserResponseJson);
+    if (workspaceIndex === -1 && !hasManualJsonSource) return;
+    const workspaceName = workspaceIndex >= 0
+      ? targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`
+      : parserWorkspaceName || "manual_json";
 
     setParserSelectionsByRequest((prev) => {
       const currentSelections = prev[requestKey] ?? (isScriptJsonRoute ? [] : targetCollection.workspaceArtifacts?.[workspaceId]?.parserSelections ?? []);
@@ -1725,8 +1729,11 @@ export default function Index() {
     const workspaceId = isParserRoute ? parserWorkspaceId : activeResponseTab?.workspaceId || activeWorkspaceId;
     if (!workspaceId) return;
     const workspaceIndex = targetCollection.snippets.findIndex((snippet) => snippet.id === workspaceId);
-    if (workspaceIndex === -1) return;
-    const workspaceName = targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
+    const hasManualJsonSource = !!manualParserJsonByWorkspace[workspaceId] || (workspaceId === parserWorkspaceId && !!parserResponseJson);
+    if (workspaceIndex === -1 && !hasManualJsonSource) return;
+    const workspaceName = workspaceIndex >= 0
+      ? targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`
+      : parserWorkspaceName || "manual_json";
     const parts = normalizeSelectionParts(path).filter((part): part is string | number => part !== undefined);
     const lastKey = [...parts].reverse().find((part): part is string => typeof part === "string");
     if (!lastKey) return;
@@ -1849,8 +1856,11 @@ export default function Index() {
     const targetCollection = isParserRoute ? parserCollection : activeCollection;
     const targetNames = targetCollection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(targetCollection.snippets);
     const workspaceIndex = targetCollection.snippets.findIndex((snippet) => snippet.id === workspaceId);
-    if (workspaceIndex === -1) return;
-    const workspaceName = targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
+    const hasManualJsonSource = !!manualParserJsonByWorkspace[workspaceId] || (workspaceId === parserWorkspaceId && !!parserResponseJson);
+    if (workspaceIndex === -1 && !hasManualJsonSource) return;
+    const workspaceName = workspaceIndex >= 0
+      ? targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`
+      : parserWorkspaceName || "manual_json";
     const requestKey = `${targetCollection.id}:${workspaceId}`;
 
     setParserSelectionsByRequest((prev) => {
@@ -1964,7 +1974,8 @@ export default function Index() {
   };
 
   const saveParserJson = () => {
-    if (!parserWorkspaceId) return;
+    const workspaceId = parserWorkspaceId || MANUAL_PARSER_WORKSPACE_ID;
+    if (!parserJsonDraft.trim()) return;
     try {
       const parsed = JSON.parse(parserJsonDraft);
       const pretty = JSON.stringify(parsed, null, 2);
@@ -1983,13 +1994,41 @@ export default function Index() {
       }
       setManualParserJsonByWorkspace((prev) => ({
         ...prev,
-        [parserWorkspaceId]: pretty,
+        [workspaceId]: pretty,
       }));
+      setCollections((prev) => {
+        const targetCollection = isParserRoute ? parserCollection : activeCollection;
+        const collection = prev[targetCollection.id];
+        if (!collection) return prev;
+        const artifacts = collection.workspaceArtifacts || {};
+        const currentArtifact = artifacts[workspaceId] ?? {
+          responseJson: null,
+          metaJson: null,
+          logsTxt: `Workspace ${parserWorkspaceName} ready`,
+          parserCode: buildParserStub(parserWorkspaceName),
+        };
+        return {
+          ...prev,
+          [targetCollection.id]: {
+            ...collection,
+            workspaceArtifacts: {
+              ...artifacts,
+              [workspaceId]: {
+                ...currentArtifact,
+                responseJson: pretty,
+                responseContentType: "application/json",
+                responseExtension: "json",
+                responseFileName: "manual_response.json",
+              },
+            },
+          },
+        };
+      });
       setParserJsonDraft(pretty);
       setIsEditingParserJson(false);
       toast.success("JSON saved");
     } catch {
-      toast.error("Invalid JSON. Fix the syntax and try again.");
+      toast.error("Invalid JSON. Please check syntax.");
     }
   };
 
@@ -2012,8 +2051,11 @@ export default function Index() {
     const targetCollection = isParserRoute ? parserCollection : activeCollection;
     const targetNames = targetCollection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(targetCollection.snippets);
     const workspaceIndex = targetCollection.snippets.findIndex((snippet) => snippet.id === workspaceId);
-    if (workspaceIndex === -1) return;
-    const workspaceName = targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
+    const hasManualJsonSource = !!manualParserJsonByWorkspace[workspaceId] || (workspaceId === parserWorkspaceId && !!parserResponseJson);
+    if (workspaceIndex === -1 && !hasManualJsonSource) return;
+    const workspaceName = workspaceIndex >= 0
+      ? targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`
+      : parserWorkspaceName || "manual_json";
     const requestKey = isScriptJsonRoute ? activeParserRequestKey : `${targetCollection.id}:${workspaceId}`;
     const currentSelections = parserSelectionsByRequest[requestKey] ?? (isScriptJsonRoute ? [] : targetCollection.workspaceArtifacts?.[workspaceId]?.parserSelections ?? []);
     const selections = optimizeParserSelections(currentSelections);
@@ -2080,8 +2122,11 @@ export default function Index() {
       const targetCollection = isParserRoute ? parserCollection : activeCollection;
       const targetNames = targetCollection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(targetCollection.snippets);
       const workspaceIndex = targetCollection.snippets.findIndex((snippet) => snippet.id === workspaceId);
-      if (workspaceIndex === -1) return;
-      const workspaceName = targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
+      const hasManualJsonSource = !!manualParserJsonByWorkspace[workspaceId] || (workspaceId === parserWorkspaceId && !!parserResponseJson);
+      if (workspaceIndex === -1 && !hasManualJsonSource) return;
+      const workspaceName = workspaceIndex >= 0
+        ? targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`
+        : parserWorkspaceName || "manual_json";
       let artifact = targetCollection.workspaceArtifacts[workspaceId];
       let responseContent = workspaceId === parserWorkspaceId
         ? (parserBuilderMode === "html" ? parserResponseHtml : parserResponseJson ?? "")
@@ -2328,6 +2373,7 @@ export default function Index() {
         isAsync,
         mergeMode,
         theme,
+        manualParserJsonByWorkspace,
       });
       localStorage.setItem(SESSION_KEY, payload);
       setSavedSession(true);
@@ -2375,6 +2421,9 @@ export default function Index() {
       if (typeof data.isAsync === "boolean") setIsAsync(data.isAsync);
       if (typeof data.mergeMode === "boolean") setMergeMode(data.mergeMode);
       if (data.theme === "light" || data.theme === "dark") setTheme(data.theme);
+      if (data.manualParserJsonByWorkspace && typeof data.manualParserJsonByWorkspace === "object") {
+        setManualParserJsonByWorkspace(data.manualParserJsonByWorkspace as Record<string, string>);
+      }
       setClosedTabIds(new Set());
       setStatusKind("success");
       setStatusMsg("Session loaded");
@@ -2606,7 +2655,7 @@ export default function Index() {
                 {parserJsonEditorVisible ? (
                   <button
                     onClick={saveParserJson}
-                    disabled={!canUseParser || (isScriptJsonRoute && !activeScriptJsonSource)}
+                    disabled={!parserJsonDraft.trim() || (isScriptJsonRoute && !activeScriptJsonSource)}
                     className={primaryToolbarButtonClass}
                   >
                     Save JSON
