@@ -75,6 +75,7 @@ interface ParserSelection {
   id?: string;
   path: string;
   outputKey: string;
+  selectionMode?: "single" | "loop";
   xpath?: string;
   css?: string;
   selectorType?: "xpath" | "css";
@@ -1708,6 +1709,7 @@ export default function Index() {
           id: newId(),
           path: selectedPath,
           outputKey: uniqueOutputKey(getOutputKeyFromPath(selectedPath), currentSelections),
+          selectionMode: "single",
         },
       ];
       console.debug("new parser selections", nextSelections);
@@ -1765,7 +1767,7 @@ export default function Index() {
       }
 
       const outputKey = uniqueOutputKey(sanitizeOutputKey(lastKey), existingSelections);
-      const parserSelections = [...existingSelections, { path, outputKey }];
+      const parserSelections = [...existingSelections, { path, outputKey, selectionMode: "single" as const }];
       const parserCode = generateParserCode(workspaceName, parserSelections);
       toast.success("Path added");
       return {
@@ -1934,6 +1936,7 @@ export default function Index() {
       {
         path: "",
         outputKey: uniqueOutputKey("value", prev),
+        selectionMode: "single",
       },
     ]);
   };
@@ -2882,7 +2885,7 @@ export default function Index() {
                     {parserSelections.map((selection, index) => {
                       const warning = getParserPathWarning(selection.path);
                       return (
-                        <div key={`${selection.path}-${index}`} className="grid gap-1 md:grid-cols-[minmax(0,1fr)_220px_28px] md:items-start">
+                        <div key={`${selection.path}-${index}`} className="grid gap-1 md:grid-cols-[minmax(0,1fr)_220px_96px_28px] md:items-start">
                           <div className="min-w-0">
                             <input
                               value={selection.path}
@@ -2897,6 +2900,14 @@ export default function Index() {
                             className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
                             placeholder="output field"
                           />
+                          <select
+                            value={selection.selectionMode ?? "single"}
+                            onChange={(event) => updateParserSelectionRow(index, { selectionMode: event.target.value as "single" | "loop" })}
+                            className="h-8 rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
+                          >
+                            <option value="single">single</option>
+                            <option value="loop">loop</option>
+                          </select>
                           <button
                             onClick={() => deleteParserSelectionRow(index)}
                             className="flex h-8 w-8 items-center justify-center rounded-sm border border-border bg-transparent text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
@@ -4370,6 +4381,7 @@ function optimizeParserSelections(selections: ParserSelection[]) {
     optimized.push({
       path,
       outputKey: uniqueOutputKey(baseKey, optimized),
+      selectionMode: selection.selectionMode ?? "single",
     });
   });
 
@@ -4379,11 +4391,11 @@ function optimizeParserSelections(selections: ParserSelection[]) {
 function getJsonLoopContexts(selections: ParserSelection[]) {
   const contexts = new Set<string>();
   selections.forEach((selection) => {
+    if ((selection.selectionMode ?? "single") !== "loop") return;
     const parts = normalizeSelectionParts(selection.path);
     for (let index = 0; index < parts.length - 1; index += 1) {
       if (typeof parts[index] === "string" && typeof parts[index + 1] === "number") {
-        const parent = parts.slice(0, index + 1).filter((part): part is string => typeof part === "string");
-        contexts.add(`${parent.join(".")}[*]`);
+        contexts.add(`${formatJsonPath(parts.slice(0, index + 1))}[*]`);
       }
     }
   });
@@ -4428,13 +4440,13 @@ function sanitizePythonName(value: string) {
 
 interface ParserField {
   outputKey: string;
-  path: string[];
+  path: Array<string | number>;
 }
 
 interface ParserArrayGroup {
   prop: string;
-  accessPath: string[];
-  fullPath: string[];
+  accessPath: Array<string | number>;
+  fullPath: Array<string | number>;
   fields: ParserField[];
   children: ParserArrayGroup[];
 }
@@ -4459,9 +4471,22 @@ function findNextArray(parts: Array<string | number>) {
   return -1;
 }
 
-function getOrCreateArrayGroup(groups: ParserArrayGroup[], prop: string, accessPath: string[], fullPath = accessPath) {
-  const key = fullPath.join(".");
-  let group = groups.find((item) => item.fullPath.join(".") === key);
+function findLastArray(parts: Array<string | number>) {
+  for (let index = parts.length - 2; index >= 0; index -= 1) {
+    if (typeof parts[index] === "string" && typeof parts[index + 1] === "number") {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function pathKey(parts: Array<string | number>) {
+  return JSON.stringify(parts);
+}
+
+function getOrCreateArrayGroup(groups: ParserArrayGroup[], prop: string, accessPath: Array<string | number>, fullPath = accessPath) {
+  const key = pathKey(fullPath);
+  let group = groups.find((item) => pathKey(item.fullPath) === key);
   if (!group) {
     group = { prop, accessPath, fullPath, fields: [], children: [] };
     groups.push(group);
@@ -4473,7 +4498,7 @@ function addSelectionToGroups(groups: ParserArrayGroup[], selection: ParserSelec
   const arrayIndex = findNextArray(parts);
   if (arrayIndex === -1) return;
   const prop = String(parts[arrayIndex]);
-  const accessPath = parts.slice(0, arrayIndex + 1).filter((part): part is string => typeof part === "string");
+  const accessPath = parts.slice(0, arrayIndex + 1);
   const group = getOrCreateArrayGroup(groups, prop, accessPath, accessPath);
   addSelectionRemainder(group, selection, parts.slice(arrayIndex + 2));
 }
@@ -4482,15 +4507,15 @@ function addSelectionRemainder(group: ParserArrayGroup, selection: ParserSelecti
   const arrayIndex = findNextArray(remainder);
   if (arrayIndex !== -1) {
     const prop = String(remainder[arrayIndex]);
-    const accessPath = remainder.slice(0, arrayIndex + 1).filter((part): part is string => typeof part === "string");
+    const accessPath = remainder.slice(0, arrayIndex + 1);
     const child = getOrCreateArrayGroup(group.children, prop, accessPath, [...group.fullPath, ...accessPath]);
     addSelectionRemainder(child, selection, remainder.slice(arrayIndex + 2));
     return;
   }
 
-  const fieldPath = remainder.filter((part): part is string => typeof part === "string");
+  const fieldPath = remainder;
   if (fieldPath.length === 0) return;
-  if (!group.fields.some((field) => field.outputKey === selection.outputKey && field.path.join(".") === fieldPath.join("."))) {
+  if (!group.fields.some((field) => field.outputKey === selection.outputKey && pathKey(field.path) === pathKey(fieldPath))) {
     group.fields.push({ outputKey: selection.outputKey, path: fieldPath });
   }
 }
@@ -4499,15 +4524,21 @@ function pythonString(value: string) {
   return JSON.stringify(value);
 }
 
-function getFromExpression(base: string, path: string[]) {
-  if (path.length === 1) return `${base}.get(${pythonString(path[0])})`;
-  return `_get_value(${base}, [${path.map(pythonString).join(", ")}])`;
+function pythonPathPart(value: string | number) {
+  return typeof value === "number" ? String(value) : pythonString(value);
 }
 
-function collectionExpression(base: string, path: string[]) {
+function pythonPath(path: Array<string | number>) {
+  return `[${path.map(pythonPathPart).join(", ")}]`;
+}
+
+function getFromExpression(base: string, path: Array<string | number>) {
+  return `_get_value(${base}, ${pythonPath(path)})`;
+}
+
+function collectionExpression(base: string, path: Array<string | number>) {
   if (path.length === 0) return base;
-  if (path.length === 1) return `${base}.get(${pythonString(path[0])}, [])`;
-  return `_get_value(${base}, [${path.map(pythonString).join(", ")}]) or []`;
+  return `_get_value(${base}, ${pythonPath(path)}) or []`;
 }
 
 function emitArrayGroup(lines: string[], group: ParserArrayGroup, base: string, indent: string, usedVars: Set<string>) {
@@ -4529,12 +4560,13 @@ function emitArrayGroup(lines: string[], group: ParserArrayGroup, base: string, 
   lines.push(`${indent}        continue`);
 
   if (group.fields.length > 0) {
-    lines.push(`${indent}    results.append({`);
+    lines.push(`${indent}    row = {`);
     group.fields.forEach((field, index) => {
       const comma = index < group.fields.length - 1 ? "," : "";
       lines.push(`${indent}        ${pythonString(field.outputKey)}: ${getFromExpression(itemVar, field.path)}${comma}`);
     });
-    lines.push(`${indent}    })`);
+    lines.push(`${indent}    }`);
+    lines.push(`${indent}    _append_if_present(results, row)`);
   }
 
   group.children.forEach((child) => {
@@ -4582,7 +4614,7 @@ function emitArrayGroupRows(lines: string[], group: ParserArrayGroup, base: stri
   return rowsVar;
 }
 
-function generateParserCode(workspaceName: string, selections: ParserSelection[], source: "response_json" | "script_json" = "response_json") {
+export function generateParserCode(workspaceName: string, selections: ParserSelection[], source: "response_json" | "script_json" = "response_json") {
   const functionName = `${sanitizePythonName(workspaceName || "request")}_parser`;
   const usedPaths = new Set<string>();
   const deduped: ParserSelection[] = [];
@@ -4593,6 +4625,7 @@ function generateParserCode(workspaceName: string, selections: ParserSelection[]
     deduped.push({
       path,
       outputKey: uniqueOutputKey(sanitizeOutputKey(selection.outputKey || getOutputKeyFromPath(path)), deduped),
+      selectionMode: selection.selectionMode ?? "single",
     });
   });
   const rootFields: ParserField[] = [];
@@ -4600,19 +4633,25 @@ function generateParserCode(workspaceName: string, selections: ParserSelection[]
 
   deduped.forEach((selection) => {
     const parts = normalizeSelectionParts(selection.path);
+    const arrayIndex = findLastArray(parts);
+    if ((selection.selectionMode ?? "single") !== "loop") {
+      rootFields.push({ outputKey: selection.outputKey, path: parts });
+      return;
+    }
+
     if (typeof parts[0] === "number") {
       const group = getOrCreateArrayGroup(groups, "items", []);
       addSelectionRemainder(group, selection, parts.slice(1));
       return;
     }
-    if (findNextArray(parts) === -1) {
-      const fieldPath = parts.filter((part): part is string => typeof part === "string");
-      if (fieldPath.length > 0) {
-        rootFields.push({ outputKey: selection.outputKey, path: fieldPath });
-      }
+    if (arrayIndex === -1) {
+      rootFields.push({ outputKey: selection.outputKey, path: parts });
       return;
     }
-    addSelectionToGroups(groups, selection, parts);
+    const prop = String(parts[arrayIndex]);
+    const accessPath = parts.slice(0, arrayIndex + 1);
+    const group = getOrCreateArrayGroup(groups, prop, accessPath, accessPath);
+    addSelectionRemainder(group, selection, parts.slice(arrayIndex + 2));
   });
 
   const lines = [
@@ -4627,9 +4666,14 @@ function generateParserCode(workspaceName: string, selections: ParserSelection[]
     "    def _get_value(container, path):",
     "        current = container",
     "        for key in path:",
-    "            if not isinstance(current, dict):",
-    "                return None",
-    "            current = current.get(key)",
+    "            if isinstance(key, int):",
+    "                if not isinstance(current, list) or key >= len(current):",
+    "                    return None",
+    "                current = current[key]",
+    "            else:",
+    "                if not isinstance(current, dict):",
+    "                    return None",
+    "                current = current.get(key)",
     "        return current",
     "",
     "    def _iter_items(value):",
@@ -4639,59 +4683,29 @@ function generateParserCode(workspaceName: string, selections: ParserSelection[]
     "            return value",
     "        return []",
     "",
+    "    def _append_if_present(results, row):",
+    "        if any(value is not None for value in row.values()):",
+    "            results.append(row)",
+    "",
   ];
 
-  if (rootFields.length > 0 && groups.length === 0) {
-    lines.push("    return {");
-    rootFields.forEach((field, index) => {
-      const comma = index < rootFields.length - 1 ? "," : "";
-      lines.push(`        ${pythonString(field.outputKey)}: ${getFromExpression("data", field.path)}${comma}`);
-    });
+  lines.push("    results = []");
+  lines.push("");
+
+  rootFields.forEach((field) => {
+    lines.push("    row = {");
+    lines.push(`        ${pythonString(field.outputKey)}: ${getFromExpression("data", field.path)}`);
     lines.push("    }");
+    lines.push("    _append_if_present(results, row)");
     lines.push("");
-    return lines.join("\n");
-  }
+  });
 
-  if (rootFields.length === 0 && groups.length > 0) {
-    lines.push("    results = []");
-    lines.push("");
-    groups.forEach((group, index) => {
-      emitArrayGroup(lines, group, "data", "    ", new Set());
-      if (index < groups.length - 1) lines.push("");
-    });
-    lines.push("    return results");
-    lines.push("");
-    return lines.join("\n");
-  }
+  groups.forEach((group, index) => {
+    emitArrayGroup(lines, group, "data", "    ", new Set());
+    if (index < groups.length - 1) lines.push("");
+  });
 
-  if (rootFields.length > 0 && groups.length > 0) {
-    const usedVars = new Set<string>();
-    const groupRows = groups.map((group) => {
-      const rowsVar = emitArrayGroupRows(lines, group, "data", "    ", usedVars);
-      lines.push("");
-      return { group, rowsVar };
-    });
-    lines.push("    return {");
-    const entries = [
-      ...rootFields.map((field) => ({
-        key: field.outputKey,
-        value: getFromExpression("data", field.path),
-      })),
-      ...groupRows.map(({ group, rowsVar }) => ({
-        key: sanitizeOutputKey(group.prop),
-        value: rowsVar,
-      })),
-    ];
-    entries.forEach((entry, index) => {
-      const comma = index < entries.length - 1 ? "," : "";
-      lines.push(`        ${pythonString(entry.key)}: ${entry.value}${comma}`);
-    });
-    lines.push("    }");
-    lines.push("");
-    return lines.join("\n");
-  }
-
-  lines.push("    return {}");
+  lines.push("    return results");
   lines.push("");
   return lines.join("\n");
 }
