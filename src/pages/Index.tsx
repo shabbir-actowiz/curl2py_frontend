@@ -4848,7 +4848,7 @@ export function generateMysqlDbCode(source: string, contextName = "data"): Mysql
     "",
     `DB_NAME = 'YOUR_DB_NAME'`,
     `TABLE_NAME = "YOUR_TABLE_NAME_{datetime.now().strftime('%Y_%m_%d')}"`,
-    "",
+    "# ================================================",
     "",
     "def get_connection():",
     "    return mysql.connector.connect(**DB_CONFIG)",
