@@ -68,7 +68,7 @@ type InputPanelTab = "input" | "proxy";
 type ThemeMode = "dark" | "light";
 type WorkspaceFile = string;
 type ParserBuilderMode = "json" | "html";
-type ParserPageTab = "source" | "paths" | "parser" | "output";
+type ParserPageTab = "source" | "paths" | "parser" | "output" | "jsonSource" | "dbCode";
 type ParserOutputView = "json" | "table";
 
 interface ParserSelection {
@@ -165,6 +165,8 @@ interface WorkspaceArtifact {
   htmlParserSelections?: ParserSelection[];
   htmlContent?: string;
   parserGenerated?: boolean;
+  dbSourceJson?: string;
+  dbCode?: string;
 }
 
 interface CollectionState {
@@ -476,6 +478,9 @@ export default function Index() {
   const [parserOutputView, setParserOutputView] = useState<ParserOutputView>("json");
   const [scriptJsonSourcesByRequest, setScriptJsonSourcesByRequest] = useState<Record<string, ScriptJsonSource>>({});
   const [parserCodeFile, setParserCodeFile] = useState<"parser" | "extractor">("parser");
+  const [dbJsonByRequest, setDbJsonByRequest] = useState<Record<string, string>>({});
+  const [dbJsonDraft, setDbJsonDraft] = useState("");
+  const [isEditingDbJson, setIsEditingDbJson] = useState(false);
   const [theme, setTheme] = useState<ThemeMode>(() => {
     try {
       return window.localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark";
@@ -665,10 +670,14 @@ export default function Index() {
   const activeRequestCode = activeTab?.code ?? "";
   const activeCodeFilename = activeTab?.filename || "-";
   const activeCodeContent = activeRequestCode;
-  const panelCodeFilename = activeTab?.kind === "merged" || activeTab?.kind === "parser"
+  const panelCodeFilename = activeWorkspaceFile === "db.py"
+    ? "db.py"
+    : activeTab?.kind === "merged" || activeTab?.kind === "parser"
     ? activeTab.filename
     : activeCodeFilename;
-  const panelCodeContent = activeTab?.kind === "merged" || activeTab?.kind === "parser"
+  const panelCodeContent = activeWorkspaceFile === "db.py"
+    ? activeWorkspaceArtifact?.dbCode ?? ""
+    : activeTab?.kind === "merged" || activeTab?.kind === "parser"
     ? activeTab.code
     : activeCodeContent;
   const activeMetaJson = activeWorkspaceArtifact?.metaJson;
@@ -759,6 +768,21 @@ export default function Index() {
     : parserSelections.length > 0
       ? generateParserCode(parserWorkspaceName, parserSelections, parserUsesScriptJson ? "script_json" : "response_json")
       : parserArtifact?.parserCode ?? buildParserStub(parserWorkspaceName);
+  const hasSavedDbJsonSource = !!activeParserRequestKey && (
+    Object.prototype.hasOwnProperty.call(dbJsonByRequest, activeParserRequestKey) ||
+    parserArtifact?.dbSourceJson !== undefined
+  );
+  const savedDbJsonSource = activeParserRequestKey
+    ? dbJsonByRequest[activeParserRequestKey] ?? parserArtifact?.dbSourceJson ?? ""
+    : "";
+  const dbJsonSourceContent = hasSavedDbJsonSource ? savedDbJsonSource : parserOutputContent || "";
+  const visibleDbJsonSource = isEditingDbJson ? dbJsonDraft : dbJsonSourceContent;
+  const dbGeneration = useMemo(
+    () => generateMysqlDbCode(dbJsonSourceContent, parserWorkspaceName),
+    [dbJsonSourceContent, parserWorkspaceName]
+  );
+  const dbCode = dbGeneration.code;
+  const dbSourceJson = dbGeneration.sourceJson || dbJsonSourceContent;
 
   const handleParserPathSelect = useCallback((path: string | null, value?: unknown) => {
     setSelectedParserPath(path);
@@ -807,6 +831,11 @@ export default function Index() {
   }, [isParserRoute, parserResponseHtml, parserWorkspaceId]);
 
   useEffect(() => {
+    if (!isParserRoute || isEditingDbJson) return;
+    setDbJsonDraft(dbJsonSourceContent);
+  }, [dbJsonSourceContent, isEditingDbJson, isParserRoute, parserWorkspaceId]);
+
+  useEffect(() => {
     if (!isScriptJsonRoute || !scriptJsonSourceKey || activeScriptJsonSource) return;
     try {
       const storageKey = scriptJsonStorageKey(scriptJsonSourceKey);
@@ -828,7 +857,7 @@ export default function Index() {
     const nextMode = (location.state as { parserMode?: ParserBuilderMode } | null)?.parserMode ?? detectedParserMode;
     setParserBuilderMode(nextMode);
     setParserPageTab((current) => {
-      return current === "paths" || current === "parser" || current === "output" ? current : "source";
+      return current === "paths" || current === "parser" || current === "output" || current === "jsonSource" || current === "dbCode" ? current : "source";
     });
   }, [detectedParserMode, isParserRoute, location.state, parserWorkspaceId]);
 
@@ -1048,7 +1077,7 @@ export default function Index() {
       return;
     }
 
-    if (file === "parser.py") {
+    if (file === "parser.py" || file === "db.py") {
       const tabId = `req-${workspaceId}`;
       setActivePanelTab("code");
       setClosedTabIds((prev) => {
@@ -1498,6 +1527,9 @@ export default function Index() {
 
   // Output handlers
   const getActivePanelFilename = () => {
+    if (activeWorkspaceFile === "db.py") {
+      return "db.py";
+    }
     if (activePanelTab === "response") {
       return activeResponseTab?.label ?? activeWorkspaceFile;
     }
@@ -1511,6 +1543,9 @@ export default function Index() {
   };
 
   const getActivePanelContent = () => {
+    if (activeWorkspaceFile === "db.py") {
+      return activeWorkspaceArtifact?.dbCode || "";
+    }
     if (activePanelTab === "response") {
       return activeWorkspaceFile === "meta.json"
         ? activeResponseArtifact?.metaJson || activeMetaJson || ""
@@ -2033,6 +2068,99 @@ export default function Index() {
     } catch {
       toast.error("Invalid JSON. Please check syntax.");
     }
+  };
+
+  const saveDbJsonSource = () => {
+    const workspaceId = parserWorkspaceId || MANUAL_PARSER_WORKSPACE_ID;
+    const requestKey = activeParserRequestKey || `${parserCollection.id}:${workspaceId}`;
+    const nextSource = dbJsonDraft.trim();
+    const nextGeneration = generateMysqlDbCode(nextSource, parserWorkspaceName);
+
+    setDbJsonByRequest((prev) => ({
+      ...prev,
+      [requestKey]: nextSource,
+    }));
+
+    setCollections((prev) => {
+      const collection = prev[parserCollection.id];
+      if (!collection) return prev;
+      const artifacts = collection.workspaceArtifacts || {};
+      const currentArtifact = artifacts[workspaceId] ?? {
+        responseJson: null,
+        responseFileName: defaultResponseFileName(parserWorkspaceName),
+        responseContentType: "application/json",
+        responseExtension: "json",
+        metaJson: null,
+        logsTxt: `Workspace ${parserWorkspaceName} ready`,
+        parserCode: buildParserStub(parserWorkspaceName),
+        parserGenerated: true,
+      };
+      return {
+        ...prev,
+        [parserCollection.id]: {
+          ...collection,
+          workspaceArtifacts: {
+            ...artifacts,
+            [workspaceId]: {
+              ...currentArtifact,
+              dbSourceJson: nextSource,
+              dbCode: nextGeneration.error ? currentArtifact.dbCode : nextGeneration.code,
+            },
+          },
+        },
+      };
+    });
+
+    setIsEditingDbJson(false);
+    if (nextGeneration.error) {
+      toast.error(nextGeneration.error);
+    } else {
+      toast.success("JSON Source saved");
+    }
+  };
+
+  const saveDbCodeForWorkspace = () => {
+    const workspaceId = parserWorkspaceId || activeWorkspaceId || MANUAL_PARSER_WORKSPACE_ID;
+    if (!workspaceId || dbGeneration.error) {
+      toast.error(dbGeneration.error || "No DB code to save");
+      return;
+    }
+    const targetCollection = isParserRoute ? parserCollection : activeCollection;
+    const workspaceName = parserWorkspaceName || activeWorkspaceDisplayName || "data";
+    setCollections((prev) => {
+      const collection = prev[targetCollection.id];
+      if (!collection) return prev;
+      const artifacts = collection.workspaceArtifacts || {};
+      const currentArtifact = artifacts[workspaceId] ?? {
+        responseJson: null,
+        responseFileName: defaultResponseFileName(workspaceName),
+        responseContentType: "application/json",
+        responseExtension: "json",
+        metaJson: null,
+        logsTxt: `Workspace ${workspaceName} ready`,
+        parserCode: buildParserStub(workspaceName),
+        parserGenerated: true,
+      };
+      return {
+        ...prev,
+        [targetCollection.id]: {
+          ...collection,
+          workspaceArtifacts: {
+            ...artifacts,
+            [workspaceId]: {
+              ...currentArtifact,
+              dbSourceJson,
+              dbCode,
+            },
+          },
+        },
+      };
+    });
+    setActiveCollectionId(targetCollection.id);
+    setActiveWorkspaceId(workspaceId);
+    setActiveWorkspaceFile("db.py");
+    setActivePanelTab("code");
+    toast.success("DB code saved as db.py");
   };
 
   const saveParserHtml = () => {
@@ -2615,7 +2743,7 @@ export default function Index() {
     const canShowJsonParser = hasResponse && parserResponseIsJson;
     const parserJsonEditorVisible = parserBuilderMode === "json" && parserPageTab === "source" && isEditingParserJson;
     const parserHtmlEditorVisible = parserBuilderMode === "html" && parserPageTab === "source" && isEditingParserHtml;
-    const parserTabs: ParserPageTab[] = ["source", "paths", "parser", "output"];
+    const parserTabs: ParserPageTab[] = ["source", "paths", "parser", "output", "jsonSource", "dbCode"];
     const currentLoop = parserBuilderMode === "html" ? currentHtmlLoop : currentJsonLoop;
     const canShowTableOutput = isListOfRecords(activeParserRun?.output);
 
@@ -2703,6 +2831,36 @@ export default function Index() {
                 )}
               </>
             )}
+            {parserPageTab === "jsonSource" && (
+              <>
+                <button
+                  onClick={() => void copyText(visibleDbJsonSource, "Copied JSON")}
+                  disabled={!visibleDbJsonSource}
+                  className={quietToolbarButtonClass}
+                >
+                  <Copy className="h-3 w-3" strokeWidth={2} />
+                  Copy JSON
+                </button>
+                {isEditingDbJson ? (
+                  <button
+                    onClick={saveDbJsonSource}
+                    className={primaryToolbarButtonClass}
+                  >
+                    Save JSON
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setDbJsonDraft(dbJsonSourceContent);
+                      setIsEditingDbJson(true);
+                    }}
+                    className={quietToolbarButtonClass}
+                  >
+                    Edit JSON
+                  </button>
+                )}
+              </>
+            )}
             {parserPageTab === "parser" && (
               <>
                 <button
@@ -2782,6 +2940,26 @@ export default function Index() {
                 </button>
               </>
             )}
+            {parserPageTab === "dbCode" && (
+              <>
+                <button
+                  onClick={() => void copyText(dbCode, "Copied DB code")}
+                  disabled={!dbCode || !!dbGeneration.error}
+                  className={quietToolbarButtonClass}
+                >
+                  <Copy className="h-3 w-3" strokeWidth={2} />
+                  Copy DB Code
+                </button>
+                <button
+                  onClick={saveDbCodeForWorkspace}
+                  disabled={!dbCode || !!dbGeneration.error}
+                  className={quietToolbarButtonClass}
+                >
+                  <Save className="h-3 w-3" strokeWidth={2} />
+                  Save DB Code
+                </button>
+              </>
+            )}
           </div>
         </header>
 
@@ -2799,7 +2977,7 @@ export default function Index() {
                       : "text-muted-foreground hover:bg-surface-elevated/80 hover:text-foreground"
                   )}
                 >
-                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                  {tab === "jsonSource" ? "JSON Source" : tab === "dbCode" ? "DB Code" : tab.charAt(0).toUpperCase() + tab.slice(1)}
                 </button>
               ))}
             </div>
@@ -3081,7 +3259,7 @@ export default function Index() {
                 )}
               </div>
             </div>
-          ) : (
+          ) : parserPageTab === "output" ? (
             <div className="flex min-h-0 flex-1 flex-col">
               <div className="flex items-center justify-between border-b border-border bg-background px-4 py-1.5 font-mono text-[11px]">
                 <div className="flex min-w-0 items-center gap-3">
@@ -3130,6 +3308,36 @@ export default function Index() {
                   <EmptyState title="No parser output yet" detail="Run Parser from the Parser tab to see results here." />
                 )}
               </div>
+            </div>
+          ) : parserPageTab === "jsonSource" ? (
+            <div className="relative min-h-0 flex-1 overflow-auto">
+              {isEditingDbJson ? (
+                <textarea
+                  value={dbJsonDraft}
+                  onChange={(event) => setDbJsonDraft(event.target.value)}
+                  spellCheck={false}
+                  placeholder={"{\n  \"id\": 1,\n  \"items\": []\n}"}
+                  className="block h-full min-h-full w-full resize-none bg-background px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground caret-primary outline-none placeholder:text-muted-foreground/50"
+                />
+              ) : dbSourceJson ? (
+                <pre className="px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground">{dbSourceJson}</pre>
+              ) : (
+                <EmptyState title="No JSON source yet" detail="Run Parser or save JSON source to generate DB code." />
+              )}
+            </div>
+          ) : (
+            <div className="relative min-h-0 flex-1 overflow-auto">
+              {dbGeneration.error ? (
+                <div className="m-4 rounded-sm border border-destructive/40 bg-destructive/5 px-4 py-3 font-mono text-[12px] text-destructive">
+                  {dbGeneration.error}
+                </div>
+              ) : dbCode ? (
+                <pre className="px-4 py-3">
+                  <HighlightedPython code={dbCode} />
+                </pre>
+              ) : (
+                <EmptyState title="No DB code yet" detail="Run Parser or save JSON source to generate DB code." />
+              )}
             </div>
           )}
           </ParserInspectorErrorBoundary>
@@ -3515,7 +3723,11 @@ export default function Index() {
                             const hasError = !b.raw.trim() || !!b.parsed.error;
                             const method = (b.parsed.method || "GET").toUpperCase();
                             const artifact = collection.workspaceArtifacts[b.id];
-                            const files: WorkspaceFile[] = ["request.py", artifact?.responseFileName ?? defaultResponseFileName(collectionNames[i])];
+                            const files: WorkspaceFile[] = [
+                              "request.py",
+                              artifact?.responseFileName ?? defaultResponseFileName(collectionNames[i]),
+                              ...(artifact?.dbCode ? ["db.py"] : []),
+                            ];
                             return (
                               <div key={b.id}>
                                 <div
@@ -4026,7 +4238,7 @@ export default function Index() {
                     <MetaRow tab={activeTab} blocks={blocks} names={effectiveNames} actions={currentFileActions} />
 
                     <div className="relative min-h-0 flex-1 overflow-auto">
-                      {activeWorkspaceFile !== "parser.py" && activeTab.hasError && activeTab.kind === "request" ? (
+                      {activeWorkspaceFile !== "parser.py" && activeWorkspaceFile !== "db.py" && activeTab.hasError && activeTab.kind === "request" ? (
                         <div className="m-3 rounded-sm border border-destructive/40 bg-destructive/5 p-3 text-[12px] text-destructive">
                           Issue in {effectiveNames[activeTab.reqIdx ?? 0]}
                           <div className="mt-1 text-[11px] text-muted-foreground">
@@ -4431,6 +4643,333 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isListOfRecords(value: unknown): value is Record<string, unknown>[] {
   return Array.isArray(value) && value.length > 0 && value.every(isRecord);
+}
+
+type MysqlColumnKind = "json" | "string" | "int" | "float" | "boolean" | "null";
+
+interface MysqlDbColumn {
+  originalKey: string;
+  columnName: string;
+  kind: MysqlColumnKind;
+  sqlType: string;
+}
+
+interface MysqlDbGeneration {
+  sourceJson: string;
+  code: string;
+  error: string | null;
+}
+
+const SQL_KEYWORDS = new Set([
+  "add", "all", "alter", "and", "as", "between", "by", "case", "check", "column", "create", "database", "default",
+  "delete", "desc", "distinct", "drop", "else", "exists", "from", "group", "having", "id", "if", "in", "index",
+  "insert", "into", "is", "join", "key", "like", "limit", "not", "null", "or", "order", "primary", "select", "set",
+  "table", "then", "to", "update", "use", "values", "when", "where",
+]);
+
+function pluralizeTableName(value: string) {
+  if (!value || value === "data") return "data";
+  if (value.endsWith("s")) return value;
+  if (value.endsWith("y") && !/[aeiou]y$/.test(value)) return `${value.slice(0, -1)}ies`;
+  return `${value}s`;
+}
+
+function inferBaseTableName(contextName: string, payload: unknown) {
+  const context = sanitizeOutputKey(contextName || "");
+  if (/\b(product|products|sku|catalog|item|items)\b/.test(context)) return context.includes("product") ? "products" : pluralizeTableName(context);
+
+  const sample = Array.isArray(payload) ? payload.find(isRecord) : isRecord(payload) ? payload : null;
+  if (sample) {
+    const keys = new Set(Object.keys(sample).map((key) => key.toLowerCase()));
+    if (keys.has("product_name") || keys.has("sku") || keys.has("pricing") || keys.has("brand")) return "products";
+    if (keys.has("user") || keys.has("username") || keys.has("email")) return "users";
+    if (keys.has("category") || keys.has("category_name")) return "categories";
+  }
+
+  return context && !/^request_\d+$/.test(context) && context !== "manual_json" ? pluralizeTableName(context) : "data";
+}
+
+function pickRecordList(value: unknown): unknown {
+  if (Array.isArray(value) && value.every(isRecord)) return value;
+  if (!isRecord(value)) return value;
+
+  const candidates = Object.entries(value)
+    .filter(([, item]) => Array.isArray(item) && item.length > 0 && item.every(isRecord))
+    .sort(([, a], [, b]) => (b as unknown[]).length - (a as unknown[]).length);
+
+  return candidates[0]?.[1] ?? value;
+}
+
+function sanitizeDbColumnName(key: string, used: Set<string>, baseTableName: string, recordLooksProduct: boolean) {
+  const shouldPrefixUrl = key === "url" && recordLooksProduct;
+  const raw = shouldPrefixUrl ? `${baseTableName.replace(/s$/, "")}_${key}` : key;
+  let name = raw
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^A-Za-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+  if (!name) name = "field";
+  if (/^[0-9]/.test(name)) name = `field_${name}`;
+  if (SQL_KEYWORDS.has(name)) name = `${name}_field`;
+
+  const base = name;
+  let suffix = 2;
+  while (used.has(name)) {
+    name = `${base}_${suffix}`;
+    suffix += 1;
+  }
+  used.add(name);
+  return name;
+}
+
+function mergeColumnKind(current: MysqlColumnKind | undefined, value: unknown): MysqlColumnKind {
+  const next: MysqlColumnKind = value === null || value === undefined
+    ? "null"
+    : Array.isArray(value) || isRecord(value)
+      ? "json"
+      : typeof value === "boolean"
+        ? "boolean"
+        : typeof value === "number"
+          ? Number.isInteger(value) ? "int" : "float"
+          : "string";
+
+  if (!current || current === "null") return next;
+  if (next === "null" || current === next) return current;
+  if ((current === "int" && next === "float") || (current === "float" && next === "int")) return "float";
+  if (current === "json" || next === "json") return "json";
+  return "string";
+}
+
+function sqlTypeForKind(kind: MysqlColumnKind, values: unknown[]) {
+  if (kind === "json") return "JSON";
+  if (kind === "int") return "INT";
+  if (kind === "float") return "DECIMAL(10,2)";
+  if (kind === "boolean") return "BOOLEAN";
+  if (kind === "null") return "TEXT NULL";
+  const maxLength = values
+    .filter((value): value is string => typeof value === "string")
+    .reduce((max, value) => Math.max(max, value.length), 0);
+  return maxLength > 255 ? "TEXT" : "VARCHAR(255)";
+}
+
+function buildMysqlColumns(records: Record<string, unknown>[], baseTableName: string): MysqlDbColumn[] {
+  const keyOrder: string[] = [];
+  const valuesByKey = new Map<string, unknown[]>();
+  const kindByKey = new Map<string, MysqlColumnKind>();
+
+  records.forEach((record) => {
+    Object.entries(record).forEach(([key, value]) => {
+      if (!valuesByKey.has(key)) {
+        keyOrder.push(key);
+        valuesByKey.set(key, []);
+      }
+      valuesByKey.get(key)?.push(value);
+      kindByKey.set(key, mergeColumnKind(kindByKey.get(key), value));
+    });
+  });
+
+  const recordLooksProduct = records.some((record) => (
+    "product_name" in record || "sku" in record || "pricing" in record || "brand" in record
+  ));
+  const used = new Set<string>(["id", "created_at"]);
+
+  return keyOrder.map((key) => {
+    const kind = kindByKey.get(key) ?? "null";
+    return {
+      originalKey: key,
+      columnName: sanitizeDbColumnName(key, used, baseTableName, recordLooksProduct),
+      kind,
+      sqlType: sqlTypeForKind(kind, valuesByKey.get(key) ?? []),
+    };
+  });
+}
+
+function pythonSingleQuotedString(value: string) {
+  return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+}
+
+function emitMysqlValueExpression(column: MysqlDbColumn) {
+  const key = pythonSingleQuotedString(column.originalKey);
+  if (column.kind === "json") {
+    return `json.dumps(json_dict.get(${key})) if json_dict.get(${key}) else None`;
+  }
+  return `json_dict.get(${key})`;
+}
+
+export function generateMysqlDbCode(source: string, contextName = "data"): MysqlDbGeneration {
+  const trimmed = source.trim();
+  if (!trimmed) {
+    return { sourceJson: "", code: "", error: "No JSON available for DB code generation." };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Invalid JSON";
+    return { sourceJson: trimmed, code: "", error: `Invalid JSON for DB code generation: ${message}` };
+  }
+
+  const recordSource = pickRecordList(parsed);
+  const records = Array.isArray(recordSource)
+    ? recordSource.filter(isRecord)
+    : isRecord(recordSource)
+      ? [recordSource]
+      : [];
+
+  if (records.length === 0) {
+    return { sourceJson: JSON.stringify(parsed, null, 2), code: "", error: "DB code generation needs a JSON object or an array of objects." };
+  }
+
+  const baseTableName = inferBaseTableName(contextName, recordSource);
+  const dbName = `${baseTableName.replace(/s$/, "")}_db`;
+  const columns = buildMysqlColumns(records, baseTableName);
+  if (columns.length === 0) {
+    return { sourceJson: JSON.stringify(parsed, null, 2), code: "", error: "No top-level JSON fields found for DB columns." };
+  }
+
+  const columnDefinitions = columns.map((column) => {
+    return `            ${column.columnName} ${column.sqlType},`;
+  }).join("\n");
+  const insertColumns = columns.map((column, index) => {
+    const comma = index < columns.length - 1 ? "," : "";
+    return `            ${column.columnName}${comma}`;
+  }).join("\n");
+  const placeholders = columns.map(() => "%s").join(", ");
+  const valueExpressions = columns.map((column, index) => {
+    const comma = columns.length === 1 || index < columns.length - 1 ? "," : "";
+    return `            ${emitMysqlValueExpression(column)}${comma}`;
+  }).join("\n");
+
+  const code = [
+    "import mysql.connector",
+    "from mysql.connector import Error",
+    "import json",
+    "from datetime import datetime",
+    "",
+    "# ============ DATABASE CONFIGURATION ============",
+    "DB_CONFIG = {",
+    "    'host': 'localhost',",
+    "    'user': 'root',",
+    "    'password': 'actowiz',",
+    "}",
+    "",
+    `DB_NAME = '${dbName}'`,
+    `TABLE_NAME = f"${baseTableName}_{datetime.now().strftime('%Y_%m_%d')}"`,
+    "",
+    "",
+    "def get_connection():",
+    "    return mysql.connector.connect(**DB_CONFIG)",
+    "",
+    "",
+    "def create_database(cursor):",
+    "    cursor.execute(f\"CREATE DATABASE IF NOT EXISTS {DB_NAME}\")",
+    "    cursor.execute(f\"USE {DB_NAME}\")",
+    "    DB_CONFIG['database'] = DB_NAME",
+    "    print(f\"Database '{DB_NAME}' created/selected successfully\")",
+    "",
+    "",
+    "def create_table(cursor):",
+    "",
+    "    try:",
+    "        create_table_query = f\"\"\"",
+    "        CREATE TABLE IF NOT EXISTS {TABLE_NAME} (",
+    "",
+    "            id INT AUTO_INCREMENT PRIMARY KEY,",
+    "",
+    columnDefinitions,
+    "",
+    "            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+    "        )",
+    "        \"\"\"",
+    "",
+    "        cursor.execute(create_table_query)",
+    "        print(f\"Table '{TABLE_NAME}' created successfully\")",
+    "        cursor.close()",
+    "        return True",
+    "",
+    "    except Error as e:",
+    "        print(f\"Error creating table: {e}\")",
+    "        return False",
+    "    return False",
+    "",
+    "",
+    "def insert_data(json_dict):",
+    "",
+    "    con = get_connection()",
+    "    cursor = con.cursor()",
+    "",
+    "    try:",
+    "        insert_query = f\"\"\"",
+    "        INSERT INTO {TABLE_NAME} (",
+    insertColumns,
+    `        ) VALUES (${placeholders})`,
+    "        \"\"\"",
+    "",
+    "        values = (",
+    valueExpressions,
+    "        )",
+    "",
+    "        cursor.execute(insert_query, values)",
+    "        con.commit()",
+    "",
+    "        print(\"Data inserted successfully\")",
+    "",
+    "        cursor.close()",
+    "        con.close()",
+    "        return True",
+    "",
+    "    except Error as e:",
+    "        print(f\"Error inserting data: {e}\")",
+    "        return None",
+    "",
+    "",
+    "def insert_multiple_data(json_list):",
+    "",
+    "    if not json_list:",
+    "        print(\"No data to insert\")",
+    "        return True",
+    "",
+    "    con = get_connection()",
+    "    cursor = con.cursor()",
+    "",
+    "    try:",
+    "        insert_query = f\"\"\"",
+    "        INSERT INTO {TABLE_NAME} (",
+    insertColumns,
+    `        ) VALUES (${placeholders})`,
+    "        \"\"\"",
+    "",
+    "        values_list = []",
+    "",
+    "        for json_dict in json_list:",
+    "            values = (",
+    valueExpressions.replace(/^            /gm, "                "),
+    "            )",
+    "            values_list.append(values)",
+    "",
+    "        cursor.executemany(insert_query, values_list)",
+    "        con.commit()",
+    "",
+    "        print(f\"Successfully inserted {len(json_list)} records\")",
+    "",
+    "        return True",
+    "",
+    "    except Error as e:",
+    "        print(f\"Error inserting multiple data: {e}\")",
+    "        return None",
+    "",
+    "    finally:",
+    "        cursor.close()",
+    "        con.close()",
+    "",
+  ].join("\n");
+
+  return {
+    sourceJson: JSON.stringify(parsed, null, 2),
+    code,
+    error: null,
+  };
 }
 
 function sanitizePythonName(value: string) {
