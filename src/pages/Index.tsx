@@ -4689,17 +4689,6 @@ function inferBaseTableName(contextName: string, payload: unknown) {
   return context && !/^request_\d+$/.test(context) && context !== "manual_json" ? pluralizeTableName(context) : "data";
 }
 
-function pickRecordList(value: unknown): unknown {
-  if (Array.isArray(value) && value.every(isRecord)) return value;
-  if (!isRecord(value)) return value;
-
-  const candidates = Object.entries(value)
-    .filter(([, item]) => Array.isArray(item) && item.length > 0 && item.every(isRecord))
-    .sort(([, a], [, b]) => (b as unknown[]).length - (a as unknown[]).length);
-
-  return candidates[0]?.[1] ?? value;
-}
-
 function sanitizeDbColumnName(key: string, used: Set<string>, baseTableName: string, recordLooksProduct: boolean) {
   const shouldPrefixUrl = key === "url" && recordLooksProduct;
   const raw = shouldPrefixUrl ? `${baseTableName.replace(/s$/, "")}_${key}` : key;
@@ -4810,18 +4799,21 @@ export function generateMysqlDbCode(source: string, contextName = "data"): Mysql
     return { sourceJson: trimmed, code: "", error: `Invalid JSON for DB code generation: ${message}` };
   }
 
-  const recordSource = pickRecordList(parsed);
-  const records = Array.isArray(recordSource)
-    ? recordSource.filter(isRecord)
-    : isRecord(recordSource)
-      ? [recordSource]
-      : [];
+  let records: Record<string, unknown>[] = [];
+  if (isRecord(parsed)) {
+    records = [parsed];
+  } else if (Array.isArray(parsed)) {
+    if (parsed.length === 0) {
+      return { sourceJson: JSON.stringify(parsed, null, 2), code: "", error: "Cannot infer schema from empty array." };
+    }
+    records = parsed.filter(isRecord);
+  }
 
   if (records.length === 0) {
     return { sourceJson: JSON.stringify(parsed, null, 2), code: "", error: "DB code generation needs a JSON object or an array of objects." };
   }
 
-  const baseTableName = inferBaseTableName(contextName, recordSource);
+  const baseTableName = inferBaseTableName(contextName, parsed);
   const dbName = `${baseTableName.replace(/s$/, "")}_db`;
   const columns = buildMysqlColumns(records, baseTableName);
   if (columns.length === 0) {

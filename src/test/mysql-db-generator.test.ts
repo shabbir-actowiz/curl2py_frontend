@@ -87,4 +87,236 @@ describe("MySQL DB generator", () => {
     expect(result.code).toBe("");
     expect(result.error).toContain("Invalid JSON for DB code generation");
   });
+
+  it("uses root object keys when nested list contains objects", () => {
+    const result = generateMysqlDbCode(JSON.stringify({
+      product_id: "ARDEUATWFCHDWHZR",
+      product_title: "Soft Drink PET Bottle (2.25 L PET Bottle)",
+      brand: "MiRiNDA",
+      images: ["url1", "url2"],
+      variants: [
+        {
+          name: "300 ml Tin",
+          unit_price: null,
+          product_id: "ARDHFBC4FGZWGPQW",
+          content_title: "300 ml Tin",
+          is_in_stock: false,
+        },
+      ],
+    }), "products");
+
+    expect(result.error).toBeNull();
+    expect(result.code).toContain("product_id VARCHAR(255),");
+    expect(result.code).toContain("product_title VARCHAR(255),");
+    expect(result.code).toContain("brand VARCHAR(255),");
+    expect(result.code).toContain("images JSON,");
+    expect(result.code).toContain("variants JSON,");
+    expect(result.code).not.toContain("name VARCHAR");
+    expect(result.code).not.toContain("unit_price");
+    expect(result.code).not.toContain("content_title");
+    expect(result.code).not.toContain("is_in_stock");
+    expect(result.code).toContain("json.dumps(json_dict.get('variants')) if json_dict.get('variants') else None");
+  });
+
+  it("uses root object keys when nested dict is present", () => {
+    const result = generateMysqlDbCode(JSON.stringify({
+      product_id: "1",
+      brand: "MiRiNDA",
+      specifications: { Brand: "MiRiNDA", Quantity: "2.25 L" },
+    }), "products");
+
+    expect(result.error).toBeNull();
+    expect(result.code).toContain("product_id VARCHAR(255),");
+    expect(result.code).toContain("brand VARCHAR(255),");
+    expect(result.code).toContain("specifications JSON,");
+    expect(result.code).toContain("json.dumps(json_dict.get('specifications')) if json_dict.get('specifications') else None");
+  });
+
+  it("keeps root object schema with both nested dict and nested list", () => {
+    const result = generateMysqlDbCode(JSON.stringify({
+      product_id: "1",
+      variants: [{ name: "small" }],
+      specifications: { Brand: "MiRiNDA" },
+    }), "products");
+
+    expect(result.error).toBeNull();
+    expect(result.code).toContain("product_id VARCHAR(255),");
+    expect(result.code).toContain("variants JSON,");
+    expect(result.code).toContain("specifications JSON,");
+    expect(result.code).not.toContain("name VARCHAR");
+  });
+
+  it("uses array item top-level keys when root is an array", () => {
+    const result = generateMysqlDbCode(JSON.stringify([
+      { product_id: "1", variants: [{ name: "small" }] },
+      { product_title: "Drink", specifications: { Brand: "MiRiNDA" } },
+    ]), "products");
+
+    expect(result.error).toBeNull();
+    expect(result.code).toContain("product_id VARCHAR(255),");
+    expect(result.code).toContain("product_title VARCHAR(255),");
+    expect(result.code).toContain("variants JSON,");
+    expect(result.code).toContain("specifications JSON,");
+    expect(result.code).not.toContain("name VARCHAR");
+  });
+
+  it("does not auto-select a root object items list", () => {
+    const result = generateMysqlDbCode(JSON.stringify({
+      page: 1,
+      items: [{ name: "Variant", unit_price: 10 }],
+    }), "data");
+
+    expect(result.error).toBeNull();
+    expect(result.code).toContain("page INT,");
+    expect(result.code).toContain("items JSON,");
+    expect(result.code).not.toContain("name VARCHAR");
+    expect(result.code).not.toContain("unit_price");
+  });
+
+  it("does not auto-select a root object variants list", () => {
+    const result = generateMysqlDbCode(JSON.stringify({
+      product_title: "Drink",
+      variants: [{ name: "300 ml Tin", is_in_stock: false }],
+    }), "products");
+
+    expect(result.error).toBeNull();
+    expect(result.code).toContain("product_title VARCHAR(255),");
+    expect(result.code).toContain("variants JSON,");
+    expect(result.code).not.toContain("is_in_stock");
+  });
+
+  it("stores images list of strings as JSON", () => {
+    const result = generateMysqlDbCode(JSON.stringify({
+      product_id: "1",
+      images: ["url1", "url2"],
+    }), "products");
+
+    expect(result.error).toBeNull();
+    expect(result.code).toContain("images JSON,");
+  });
+
+  it("stores specifications dict as JSON", () => {
+    const result = generateMysqlDbCode(JSON.stringify({
+      product_id: "1",
+      specifications: { Brand: "MiRiNDA" },
+    }), "products");
+
+    expect(result.error).toBeNull();
+    expect(result.code).toContain("specifications JSON,");
+  });
+
+  it("returns a clear error for empty root arrays", () => {
+    const result = generateMysqlDbCode("[]", "data");
+
+    expect(result.code).toBe("");
+    expect(result.error).toBe("Cannot infer schema from empty array.");
+  });
+
+  it("unions mixed array object keys and uses get for missing values", () => {
+    const result = generateMysqlDbCode(JSON.stringify([
+      { product_id: "1", mrp: 10 },
+      { product_title: "Drink", rating: 4.5 },
+    ]), "products");
+
+    expect(result.error).toBeNull();
+    expect(result.code).toContain("product_id VARCHAR(255),");
+    expect(result.code).toContain("mrp INT,");
+    expect(result.code).toContain("product_title VARCHAR(255),");
+    expect(result.code).toContain("rating DECIMAL(10,2),");
+    expect(result.code).toContain("json_dict.get('product_id')");
+    expect(result.code).toContain("json_dict.get('product_title')");
+  });
+
+  it("keeps null-only fields as TEXT NULL but infers from other records", () => {
+    const result = generateMysqlDbCode(JSON.stringify([
+      { unit_price: null, note: null },
+      { unit_price: 25 },
+    ]), "data");
+
+    expect(result.error).toBeNull();
+    expect(result.code).toContain("unit_price INT,");
+    expect(result.code).toContain("note TEXT NULL,");
+  });
+
+  it("generates the expected Flipkart product root schema", () => {
+    const result = generateMysqlDbCode(JSON.stringify({
+      product_id: "ARDEUATWFCHDWHZR",
+      product_title: "Soft Drink PET Bottle (2.25 L PET Bottle)",
+      brand: "MiRiNDA",
+      category: "Soft Drinks",
+      sub_category: "Cola & Soft Drinks",
+      super_category: "Beverages",
+      vertical: "soft_drink",
+      mrp: 120,
+      selling_price: 99,
+      discount_percentage: "17%",
+      xtrasaver_price: 95,
+      xtrasaver_savings: "4",
+      offer_text: "Special price",
+      rating: 4.5,
+      review_count: 1234,
+      expiry_date: "2026-08-01",
+      prescription_required: "No",
+      share_text: "A".repeat(300),
+      share_url: "https://www.flipkart.com/" + "x".repeat(260),
+      images: ["url1", "url2"],
+      variants: [{ name: "300 ml Tin", unit_price: null, product_id: "ARDHFBC4FGZWGPQW", content_title: "300 ml Tin", is_in_stock: false }],
+      specifications: { Brand: "MiRiNDA", Quantity: "2.25 L" },
+    }), "products");
+
+    expect(result.error).toBeNull();
+    [
+      "product_id VARCHAR(255),",
+      "product_title VARCHAR(255),",
+      "brand VARCHAR(255),",
+      "category VARCHAR(255),",
+      "sub_category VARCHAR(255),",
+      "super_category VARCHAR(255),",
+      "vertical VARCHAR(255),",
+      "mrp INT,",
+      "selling_price INT,",
+      "discount_percentage VARCHAR(255),",
+      "xtrasaver_price INT,",
+      "xtrasaver_savings VARCHAR(255),",
+      "offer_text VARCHAR(255),",
+      "rating DECIMAL(10,2),",
+      "review_count INT,",
+      "expiry_date VARCHAR(255),",
+      "prescription_required VARCHAR(255),",
+      "share_text TEXT,",
+      "share_url TEXT,",
+      "images JSON,",
+      "variants JSON,",
+      "specifications JSON,",
+      "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+    ].forEach((line) => expect(result.code).toContain(line));
+
+    [
+      "json_dict.get('product_id'),",
+      "json_dict.get('product_title'),",
+      "json_dict.get('brand'),",
+      "json_dict.get('category'),",
+      "json_dict.get('sub_category'),",
+      "json_dict.get('super_category'),",
+      "json_dict.get('vertical'),",
+      "json_dict.get('mrp'),",
+      "json_dict.get('selling_price'),",
+      "json_dict.get('discount_percentage'),",
+      "json_dict.get('xtrasaver_price'),",
+      "json_dict.get('xtrasaver_savings'),",
+      "json_dict.get('offer_text'),",
+      "json_dict.get('rating'),",
+      "json_dict.get('review_count'),",
+      "json_dict.get('expiry_date'),",
+      "json_dict.get('prescription_required'),",
+      "json_dict.get('share_text'),",
+      "json_dict.get('share_url'),",
+      "json.dumps(json_dict.get('images')) if json_dict.get('images') else None,",
+      "json.dumps(json_dict.get('variants')) if json_dict.get('variants') else None,",
+      "json.dumps(json_dict.get('specifications')) if json_dict.get('specifications') else None",
+    ].forEach((line) => expect(result.code).toContain(line));
+
+    expect(result.code).not.toContain("content_title VARCHAR");
+    expect(result.code).not.toContain("is_in_stock BOOLEAN");
+  });
 });
