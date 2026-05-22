@@ -4,6 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "copy-wasm": "node scripts/copy-wasm.js",
+    "postinstall": "npm run copy-wasm",
     "dev": "vite",
     "build": "vite build",
     "build:dev": "vite build --mode development",
@@ -47,6 +49,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
+    "curlconverter": "^4.12.0",
     "date-fns": "^3.6.0",
     "embla-carousel-react": "^8.6.0",
     "input-otp": "^1.4.2",

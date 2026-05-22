@@ -90,49 +90,49 @@ export type BodyType = "json" | "form" | "multipart" | "text" | "none";
 export function normalize_shell_body(rawBody: string): string {
   let body = rawBody.replace(/\\\r?\n/g, "");
   body = body.trim();
-  let ansiCString = false;
 
   if (body.length >= 2 && body[0] === "$" && (body[1] === "{" || body[1] === "[")) {
-    ansiCString = true;
     body = body.slice(1);
   }
 
   if (body.length >= 3 && body[0] === "$" && (body[1] === "'" || body[1] === '"') && body[body.length - 1] === body[1]) {
-    ansiCString = true;
     body = body.slice(2, -1);
   } else if (body.length >= 2 && ((body[0] === "'" && body[body.length - 1] === "'") || (body[0] === '"' && body[body.length - 1] === '"'))) {
     body = body.slice(1, -1);
   }
 
-  return ansiCString ? decodeAnsiCString(body) : body;
-}
-
-function decodeAnsiCString(body: string): string {
-  return body.replace(/\\(u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[\\'"abfnrtv])/g, (_match, escape: string) => {
-    if (escape === "\\") return "\\";
-    if (escape === "'") return "'";
-    if (escape === '"') return '"';
-    if (escape === "a") return "\x07";
-    if (escape === "b") return "\b";
-    if (escape === "f") return "\f";
-    if (escape === "n") return "\n";
-    if (escape === "r") return "\r";
-    if (escape === "t") return "\t";
-    if (escape === "v") return "\v";
-    if (escape.startsWith("x")) return String.fromCharCode(Number.parseInt(escape.slice(1), 16));
-    if (escape.startsWith("u")) return String.fromCharCode(Number.parseInt(escape.slice(1), 16));
-    return escape;
-  });
+  return body;
 }
 
 export function parse_json_body(body: string): unknown | null {
   const normalized = normalize_shell_body(body);
   if (!normalized.trim()) return null;
   try {
-    return JSON.parse(normalized);
+    return normalizeJsonStrings(JSON.parse(normalized));
   } catch {
     return null;
   }
+}
+
+function normalizeJsonStrings(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizeJsonStrings);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, normalizeJsonStrings(item)])
+    );
+  }
+  if (typeof value === "string") return decodeCommonJsonEscapes(value);
+  return value;
+}
+
+function decodeCommonJsonEscapes(value: string): string {
+  return value.replace(/\\(u[0-9a-fA-F]{4}|[nrt])/g, (_match, escape: string) => {
+    if (escape === "n") return "\n";
+    if (escape === "r") return "\r";
+    if (escape === "t") return "\t";
+    if (escape.startsWith("u")) return String.fromCharCode(Number.parseInt(escape.slice(1), 16));
+    return _match;
+  });
 }
 
 function getHeader(headers: Record<string, string>, name: string): string {
@@ -309,15 +309,9 @@ function pyDict(obj: Record<string, string>, indent = 4): string {
   return "{\n" + lines.join("\n") + "\n" + " ".repeat(indent - 4) + "}";
 }
 
-function isGraphqlString(key: string | undefined, value: string): boolean {
-  return key?.toLowerCase() === "query" && /\b(query|mutation|fragment|subscription)\b/.test(value);
-}
-
 function pyValueString(value: string, key?: string): string {
   const normalized = value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  if (isGraphqlString(key, normalized)) {
-    return `"""\n${normalized.replace(/^\n+|\n+$/g, "").replace(/"""/g, '\\"\\"\\"')}\n"""`;
-  }
+  void key;
   return JSON.stringify(normalized);
 }
 
@@ -409,8 +403,8 @@ export function toPython(req: ParsedCurl, opts: GenOptions): string {
   let dataKwarg = "";
   if (req.data != null) {
     if (req.dataType === "JSON") {
-      lines.push(`payload = ${formatJson(req.data, 4)}`);
-      dataKwarg = "json=payload";
+      lines.push(`json_data = ${formatJson(req.data, 4)}`);
+      dataKwarg = "json=json_data";
     } else if (req.dataType === "Form") {
       const dict = parseFormString(req.data);
       lines.push(`data = ${pyDict(dict, 4)}`);
@@ -433,7 +427,11 @@ export function toPython(req: ParsedCurl, opts: GenOptions): string {
   lines.push("");
 
   if (client === "requests") {
-    lines.push(`response = requests.${method}(${args.join(", ")}, impersonate="chrome")`);
+    lines.push(`response = requests.${method}(`);
+    args.forEach((arg) => lines.push(`    ${arg},`));
+    lines.push(`    impersonate="chrome",`);
+    lines.push(`    timeout=30,`);
+    lines.push(`)`);
     lines.push("");
     lines.push("print(response.status_code)");
     lines.push("print(response.text)");

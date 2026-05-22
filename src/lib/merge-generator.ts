@@ -119,8 +119,8 @@ function buildRequestFunction(req: NamedRequest, opts: MergeOptions): string {
   let dataKwarg = "";
   if (parsed.data != null) {
     if (parsed.dataType === "JSON") {
-      lines.push(`    payload = ${formatJson(parsed.data, 8)}`);
-      dataKwarg = "json=payload";
+      lines.push(`    json_data = ${formatJson(parsed.data, 8)}`);
+      dataKwarg = "json=json_data";
     } else if (parsed.dataType === "Form") {
       const dict = parseFormString(parsed.data);
       lines.push(`    data = ${pyDict(dict, 8)}`);
@@ -140,7 +140,11 @@ function buildRequestFunction(req: NamedRequest, opts: MergeOptions): string {
   if (dataKwarg) args.push(dataKwarg);
 
   if (client === "requests") {
-    lines.push(`    response = requests.${method}(${args.join(", ")}, impersonate="chrome")`);
+    lines.push(`    response = requests.${method}(`);
+    args.forEach((arg) => lines.push(`        ${arg},`));
+    lines.push(`        impersonate="chrome",`);
+    lines.push(`        timeout=30,`);
+    lines.push(`    )`);
   } else if (!isAsync) {
     lines.push(`    response = client.${method}(${args.join(", ")})`);
   } else {

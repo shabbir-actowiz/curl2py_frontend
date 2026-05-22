@@ -25,7 +25,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  convertWithBackend,
   createIssue,
   deleteConversionCollection,
   deleteConversionSnippet,
@@ -37,6 +36,8 @@ import {
   saveUserWorkspace,
 } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
+import { convertCurlLocally, CurlConverterError } from "@/services/curlConverterEngine";
+import { buildCurlCraftScript, buildParserStubs, enhanceCurlConverterPython } from "@/services/curlCraftEnhancer";
 
 type Client = "requests" | "httpx";
 
@@ -197,7 +198,7 @@ const MANUAL_PARSER_WORKSPACE_ID = "__manual_parser_workspace__";
 
 const SAMPLE_SNIPPETS: Snippet[] = [];
 
-const BACKEND_PLACEHOLDER = "# Connect to the backend and sync to generate Python code\n";
+const BACKEND_PLACEHOLDER = "# Paste a cURL command to generate Python code locally\n";
 const DEFAULT_PROXY_CONFIG: ProxyConfig = { enabled: false, url: "" };
 const toolbarButtonClass = "inline-flex h-7 items-center justify-center gap-1.5 rounded-sm border px-2.5 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45";
 const quietToolbarButtonClass = `${toolbarButtonClass} border-border bg-background/40 text-muted-foreground hover:border-border-strong hover:bg-surface-elevated hover:text-foreground`;
@@ -511,7 +512,6 @@ export default function Index() {
   const focusNameOnMountId = useRef<string | null>(null);
   const nameInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const mainRef = useRef<HTMLDivElement>(null);
-  const syncAbortRef = useRef<AbortController | null>(null);
   const inFlightSyncKeyRef = useRef<string | null>(null);
   const lastSuccessfulSyncKeyRef = useRef<string | null>(null);
   const lastSyncedSnippetHashesRef = useRef<Record<string, string>>({});
@@ -629,8 +629,8 @@ export default function Index() {
     [snippets]
   );
 
-  const errorCount = blocks.filter((b) => b.parsed.error || !b.raw.trim()).length;
-  const validBlocks = blocks.filter((b) => b.raw.trim() && !b.parsed.error);
+  const errorCount = blocks.filter((b) => !b.raw.trim()).length;
+  const validBlocks = blocks.filter((b) => b.raw.trim());
 
   // Detect duplicate names
   const nameCounts = useMemo(() => {
@@ -660,7 +660,7 @@ export default function Index() {
       filename: `${effectiveNames[i]}.py`,
       reqIdx: i,
       code: outputs[i] || "",
-      hasError: !b.raw.trim() || !!b.parsed.error,
+      hasError: !b.raw.trim(),
     }));
 
     if (mergeMode && validBlocks.length > 0) {
@@ -901,11 +901,10 @@ export default function Index() {
         client,
         isAsync,
         mergeMode,
-        shouldPersist: !!(user && accessToken),
         proxyConfig,
       }),
     ])
-  ) as Record<string, string>, [activeCollection.id, snippets, effectiveNames, client, isAsync, mergeMode, user, accessToken, proxyConfig]);
+  ) as Record<string, string>, [activeCollection.id, snippets, effectiveNames, client, isAsync, mergeMode, proxyConfig]);
   const syncKey = useMemo(() => JSON.stringify({
     collectionId: activeCollection.id,
     snippetSyncHashes,
@@ -1278,8 +1277,6 @@ export default function Index() {
 
     const workspaceName = effectiveNames[workspaceIndex] ?? snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
     const requestSnippet = snippets[workspaceIndex];
-    const parsed = blocks[workspaceIndex]?.parsed;
-
     setActiveWorkspaceId(workspaceId);
     setActiveWorkspaceFile("request.py");
     setExpandedWorkspaceIds((prev) => new Set(prev).add(workspaceId));
@@ -1290,8 +1287,8 @@ export default function Index() {
       return;
     }
 
-    if (!requestSnippet || !requestSnippet.raw.trim() || parsed?.error) {
-      const errorMessage = parsed?.error || "Add a curl command before running";
+    if (!requestSnippet || !requestSnippet.raw.trim()) {
+      const errorMessage = "Add a curl command before running";
       setWorkspaceArtifacts((prev) => ({
         ...prev,
         [workspaceId]: {
@@ -2648,7 +2645,7 @@ export default function Index() {
 
     const conversionTargets = blocks
       .map((block, index) => ({ block, index }))
-      .filter(({ block }) => block.raw.trim().length > 0 && !block.parsed.error);
+      .filter(({ block }) => block.raw.trim().length > 0);
     const changedConversionTargets = force
       ? conversionTargets
       : conversionTargets.filter(({ block }) => lastSyncedSnippetHashesRef.current[block.id] !== snippetSyncHashes[block.id]);
@@ -2671,48 +2668,39 @@ export default function Index() {
       return;
     }
 
-    syncAbortRef.current?.abort();
-    const abortController = new AbortController();
-    syncAbortRef.current = abortController;
     inFlightSyncKeyRef.current = currentSyncKey;
 
     try {
       setIsSyncingBackend(true);
-      const singleResults = await Promise.all(
-        changedConversionTargets.map(async ({ block, index }) => {
-          const response = await convertWithBackend(
-            {
-              collection_id: activeCollection.id,
-              collection_name: activeCollection.name,
-              library: client,
-              curl: {
-                curl: block.raw,
-                function_name: effectiveNames[index],
-                snippet_id: block.id,
-                name: effectiveNames[index],
-              },
-              proxy: proxyConfig,
-            },
-            accessToken || undefined,
-            abortController.signal,
-          );
+      const convertedTargets = conversionTargets.map(({ block, index }) => {
+        const converted = convertCurlLocally(block.raw);
+        return {
+          block,
+          index,
+          converted,
+          functionName: effectiveNames[index],
+        };
+      });
 
-          if (!response.success) {
-            throw new Error(response.error || response.error_type || `Backend conversion failed for ${effectiveNames[index]}`);
-          }
-
+      const changedIds = new Set(changedConversionTargets.map(({ block }) => block.id));
+      const singleResults = convertedTargets
+        .filter(({ block }) => force || changedIds.has(block.id))
+        .map(({ block, index, converted, functionName }) => {
           return {
             id: block.id,
-            code: response.python_code ?? response.request_script ?? "",
-            functionName: response.function_name ?? effectiveNames[index],
+            code: enhanceCurlConverterPython(converted.pythonCode, {
+              functionName,
+              request: converted.request,
+              proxy: proxyConfig,
+            }),
+            functionName,
             hash: snippetSyncHashes[block.id],
           };
-        })
-      );
+        });
 
       const nextOutputs: Record<string, string> = {};
       singleResults.forEach((entry) => {
-        nextOutputs[entry.id] = entry.code || "# Backend conversion returned no code\n";
+        nextOutputs[entry.id] = entry.code || "# Frontend conversion returned no code\n";
         lastSyncedSnippetHashesRef.current[entry.id] = entry.hash;
       });
       setBackendOutputs((prev) => ({ ...prev, ...nextOutputs }));
@@ -2725,30 +2713,12 @@ export default function Index() {
       });
 
       if (mergeMode) {
-        const batchResponse = await convertWithBackend(
-          {
-            collection_id: activeCollection.id,
-            collection_name: activeCollection.name,
-            library: client,
-            persist: false,
-            commands: conversionTargets.map(({ block, index }) => ({
-              curl: block.raw,
-              function_name: effectiveNames[index],
-              snippet_id: block.id,
-              name: effectiveNames[index],
-            })),
-            proxy: proxyConfig,
-          },
-          accessToken || undefined,
-          abortController.signal,
-        );
-
-        if (!batchResponse.success) {
-          throw new Error(batchResponse.error || batchResponse.error_type || "Backend batch conversion failed");
-        }
-
-        setBackendMergedOutput(batchResponse.request_script ?? batchResponse.python_code ?? "# Backend conversion returned no code\n");
-        setBackendParserOutput(batchResponse.parser_script ?? "");
+        const batchEntries = convertedTargets.map(({ converted, functionName }) => ({
+          functionName,
+          request: converted.request,
+        }));
+        setBackendMergedOutput(buildCurlCraftScript({ requests: batchEntries, proxy: proxyConfig }));
+        setBackendParserOutput(buildParserStubs(batchEntries.map((entry) => entry.functionName)));
         setDirtyCodeTabs((prev) => {
           const next = { ...prev };
           delete next.merged;
@@ -2760,30 +2730,22 @@ export default function Index() {
       }
 
       const label = `${singleResults.length} changed snippet${singleResults.length === 1 ? "" : "s"}`;
-      const actionLabel = user && accessToken ? "Synced to backend" : "Converted";
       lastSuccessfulSyncKeyRef.current = currentSyncKey;
       setStatusKind("success");
-      setStatusMsg(`${actionLabel} - ${label}`);
+      setStatusMsg(`Converted locally - ${label}`);
       if (!silent) {
-        toast.success(user && accessToken ? "Generated code via backend" : "Converted curl");
+        toast.success("Converted curl locally");
       }
     } catch (error) {
-      if ((error as { name?: string })?.name === "AbortError") {
-        return;
-      }
-      const message = getFriendlyErrorMessage(error);
-      const statusMessage = message.includes("Could not save conversion") || message.includes("Missing collection")
-        ? "Save failed"
-        : message;
+      const message = error instanceof CurlConverterError
+        ? error.message
+        : "Unable to convert this cURL. Please check the cURL syntax.";
       setStatusKind("error");
-      setStatusMsg(statusMessage);
-      toast.error(message);
+      setStatusMsg(message);
+      if (!silent) toast.error(message);
     } finally {
       if (inFlightSyncKeyRef.current === currentSyncKey) {
         inFlightSyncKeyRef.current = null;
-      }
-      if (syncAbortRef.current === abortController) {
-        syncAbortRef.current = null;
       }
       setIsSyncingBackend(false);
     }
@@ -2800,7 +2762,7 @@ export default function Index() {
     }, 650);
 
     return () => window.clearTimeout(timer);
-  }, [syncKey, snippets, user, accessToken]);
+  }, [syncKey, snippets]);
 
   if (isParserRoute) {
     const canUseParser = !!parserWorkspaceId;
@@ -3488,17 +3450,17 @@ export default function Index() {
 
           <button
             onClick={() => void handleSyncBackend({ force: true })}
-            disabled={isSyncingBackend || !user || !accessToken || snippets.length === 0}
+            disabled={isSyncingBackend || snippets.length === 0}
             className={cn(
               toolbarButtonClass,
-              user && accessToken && snippets.length > 0 && !isSyncingBackend
+              snippets.length > 0 && !isSyncingBackend
                 ? "border-primary/60 bg-primary/10 text-primary hover:bg-primary/15"
                 : "border-border bg-background/40 text-muted-foreground hover:border-border-strong hover:bg-surface-elevated hover:text-foreground"
             )}
-            title={user ? "Save the current conversion to the backend" : "Login to sync conversions to the backend"}
+            title="Regenerate Python locally"
           >
             <Upload className="h-3 w-3" strokeWidth={2} />
-            {isSyncingBackend ? "Syncing..." : "Sync backend"}
+            {isSyncingBackend ? "Converting..." : "Generate"}
           </button>
 
           <button
