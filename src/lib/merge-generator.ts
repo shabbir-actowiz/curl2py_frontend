@@ -1,5 +1,6 @@
 // Generates merged scripts from multiple parsed curl requests.
 import type { ParsedCurl } from "./curl-to-python";
+import { formatPythonValue, normalize_shell_body, parse_json_body } from "./curl-to-python";
 
 export interface MergeOptions {
   client: "requests" | "httpx";
@@ -39,27 +40,32 @@ function pyDict(obj: Record<string, string>, indent = 8): string {
 
 function formatJson(raw: string, baseIndent = 8): string {
   try {
-    const parsed = JSON.parse(raw);
-    const json = JSON.stringify(parsed, null, 4);
-    const pyish = json
-      .replace(/: true\b/g, ": True")
-      .replace(/: false\b/g, ": False")
-      .replace(/: null\b/g, ": None");
-    return pyish.split("\n").map((l, i) => i === 0 ? l : " ".repeat(baseIndent - 4) + l).join("\n");
+    const parsed = parse_json_body(raw);
+    if (parsed === null) return pyStr(normalize_shell_body(raw));
+    return formatPythonValue(parsed, baseIndent);
   } catch {
-    return pyStr(raw);
+    return pyStr(normalize_shell_body(raw));
   }
 }
 
 function parseFormString(s: string): Record<string, string> {
   const out: Record<string, string> = {};
-  s.split("&").forEach((pair) => {
+  normalize_shell_body(s).split("&").forEach((pair) => {
     const idx = pair.indexOf("=");
     if (idx >= 0) {
       const k = decodeURIComponent(pair.slice(0, idx));
       const v = decodeURIComponent(pair.slice(idx + 1));
       out[k] = v;
     } else if (pair) out[pair] = "";
+  });
+  return out;
+}
+
+function parseMultipartFields(s: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  normalize_shell_body(s).split("&").forEach((part) => {
+    const idx = part.indexOf("=");
+    if (idx >= 0) out[part.slice(0, idx)] = part.slice(idx + 1);
   });
   return out;
 }
@@ -119,8 +125,12 @@ function buildRequestFunction(req: NamedRequest, opts: MergeOptions): string {
       const dict = parseFormString(parsed.data);
       lines.push(`    data = ${pyDict(dict, 8)}`);
       dataKwarg = "data=data";
+    } else if (parsed.dataType === "Multipart") {
+      const dict = parseMultipartFields(parsed.data);
+      lines.push(`    files = ${pyDict(dict, 8)}`);
+      dataKwarg = "files=files";
     } else {
-      lines.push(`    data = ${pyStr(parsed.data)}`);
+      lines.push(`    data = ${pyStr(normalize_shell_body(parsed.data))}`);
       dataKwarg = "data=data";
     }
   }
@@ -130,7 +140,7 @@ function buildRequestFunction(req: NamedRequest, opts: MergeOptions): string {
   if (dataKwarg) args.push(dataKwarg);
 
   if (client === "requests") {
-    lines.push(`    response = requests.${method}(${args.join(", ")})`);
+    lines.push(`    response = requests.${method}(${args.join(", ")}, impersonate="chrome")`);
   } else if (!isAsync) {
     lines.push(`    response = client.${method}(${args.join(", ")})`);
   } else {
@@ -147,7 +157,7 @@ export function buildGeneratedScript(blocks: ParsedCurl[], opts: MergeOptions, c
 
   out.push(`# generated_script.py - combined requests from curl2py`);
   if (client === "requests") {
-    out.push(`import requests`);
+    out.push(`from curl_cffi import requests`);
   } else {
     if (isAsync) out.push(`import asyncio`);
     out.push(`import httpx`);

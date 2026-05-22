@@ -1,6 +1,6 @@
 ﻿import { Component, type ErrorInfo, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { Check, Copy, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, AlertCircle, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil, Moon, Sun, Play, Loader2 } from "lucide-react";
+import { Check, Copy, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, AlertCircle, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil, Moon, Sun, Play, Loader2, WrapText } from "lucide-react";
 import JSZip from "jszip";
 import { toast } from "sonner";
 import favicon from "/favicon-32x32.png";
@@ -10,6 +10,7 @@ import {
   type ParsedCurl,
 } from "@/lib/curl-to-python";
 import { HighlightedPython } from "@/lib/python-highlight";
+import { CodeEditor } from "@/components/CodeEditor";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -458,6 +459,8 @@ export default function Index() {
   const [submittedIssueId, setSubmittedIssueId] = useState("");
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>("");
   const [activeWorkspaceFile, setActiveWorkspaceFile] = useState<WorkspaceFile>("request.py");
+  const [dirtyCodeTabs, setDirtyCodeTabs] = useState<Record<string, boolean>>({});
+  const [codeWordWrap, setCodeWordWrap] = useState(false);
   const [activeInputTab, setActiveInputTab] = useState<InputPanelTab>("input");
   const [activePanelTab, setActivePanelTab] = useState<WorkspacePanelTab>("code");
   const [parserBuilderMode, setParserBuilderMode] = useState<ParserBuilderMode>("json");
@@ -577,6 +580,21 @@ export default function Index() {
     });
   };
 
+  const updateWorkspaceArtifact = (workspaceId: string, patcher: (artifact: WorkspaceArtifact) => WorkspaceArtifact) => {
+    setWorkspaceArtifacts((prev) => {
+      const current = prev[workspaceId] ?? {
+        responseJson: null,
+        metaJson: null,
+        logsTxt: "",
+        parserCode: buildParserStub(activeWorkspaceDisplayName),
+      };
+      return {
+        ...prev,
+        [workspaceId]: patcher(current),
+      };
+    });
+  };
+
   const setProxyConfig = (updater: ProxyConfig | ((prev: ProxyConfig) => ProxyConfig)) => {
     updateActiveCollection((collection) => {
       const currentProxy = normalizeProxyConfig(collection.proxyConfig);
@@ -670,6 +688,7 @@ export default function Index() {
   const activeRequestCode = activeTab?.code ?? "";
   const activeCodeFilename = activeTab?.filename || "-";
   const activeCodeContent = activeRequestCode;
+  const isActiveCodeDirty = !!(activeTab && dirtyCodeTabs[activeTab.id]);
   const panelCodeFilename = activeWorkspaceFile === "db.py"
     ? "db.py"
     : activeTab?.kind === "merged" || activeTab?.kind === "parser"
@@ -1560,6 +1579,28 @@ export default function Index() {
     return panelCodeContent;
   };
 
+  const handleCodePanelChange = (value: string) => {
+    if (!activeTab || activePanelTab !== "code") return;
+    setDirtyCodeTabs((prev) => ({ ...prev, [activeTab.id]: true }));
+
+    if (activeWorkspaceFile === "db.py" && activeWorkspaceId) {
+      updateWorkspaceArtifact(activeWorkspaceId, (artifact) => ({ ...artifact, dbCode: value }));
+      return;
+    }
+
+    if (activeTab.kind === "merged") {
+      setBackendMergedOutput(value);
+      return;
+    }
+
+    if (activeTab.kind === "request" && activeTab.reqIdx != null) {
+      const block = blocks[activeTab.reqIdx];
+      if (block) {
+        setBackendOutputs((prev) => ({ ...prev, [block.id]: value }));
+      }
+    }
+  };
+
   const handleCopyActive = async () => {
     const content = getActivePanelContent();
     if (!content) return;
@@ -1600,6 +1641,19 @@ export default function Index() {
   const hasActivePanelContent = activePanelContent.length > 0;
   const currentFileActions = (
     <div className="ml-auto flex items-center gap-1">
+      {activePanelTab === "code" && (
+        <button
+          onClick={() => setCodeWordWrap((prev) => !prev)}
+          className={cn(
+            "flex h-6 w-6 items-center justify-center rounded-sm border border-border bg-background/40 text-muted-foreground transition-colors hover:border-border-strong hover:bg-surface-elevated hover:text-foreground",
+            codeWordWrap && "border-primary/50 bg-primary/10 text-primary"
+          )}
+          title={codeWordWrap ? "Disable word wrap" : "Enable word wrap"}
+          aria-label={codeWordWrap ? "Disable word wrap" : "Enable word wrap"}
+        >
+          <WrapText className="h-3 w-3" strokeWidth={2} />
+        </button>
+      )}
       <button
         onClick={handleCopyActive}
         disabled={!hasActivePanelContent}
@@ -2662,6 +2716,13 @@ export default function Index() {
         lastSyncedSnippetHashesRef.current[entry.id] = entry.hash;
       });
       setBackendOutputs((prev) => ({ ...prev, ...nextOutputs }));
+      setDirtyCodeTabs((prev) => {
+        const next = { ...prev };
+        singleResults.forEach((entry) => {
+          delete next[`req-${entry.id}`];
+        });
+        return next;
+      });
 
       if (mergeMode) {
         const batchResponse = await convertWithBackend(
@@ -2688,6 +2749,11 @@ export default function Index() {
 
         setBackendMergedOutput(batchResponse.request_script ?? batchResponse.python_code ?? "# Backend conversion returned no code\n");
         setBackendParserOutput(batchResponse.parser_script ?? "");
+        setDirtyCodeTabs((prev) => {
+          const next = { ...prev };
+          delete next.merged;
+          return next;
+        });
       } else {
         setBackendMergedOutput(null);
         setBackendParserOutput(null);
@@ -4216,7 +4282,7 @@ export default function Index() {
                           {(t.kind === "merged" || t.kind === "parser") && (
                             <FileCode className={cn("h-3 w-3", isActive ? "text-primary" : "")} strokeWidth={2} />
                           )}
-                          <span>{t.filename}</span>
+                          <span>{t.filename}{dirtyCodeTabs[t.id] ? "*" : ""}</span>
                           <button
                             onClick={(e) => handleCloseTab(t.id, e)}
                             className={cn(
@@ -4235,7 +4301,7 @@ export default function Index() {
 
                 {activeTab && (
                   <div className="flex min-h-0 flex-1 flex-col">
-                    <MetaRow tab={activeTab} blocks={blocks} names={effectiveNames} actions={currentFileActions} />
+                    <MetaRow tab={activeTab} blocks={blocks} names={effectiveNames} actions={currentFileActions} dirty={isActiveCodeDirty} />
 
                     <div className="relative min-h-0 flex-1 overflow-auto">
                       {activeWorkspaceFile !== "parser.py" && activeWorkspaceFile !== "db.py" && activeTab.hasError && activeTab.kind === "request" ? (
@@ -4246,9 +4312,13 @@ export default function Index() {
                           </div>
                         </div>
                       ) : (
-                        <pre className="px-4 py-3">
-                          <HighlightedPython code={panelCodeContent} />
-                        </pre>
+                        <CodeEditor
+                          value={panelCodeContent}
+                          filename={panelCodeFilename}
+                          onChange={handleCodePanelChange}
+                          wordWrap={codeWordWrap}
+                          className="absolute inset-0"
+                        />
                       )}
                     </div>
                   </div>
@@ -6446,7 +6516,7 @@ function AutoTextarea({
   );
 }
 
-function MetaRow({ tab, blocks, names, actions }: { tab: OutputTab; blocks: SnippetBlock[]; names: string[]; actions?: ReactNode }) {
+function MetaRow({ tab, blocks, names, actions, dirty = false }: { tab: OutputTab; blocks: SnippetBlock[]; names: string[]; actions?: ReactNode; dirty?: boolean }) {
   if (tab.kind === "merged") {
     const valid = blocks.filter((b) => b.raw.trim() && !b.parsed.error).length;
     return (
@@ -6455,7 +6525,7 @@ function MetaRow({ tab, blocks, names, actions }: { tab: OutputTab; blocks: Snip
         <span className="text-syntax-comment">|</span>
         <span className="text-foreground">{valid} snippet{valid === 1 ? "" : "s"}</span>
         <span className="text-syntax-comment">|</span>
-        <span className="text-muted-foreground">Combined Script</span>
+        <span className="text-muted-foreground">Combined Script{dirty ? " *" : ""}</span>
         {actions}
       </div>
     );
@@ -6465,7 +6535,7 @@ function MetaRow({ tab, blocks, names, actions }: { tab: OutputTab; blocks: Snip
       <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-1.5 font-mono text-[12px]">
         <span className="font-semibold text-syntax-function">PARSER</span>
         <span className="text-syntax-comment">|</span>
-        <span className="text-muted-foreground">Auto-generated</span>
+        <span className="text-muted-foreground">Auto-generated{dirty ? " *" : ""}</span>
         {actions}
       </div>
     );
@@ -6477,7 +6547,7 @@ function MetaRow({ tab, blocks, names, actions }: { tab: OutputTab; blocks: Snip
       <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-1.5 font-mono text-[12px]">
         <span className="font-semibold text-destructive">REQUEST</span>
         <span className="text-syntax-comment">|</span>
-        <span className="text-primary">{names[idx] ?? tab.filename}</span>
+        <span className="text-primary">{names[idx] ?? tab.filename}{dirty ? " *" : ""}</span>
         {actions}
       </div>
     );
@@ -6500,7 +6570,7 @@ function MetaRow({ tab, blocks, names, actions }: { tab: OutputTab; blocks: Snip
       <span className="text-syntax-comment">|</span>
       <span className="text-muted-foreground">{parsed.dataType}</span>
       <span className="text-syntax-comment">|</span>
-      <span className="text-primary">{names[idx]}</span>
+      <span className="text-primary">{names[idx]}{dirty ? " *" : ""}</span>
       {actions}
     </div>
   );

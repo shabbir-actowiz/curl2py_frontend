@@ -7,7 +7,7 @@ export interface ParsedCurl {
   domain: string;
   headers: Record<string, string>;
   data: string | null;
-  dataType: "JSON" | "Form" | "Text" | "None";
+  dataType: "JSON" | "Form" | "Multipart" | "Text" | "None";
   raw: string;
   error?: string;
 }
@@ -31,7 +31,12 @@ function tokenize(input: string): string[] {
       let buf = "";
       while (i < n && cleaned[i] !== quote) {
         if (cleaned[i] === "\\" && quote === '"' && i + 1 < n) {
-          buf += cleaned[i + 1];
+          const nextChar = cleaned[i + 1];
+          if (nextChar === '"' || nextChar === "\\" || nextChar === "$" || nextChar === "`") {
+            buf += nextChar;
+          } else {
+            buf += "\\" + nextChar;
+          }
           i += 2;
         } else {
           buf += cleaned[i++];
@@ -43,7 +48,11 @@ function tokenize(input: string): string[] {
         if (cleaned[i] === '"' || cleaned[i] === "'") {
           const q2 = cleaned[i++];
           while (i < n && cleaned[i] !== q2) {
-            if (cleaned[i] === "\\" && q2 === '"' && i + 1 < n) { buf += cleaned[i + 1]; i += 2; }
+            if (cleaned[i] === "\\" && q2 === '"' && i + 1 < n) {
+              const nextChar = cleaned[i + 1];
+              buf += nextChar === '"' || nextChar === "\\" || nextChar === "$" || nextChar === "`" ? nextChar : "\\" + nextChar;
+              i += 2;
+            }
             else buf += cleaned[i++];
           }
           i++;
@@ -58,7 +67,11 @@ function tokenize(input: string): string[] {
         if (cleaned[i] === '"' || cleaned[i] === "'") {
           const q2 = cleaned[i++];
           while (i < n && cleaned[i] !== q2) {
-            if (cleaned[i] === "\\" && q2 === '"' && i + 1 < n) { buf += cleaned[i + 1]; i += 2; }
+            if (cleaned[i] === "\\" && q2 === '"' && i + 1 < n) {
+              const nextChar = cleaned[i + 1];
+              buf += nextChar === '"' || nextChar === "\\" || nextChar === "$" || nextChar === "`" ? nextChar : "\\" + nextChar;
+              i += 2;
+            }
             else buf += cleaned[i++];
           }
           i++;
@@ -70,6 +83,72 @@ function tokenize(input: string): string[] {
     }
   }
   return tokens;
+}
+
+export type BodyType = "json" | "form" | "multipart" | "text" | "none";
+
+export function normalize_shell_body(rawBody: string): string {
+  let body = rawBody.replace(/\\\r?\n/g, "");
+  body = body.trim();
+  let ansiCString = false;
+
+  if (body.length >= 2 && body[0] === "$" && (body[1] === "{" || body[1] === "[")) {
+    ansiCString = true;
+    body = body.slice(1);
+  }
+
+  if (body.length >= 3 && body[0] === "$" && (body[1] === "'" || body[1] === '"') && body[body.length - 1] === body[1]) {
+    ansiCString = true;
+    body = body.slice(2, -1);
+  } else if (body.length >= 2 && ((body[0] === "'" && body[body.length - 1] === "'") || (body[0] === '"' && body[body.length - 1] === '"'))) {
+    body = body.slice(1, -1);
+  }
+
+  return ansiCString ? decodeAnsiCString(body) : body;
+}
+
+function decodeAnsiCString(body: string): string {
+  return body.replace(/\\(u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[\\'"abfnrtv])/g, (_match, escape: string) => {
+    if (escape === "\\") return "\\";
+    if (escape === "'") return "'";
+    if (escape === '"') return '"';
+    if (escape === "a") return "\x07";
+    if (escape === "b") return "\b";
+    if (escape === "f") return "\f";
+    if (escape === "n") return "\n";
+    if (escape === "r") return "\r";
+    if (escape === "t") return "\t";
+    if (escape === "v") return "\v";
+    if (escape.startsWith("x")) return String.fromCharCode(Number.parseInt(escape.slice(1), 16));
+    if (escape.startsWith("u")) return String.fromCharCode(Number.parseInt(escape.slice(1), 16));
+    return escape;
+  });
+}
+
+export function parse_json_body(body: string): unknown | null {
+  const normalized = normalize_shell_body(body);
+  if (!normalized.trim()) return null;
+  try {
+    return JSON.parse(normalized);
+  } catch {
+    return null;
+  }
+}
+
+function getHeader(headers: Record<string, string>, name: string): string {
+  const found = Object.entries(headers).find(([key]) => key.toLowerCase() === name.toLowerCase());
+  return found?.[1] ?? "";
+}
+
+export function detect_body_type(headers: Record<string, string>, body: string | null, hasMultipart = false): BodyType {
+  if (body == null) return "none";
+  const contentType = getHeader(headers, "content-type").toLowerCase();
+  if (hasMultipart || contentType.includes("multipart/form-data")) return "multipart";
+  if (contentType.includes("application/x-www-form-urlencoded")) return "form";
+  if (contentType.includes("application/json") && parse_json_body(body) !== null) return "json";
+  if (parse_json_body(body) !== null) return "json";
+  if (/^[\w%.\-+[\]]+=([^&]*)(&[\w%.\-+[\]]+=([^&]*))*$/.test(normalize_shell_body(body).trim())) return "form";
+  return "text";
 }
 
 export function splitCurlBlocks(input: string): string[] {
@@ -118,6 +197,7 @@ export function parseCurl(raw: string): ParsedCurl {
     let explicitMethod = false;
     let dataParts: string[] = [];
     let isForm = false;
+    let isMultipart = false;
 
     for (let i = 1; i < tokens.length; i++) {
       const t = tokens[i];
@@ -135,13 +215,13 @@ export function parseCurl(raw: string): ParsedCurl {
           if (k) result.headers[k] = v;
         }
       } else if (t === "-d" || t === "--data" || t === "--data-raw" || t === "--data-binary" || t === "--data-ascii") {
-        dataParts.push(next() || "");
+        dataParts.push(normalize_shell_body(next() || ""));
       } else if (t === "--data-urlencode") {
-        dataParts.push(next() || "");
+        dataParts.push(normalize_shell_body(next() || ""));
         isForm = true;
       } else if (t === "-F" || t === "--form") {
-        dataParts.push(next() || "");
-        isForm = true;
+        dataParts.push(normalize_shell_body(next() || ""));
+        isMultipart = true;
       } else if (t === "-u" || t === "--user") {
         const u = next() || "";
         result.headers["Authorization"] = `Basic ${btoa(u)}`;
@@ -183,23 +263,16 @@ export function parseCurl(raw: string): ParsedCurl {
       const joined = dataParts.join("&");
       result.data = joined;
       if (!explicitMethod) result.method = "POST";
-      if (isForm) {
+      const detected = detect_body_type(result.headers, joined, isMultipart);
+      if (detected === "multipart") {
+        result.dataType = "Multipart";
+      } else if (isForm || detected === "form") {
         result.dataType = "Form";
+      } else if (detected === "json") {
+        result.dataType = "JSON";
       } else {
-        const trimmed = joined.trim();
-        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-          try { JSON.parse(trimmed); result.dataType = "JSON"; }
-          catch { result.dataType = "Text"; }
-        } else if (/^[\w%.\-+]+=([^&]*)(&[\w%.\-+]+=([^&]*))*$/.test(trimmed)) {
-          result.dataType = "Form";
-        } else {
-          result.dataType = "Text";
-        }
+        result.dataType = detected === "text" ? "Text" : "None";
       }
-      // Heuristic: if Content-Type header says json, treat as JSON
-      const ct = Object.entries(result.headers).find(([k]) => k.toLowerCase() === "content-type")?.[1] || "";
-      if (/json/i.test(ct)) result.dataType = "JSON";
-      else if (/x-www-form-urlencoded/i.test(ct)) result.dataType = "Form";
     }
 
     // Domain
@@ -236,25 +309,53 @@ function pyDict(obj: Record<string, string>, indent = 4): string {
   return "{\n" + lines.join("\n") + "\n" + " ".repeat(indent - 4) + "}";
 }
 
+function isGraphqlString(key: string | undefined, value: string): boolean {
+  return key?.toLowerCase() === "query" && /\b(query|mutation|fragment|subscription)\b/.test(value);
+}
+
+function pyValueString(value: string, key?: string): string {
+  const normalized = value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (isGraphqlString(key, normalized)) {
+    return `"""\n${normalized.replace(/^\n+|\n+$/g, "").replace(/"""/g, '\\"\\"\\"')}\n"""`;
+  }
+  return JSON.stringify(normalized);
+}
+
+export function formatPythonValue(value: unknown, indent = 4, key?: string): string {
+  const pad = " ".repeat(indent);
+  const closePad = " ".repeat(Math.max(0, indent - 4));
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "[]";
+    return `[\n${value.map((item) => `${pad}${formatPythonValue(item, indent + 4)},`).join("\n")}\n${closePad}]`;
+  }
+
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length === 0) return "{}";
+    return `{\n${entries.map(([entryKey, entryValue]) => `${pad}${pyStr(entryKey)}: ${formatPythonValue(entryValue, indent + 4, entryKey)},`).join("\n")}\n${closePad}}`;
+  }
+
+  if (typeof value === "string") return pyValueString(value, key);
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : pyStr(String(value));
+  if (typeof value === "boolean") return value ? "True" : "False";
+  if (value === null) return "None";
+  return pyStr(String(value));
+}
+
 function formatJson(raw: string, indent = 4): string {
   try {
-    const parsed = JSON.parse(raw);
-    const json = JSON.stringify(parsed, null, 4);
-    // Convert JSON to Python-ish dict (replace true/false/null)
-    const pyish = json
-      .replace(/: true\b/g, ": True")
-      .replace(/: false\b/g, ": False")
-      .replace(/: null\b/g, ": None");
-    // re-indent
-    return pyish.split("\n").map((l, i) => i === 0 ? l : " ".repeat(indent - 4) + l).join("\n");
+    const parsed = parse_json_body(raw);
+    if (parsed === null) return pyStr(normalize_shell_body(raw));
+    return formatPythonValue(parsed, indent);
   } catch {
-    return pyStr(raw);
+    return pyStr(normalize_shell_body(raw));
   }
 }
 
 function parseFormString(s: string): Record<string, string> {
   const out: Record<string, string> = {};
-  s.split("&").forEach((pair) => {
+  normalize_shell_body(s).split("&").forEach((pair) => {
     const idx = pair.indexOf("=");
     if (idx >= 0) {
       const k = decodeURIComponent(pair.slice(0, idx));
@@ -262,6 +363,22 @@ function parseFormString(s: string): Record<string, string> {
       out[k] = v;
     } else if (pair) {
       out[pair] = "";
+    }
+  });
+  return out;
+}
+
+function parseMultipartFields(s: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  normalize_shell_body(s).split("&").forEach((part) => {
+    const idx = part.indexOf("=");
+    if (idx < 0) return;
+    const key = part.slice(0, idx);
+    const value = part.slice(idx + 1);
+    if (value.startsWith("@")) {
+      out[key] = value;
+    } else {
+      out[key] = value;
     }
   });
   return out;
@@ -275,7 +392,7 @@ export function toPython(req: ParsedCurl, opts: GenOptions): string {
   const lines: string[] = [];
 
   if (client === "requests") {
-    lines.push("import requests");
+    lines.push("from curl_cffi import requests");
   } else {
     lines.push(isAsync ? "import asyncio" : "");
     lines.push("import httpx");
@@ -298,8 +415,12 @@ export function toPython(req: ParsedCurl, opts: GenOptions): string {
       const dict = parseFormString(req.data);
       lines.push(`data = ${pyDict(dict, 4)}`);
       dataKwarg = "data=data";
+    } else if (req.dataType === "Multipart") {
+      const dict = parseMultipartFields(req.data);
+      lines.push(`files = ${pyDict(dict, 4)}`);
+      dataKwarg = "files=files";
     } else {
-      lines.push(`data = ${pyStr(req.data)}`);
+      lines.push(`data = ${pyStr(normalize_shell_body(req.data))}`);
       dataKwarg = "data=data";
     }
   }
@@ -312,7 +433,7 @@ export function toPython(req: ParsedCurl, opts: GenOptions): string {
   lines.push("");
 
   if (client === "requests") {
-    lines.push(`response = requests.${method}(${args.join(", ")})`);
+    lines.push(`response = requests.${method}(${args.join(", ")}, impersonate="chrome")`);
     lines.push("");
     lines.push("print(response.status_code)");
     lines.push("print(response.text)");
