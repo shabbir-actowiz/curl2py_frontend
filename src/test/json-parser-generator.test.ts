@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { generateParserCode, getParserPathWarning, getValueByPath, parseJsonPath, preserveValidatedJsonSource } from "@/pages/Index";
+import { generateParserCode, getJsonLoopParentPath, getParserPathWarning, getValueByPath, parseJsonPath, preserveValidatedJsonSource } from "@/pages/Index";
 
 function runGeneratedParser(code: string, payload: unknown) {
   const script = [
@@ -25,6 +25,110 @@ function runGeneratedParser(code: string, payload: unknown) {
 }
 
 describe("JSON parser generator", () => {
+  it("returns root fields and loop rows as an object with a named array", () => {
+    const payload = {
+      response: {
+        response: {
+          numFoundExact: true,
+          docs: [
+            {
+              id: "1",
+              b_id: [101],
+              b_bid_number: ["BID-101"],
+              b_status: [1],
+            },
+            {
+              id: "2",
+              b_id: [102],
+              b_bid_number: ["BID-102"],
+              b_status: [1],
+            },
+          ],
+        },
+      },
+    };
+    const code = generateParserCode("test_request", [
+      { path: "response.response.numFoundExact", outputKey: "num_found_exact" },
+      { path: "response.response.docs[0].id", outputKey: "id" },
+      { path: "response.response.docs[0].b_id[0]", outputKey: "b_id" },
+      { path: "response.response.docs[0].b_bid_number[0]", outputKey: "b_bid_number" },
+      { path: "response.response.docs[0].b_status", outputKey: "b_status" },
+    ]);
+
+    expect(code).toContain("result = {}");
+    expect(code).toContain('result["docs"] = []');
+    expect(code).toContain('result["num_found_exact"] = num_found_exact');
+    expect(code).not.toContain("results = []");
+    expect(runGeneratedParser(code, payload)).toEqual({
+      num_found_exact: true,
+      docs: [
+        { id: "1", b_id: 101, b_bid_number: "BID-101", b_status: [1] },
+        { id: "2", b_id: 102, b_bid_number: "BID-102", b_status: [1] },
+      ],
+    });
+  });
+
+  it("groups fields that share the same array parent into one row per item", () => {
+    const payload = {
+      response: {
+        response: {
+          docs: [
+            {
+              id: "1",
+              b_id: [101],
+              b_bid_number: ["BID-101"],
+            },
+            {
+              id: "2",
+              b_id: [102],
+              b_bid_number: ["BID-102"],
+            },
+          ],
+        },
+      },
+    };
+    const code = generateParserCode("test_request", [
+      { path: "response.response.docs[0].id", outputKey: "id" },
+      { path: "response.response.docs[0].b_id[0]", outputKey: "b_id" },
+      { path: "response.response.docs[0].b_bid_number[0]", outputKey: "b_bid_number" },
+    ]);
+
+    expect(getJsonLoopParentPath("response.response.docs[0].b_id[0]")).toBe("response.response.docs");
+    expect(code).toContain('_get_value(data, ["response", "response", "docs"])');
+    expect(code).toContain('"id": _get_value(item, ["id"])');
+    expect(code).toContain('"b_id": _get_value(item, ["b_id", 0])');
+    expect(code).not.toContain('row = {\n        "id"');
+    expect(runGeneratedParser(code, payload)).toEqual({
+      docs: [
+        { id: "1", b_id: 101, b_bid_number: "BID-101" },
+        { id: "2", b_id: 102, b_bid_number: "BID-102" },
+      ],
+    });
+  });
+
+  it("keeps array fields whole or indexed inside grouped rows", () => {
+    const payload = {
+      response: {
+        response: {
+          docs: [
+            { id: "1", b_id: [101] },
+          ],
+        },
+      },
+    };
+    const arrayCode = generateParserCode("test_request", [
+      { path: "response.response.docs[0].id", outputKey: "id" },
+      { path: "response.response.docs[0].b_id", outputKey: "b_id" },
+    ]);
+    const itemCode = generateParserCode("test_request", [
+      { path: "response.response.docs[0].id", outputKey: "id" },
+      { path: "response.response.docs[0].b_id[0]", outputKey: "b_id" },
+    ]);
+
+    expect(runGeneratedParser(arrayCode, payload)).toEqual({ docs: [{ id: "1", b_id: [101] }] });
+    expect(runGeneratedParser(itemCode, payload)).toEqual({ docs: [{ id: "1", b_id: 101 }] });
+  });
+
   it("validates and extracts final array index paths", () => {
     const payload = {
       response: {
@@ -71,14 +175,18 @@ describe("JSON parser generator", () => {
       { path: "response.response.docs[0].b_bid_number[0]", outputKey: "bid_number_first" },
     ]);
 
-    expect(code).toContain('_get_value(data, ["response", "response", "docs", 0, "b_id", 0])');
-    expect(runGeneratedParser(code, payload)).toEqual([
-      { docs: payload.response.response.docs },
-      { doc: payload.response.response.docs[0] },
-      { b_id: [9382948] },
-      { b_id_first: 9382948 },
-      { bid_number_first: "GEM/2026/R/673215" },
-    ]);
+    expect(code).toContain('_get_value(item, ["b_id", 0])');
+    expect(runGeneratedParser(code, payload)).toEqual({
+      doc: payload.response.response.docs[0],
+      docs: payload.response.response.docs,
+      docs_2: [
+        {
+          b_id: [9382948],
+          b_id_first: 9382948,
+          bid_number_first: "GEM/2026/R/673215",
+        },
+      ],
+    });
   });
 
   it("preserves pasted JSON array structure through source validation and parser output", () => {
@@ -103,15 +211,15 @@ describe("JSON parser generator", () => {
     expect(Array.isArray(parsed.b_bid_number)).toBe(true);
     expect(Array.isArray(parsed.nested[0].x)).toBe(true);
     expect(sourceView).not.toMatch(/"b_id"\s*:\s*\{\s*"0"\s*:/);
-    expect(output).toEqual([
-      { b_id: [9379993] },
-      { b_bid_number: ["GEM/2026/R/672917"] },
-      { x: [1, 2, 3] },
-    ]);
+    expect(output).toEqual({
+      b_id: [9379993],
+      b_bid_number: ["GEM/2026/R/672917"],
+      x: [1, 2, 3],
+    });
     expect(outputJson).not.toMatch(/"b_id"\s*:\s*\{\s*"0"\s*:/);
   });
 
-  it("preserves exact indexed paths by default", () => {
+  it("groups exact indexed paths by common array parent", () => {
     const payload = {
       data: {
         presentation: {
@@ -159,14 +267,23 @@ describe("JSON parser generator", () => {
       { path: "data.presentation.stayProductDetailPage.sections.sections[0].section.houseRulesSections[0].items[1].title", outputKey: "10_00" },
     ]);
 
-    expect(code).toContain('_get_value(data, ["data", "presentation", "stayProductDetailPage", "sections", "sections", 0');
-    expect(code).not.toContain("for section in");
-    expect(runGeneratedParser(code, payload)).toEqual([
-      { house_rules_subtitle: "House rules" },
-      { check_in_check_out: "Checking in and out" },
-      { "02_00": "Check-in after 2:00 pm" },
-      { "10_00": "Checkout before 10:00 am" },
-    ]);
+    expect(code).toContain('_get_value(data, ["data", "presentation", "stayProductDetailPage", "sections", "sections"])');
+    expect(runGeneratedParser(code, payload)).toEqual({
+      sections: [
+        {
+        house_rules_subtitle: "House rules",
+        check_in_check_out: "Checking in and out",
+        "02_00": "Check-in after 2:00 pm",
+        "10_00": "Checkout before 10:00 am",
+        },
+        {
+        house_rules_subtitle: "Wrong section",
+        check_in_check_out: "Wrong group",
+        "02_00": "Wrong first item",
+        "10_00": "Wrong second item",
+        },
+      ],
+    });
   });
 
   it("skips all-None rows for missing single paths and dedupes exact paths", () => {
@@ -176,12 +293,12 @@ describe("JSON parser generator", () => {
       { path: "items[0].title", outputKey: "duplicate_title" },
     ]);
 
-    expect(runGeneratedParser(code, { items: [{ title: "First" }] })).toEqual([
-      { first_title: "First" },
-    ]);
+    expect(runGeneratedParser(code, { items: [{ title: "First" }] })).toEqual({
+      items: [{ first_title: "First" }],
+    });
   });
 
-  it("loops only when selection mode is loop", () => {
+  it("loops over the first array parent when selection mode is loop", () => {
     const payload = {
       groups: [
         { items: [{ title: "A" }, { title: "B" }] },
@@ -195,8 +312,8 @@ describe("JSON parser generator", () => {
       { path: "groups[0].items[0].title", outputKey: "title", selectionMode: "loop" },
     ]);
 
-    expect(runGeneratedParser(singleCode, payload)).toEqual([{ title: "A" }]);
-    expect(runGeneratedParser(loopCode, payload)).toEqual([{ title: "A" }, { title: "B" }]);
+    expect(runGeneratedParser(singleCode, payload)).toEqual({ title: "A" });
+    expect(runGeneratedParser(loopCode, payload)).toEqual({ groups: [{ title: "A" }, { title: "C" }] });
   });
 
   it("handles large nested JSON without automatic broad loops", () => {
@@ -211,6 +328,6 @@ describe("JSON parser generator", () => {
       { path: "data.sections[499].items[19].title", outputKey: "deep_title" },
     ]);
 
-    expect(runGeneratedParser(code, payload)).toEqual([{ deep_title: "499:19" }]);
+    expect(runGeneratedParser(code, payload)).toEqual({ deep_title: "499:19" });
   });
 });

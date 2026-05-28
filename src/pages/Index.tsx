@@ -1800,14 +1800,15 @@ export default function Index() {
         return prev;
       }
 
-      const nextSelections = [
+      const nextSelection: ParserSelection = {
+        id: newId(),
+        path: selectedPath,
+        outputKey: uniqueOutputKey(getOutputKeyFromPath(selectedPath), currentSelections),
+        selectionMode: "single",
+      };
+      const nextSelections: ParserSelection[] = [
         ...currentSelections,
-        {
-          id: newId(),
-          path: selectedPath,
-          outputKey: uniqueOutputKey(getOutputKeyFromPath(selectedPath), currentSelections),
-          selectionMode: "single",
-        },
+        nextSelection,
       ];
       console.debug("new parser selections", nextSelections);
       if (!isScriptJsonRoute) writeParserSelectionsToArtifact(targetCollection.id, workspaceId, workspaceName, nextSelections);
@@ -2789,7 +2790,7 @@ export default function Index() {
     const parserHtmlEditorVisible = parserBuilderMode === "html" && parserPageTab === "source" && isEditingParserHtml;
     const parserTabs: ParserPageTab[] = ["source", "paths", "parser", "output", "jsonSource", "dbCode"];
     const currentLoop = parserBuilderMode === "html" ? currentHtmlLoop : currentJsonLoop;
-    const canShowTableOutput = isListOfRecords(activeParserRun?.output);
+    const canShowTableOutput = getParserOutputTableRows(activeParserRun?.output).length > 0;
 
     return (
       <div className="flex h-screen flex-col bg-background text-foreground">
@@ -3086,7 +3087,7 @@ export default function Index() {
                   {currentLoop && (
                     <>
                       <span className="px-2 text-syntax-comment">|</span>
-                      <span className="truncate">Current loop: {currentLoop}</span>
+                      <span className="truncate">Loop source: {currentLoop}</span>
                     </>
                   )}
                 </div>
@@ -3106,6 +3107,7 @@ export default function Index() {
                   <div className="space-y-2">
                     {parserSelections.map((selection, index) => {
                       const warning = getParserPathWarning(selection.path);
+                      const loopParentPath = getJsonLoopParentPath(selection.path);
                       return (
                         <div key={`${selection.path}-${index}`} className="grid gap-1 md:grid-cols-[minmax(0,1fr)_220px_96px_28px] md:items-start">
                           <div className="min-w-0">
@@ -3123,12 +3125,14 @@ export default function Index() {
                             placeholder="output field"
                           />
                           <select
-                            value={selection.selectionMode ?? "single"}
+                            value={loopParentPath ? selection.selectionMode ?? "single" : "single"}
                             onChange={(event) => updateParserSelectionRow(index, { selectionMode: event.target.value as "single" | "loop" })}
+                            disabled={!loopParentPath}
+                            title={loopParentPath ? `Loop source: ${loopParentPath}` : "Loop is not available for this path"}
                             className="h-8 rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
                           >
                             <option value="single">single</option>
-                            <option value="loop">loop</option>
+                            {loopParentPath && <option value="loop">loop over {loopParentPath.split(".").pop() || "items"}</option>}
                           </select>
                           <button
                             onClick={() => deleteParserSelectionRow(index)}
@@ -3193,7 +3197,7 @@ export default function Index() {
                   {currentLoop && (
                     <>
                       <span className="px-2 text-syntax-comment">|</span>
-                      <span className="truncate">Current loop: {currentLoop}</span>
+                      <span className="truncate">Loop source: {currentLoop}</span>
                     </>
                   )}
                 </div>
@@ -3316,7 +3320,7 @@ export default function Index() {
                     {activeParserRun?.status === "success" ? "success" : activeParserRun?.status === "error" ? "error" : activeParserRun?.status === "loading" ? "running" : "idle"}
                   </span>
                   <span className="text-syntax-comment">|</span>
-                  <span className="text-muted-foreground">{activeParserRun?.itemCount ?? 0} item{(activeParserRun?.itemCount ?? 0) === 1 ? "" : "s"}</span>
+                  <span className="text-muted-foreground">{getParserOutputSummary(activeParserRun?.output)}</span>
                 </div>
                 {canShowTableOutput && (
                   <div className="flex items-center gap-1">
@@ -4724,6 +4728,30 @@ function getOutputKeyFromPath(path: string, fallback = "value") {
   return sanitizeOutputKey(lastKey || fallback);
 }
 
+interface JsonLoopInfo {
+  parentPath: Array<string | number>;
+  relativePath: Array<string | number>;
+  label: string;
+}
+
+function getJsonLoopInfoFromParts(parts: Array<string | number>): JsonLoopInfo | null {
+  const arrayIndex = findNextArray(parts);
+  if (arrayIndex === -1) return null;
+  const parentPath = parts.slice(0, arrayIndex + 1);
+  const labelPart = parentPath[parentPath.length - 1];
+  return {
+    parentPath,
+    relativePath: parts.slice(arrayIndex + 2),
+    label: typeof labelPart === "string" ? labelPart : "items",
+  };
+}
+
+export function getJsonLoopParentPath(path: string): string | null {
+  if (getParserPathWarning(path)) return null;
+  const info = getJsonLoopInfoFromParts(normalizeSelectionParts(path));
+  return info ? formatJsonPath(info.parentPath) : null;
+}
+
 function optimizeParserSelections(selections: ParserSelection[]) {
   const usedPaths = new Set<string>();
   const optimized: ParserSelection[] = [];
@@ -4746,13 +4774,8 @@ function optimizeParserSelections(selections: ParserSelection[]) {
 function getJsonLoopContexts(selections: ParserSelection[]) {
   const contexts = new Set<string>();
   selections.forEach((selection) => {
-    if ((selection.selectionMode ?? "single") !== "loop") return;
-    const parts = normalizeSelectionParts(selection.path);
-    for (let index = 0; index < parts.length - 1; index += 1) {
-      if (typeof parts[index] === "string" && typeof parts[index + 1] === "number") {
-        contexts.add(`${formatJsonPath(parts.slice(0, index + 1))}[*]`);
-      }
-    }
+    const parent = getJsonLoopParentPath(selection.path);
+    if (parent) contexts.add(parent);
   });
   return Array.from(contexts);
 }
@@ -4776,6 +4799,8 @@ function getPrimaryHtmlLoopContext(selections: ParserSelection[]) {
 
 function getParserOutputItemCount(output: unknown) {
   if (Array.isArray(output)) return output.length;
+  const tableRows = getParserOutputTableRows(output);
+  if (tableRows.length > 0) return tableRows.length;
   if (output && typeof output === "object") return 1;
   return output == null ? 0 : 1;
 }
@@ -4786,6 +4811,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isListOfRecords(value: unknown): value is Record<string, unknown>[] {
   return Array.isArray(value) && value.length > 0 && value.every(isRecord);
+}
+
+function getMainRecordArrayEntry(value: unknown): [string, Record<string, unknown>[]] | null {
+  if (!isRecord(value)) return null;
+  const entry = Object.entries(value).find(([, item]) => isListOfRecords(item));
+  return entry ? [entry[0], entry[1] as Record<string, unknown>[]] : null;
+}
+
+function getParserOutputTableRows(value: unknown): Record<string, unknown>[] {
+  if (isListOfRecords(value)) return value;
+  const mainArray = getMainRecordArrayEntry(value);
+  if (!mainArray || !isRecord(value)) return [];
+  const [arrayKey, rows] = mainArray;
+  const rootFields = Object.fromEntries(
+    Object.entries(value).filter(([key, item]) => key !== arrayKey && !Array.isArray(item) && !isRecord(item))
+  );
+  return rows.map((row) => ({ ...rootFields, ...row }));
+}
+
+function getParserOutputSummary(output: unknown): string {
+  if (Array.isArray(output)) return `${output.length} item${output.length === 1 ? "" : "s"}`;
+  const mainArray = getMainRecordArrayEntry(output);
+  if (mainArray) return `1 root object | ${mainArray[0]}: ${mainArray[1].length} item${mainArray[1].length === 1 ? "" : "s"}`;
+  if (isRecord(output)) return "1 root object";
+  return output == null ? "0 items" : "1 item";
 }
 
 type MysqlColumnKind = "json" | "string" | "int" | "float" | "boolean" | "null";
@@ -4916,6 +4966,45 @@ function buildMysqlColumns(records: Record<string, unknown>[], baseTableName: st
   });
 }
 
+function getMysqlRecordsAndSource(parsed: unknown): {
+  records: Record<string, unknown>[];
+  sourceArrayKey: string | null;
+} {
+  if (Array.isArray(parsed)) {
+    return { records: parsed.filter(isRecord), sourceArrayKey: null };
+  }
+  if (!isRecord(parsed)) {
+    return { records: [], sourceArrayKey: null };
+  }
+
+  const mainArray = getMysqlParserLoopArrayEntry(parsed);
+  if (!mainArray) {
+    return { records: [parsed], sourceArrayKey: null };
+  }
+
+  const [sourceArrayKey, rows] = mainArray;
+  const rootFields = Object.fromEntries(
+    Object.entries(parsed).filter(([key, value]) => key !== sourceArrayKey && !Array.isArray(value) && !isRecord(value))
+  );
+  return {
+    records: rows.map((row) => ({ ...rootFields, ...row })),
+    sourceArrayKey,
+  };
+}
+
+function getMysqlParserLoopArrayEntry(value: Record<string, unknown>): [string, Record<string, unknown>[]] | null {
+  const recordArrayEntries = Object.entries(value).filter(([, item]) => isListOfRecords(item));
+  if (recordArrayEntries.length !== 1) return null;
+
+  const [arrayKey, rows] = recordArrayEntries[0] as [string, Record<string, unknown>[]];
+  if (arrayKey === "items" || arrayKey === "variants") return null;
+
+  const hasOnlyScalarRootMetadata = Object.entries(value).every(([key, item]) => (
+    key === arrayKey || (!Array.isArray(item) && !isRecord(item))
+  ));
+  return hasOnlyScalarRootMetadata ? [arrayKey, rows] : null;
+}
+
 function pythonSingleQuotedString(value: string) {
   return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 }
@@ -4942,21 +5031,16 @@ export function generateMysqlDbCode(source: string, contextName = "data"): Mysql
     return { sourceJson: trimmed, code: "", error: `Invalid JSON for DB code generation: ${message}` };
   }
 
-  let records: Record<string, unknown>[] = [];
-  if (isRecord(parsed)) {
-    records = [parsed];
-  } else if (Array.isArray(parsed)) {
-    if (parsed.length === 0) {
-      return { sourceJson: trimmed, code: "", error: "Cannot infer schema from empty array." };
-    }
-    records = parsed.filter(isRecord);
+  if (Array.isArray(parsed) && parsed.length === 0) {
+    return { sourceJson: trimmed, code: "", error: "Cannot infer schema from empty array." };
   }
+  const { records, sourceArrayKey } = getMysqlRecordsAndSource(parsed);
 
   if (records.length === 0) {
     return { sourceJson: trimmed, code: "", error: "DB code generation needs a JSON object or an array of objects." };
   }
 
-  const baseTableName = inferBaseTableName(contextName, parsed);
+  const baseTableName = sourceArrayKey ? sanitizeOutputKey(sourceArrayKey) : inferBaseTableName(contextName, parsed);
   const dbName = `${baseTableName.replace(/s$/, "")}_db`;
   const columns = buildMysqlColumns(records, baseTableName);
   if (columns.length === 0) {
@@ -5125,6 +5209,13 @@ interface ParserArrayGroup {
   children: ParserArrayGroup[];
 }
 
+interface ParserLoopGroup {
+  prop: string;
+  parentPath: Array<string | number>;
+  outputKey: string;
+  fields: ParserField[];
+}
+
 function singularName(value: string) {
   const sanitized = sanitizePythonName(value);
   if (sanitized.endsWith("ies")) return sanitized.slice(0, -3) + "y";
@@ -5288,6 +5379,36 @@ function emitArrayGroupRows(lines: string[], group: ParserArrayGroup, base: stri
   return rowsVar;
 }
 
+function emitLoopGroup(lines: string[], group: ParserLoopGroup, usedVars: Set<string>) {
+  const collectionVar = uniquePythonVar(sanitizePythonName(group.prop || "items"), usedVars);
+  const itemVar = uniquePythonVar("item", usedVars);
+
+  lines.push(`    ${collectionVar} = ${collectionExpression("data", group.parentPath)}`);
+  lines.push(`    result[${pythonString(group.outputKey)}] = []`);
+  lines.push(`    if isinstance(${collectionVar}, list):`);
+  lines.push(`        for ${itemVar} in ${collectionVar}:`);
+  lines.push(`            if not isinstance(${itemVar}, dict):`);
+  lines.push(`                continue`);
+  lines.push(`            row = {`);
+  group.fields.forEach((field, index) => {
+    const comma = index < group.fields.length - 1 ? "," : "";
+    lines.push(`                ${pythonString(field.outputKey)}: ${getFromExpression(itemVar, field.path)}${comma}`);
+  });
+  lines.push(`            }`);
+  lines.push(`            row = _clean_dict(row)`);
+  lines.push(`            if row:`);
+  lines.push(`                result[${pythonString(group.outputKey)}].append(row)`);
+  lines.push("");
+}
+
+function uniqueGroupOutputKey(baseKey: string, usedKeys: Set<string>) {
+  const used = new Set(usedKeys);
+  if (!used.has(baseKey)) return baseKey;
+  let index = 2;
+  while (used.has(`${baseKey}_${index}`)) index += 1;
+  return `${baseKey}_${index}`;
+}
+
 export function generateParserCode(workspaceName: string, selections: ParserSelection[], source: "response_json" | "script_json" = "response_json") {
   const functionName = `${sanitizePythonName(workspaceName || "request")}_parser`;
   const usedPaths = new Set<string>();
@@ -5303,29 +5424,50 @@ export function generateParserCode(workspaceName: string, selections: ParserSele
     });
   });
   const rootFields: ParserField[] = [];
-  const groups: ParserArrayGroup[] = [];
+  const groups: ParserLoopGroup[] = [];
+  const loopInfoByPath = new Map<string, JsonLoopInfo>();
+  const loopCounts = new Map<string, number>();
+
+  deduped.forEach((selection) => {
+    const info = getJsonLoopInfoFromParts(normalizeSelectionParts(selection.path));
+    if (!info) return;
+    const key = pathKey(info.parentPath);
+    loopInfoByPath.set(selection.path, info);
+    loopCounts.set(key, (loopCounts.get(key) ?? 0) + 1);
+  });
 
   deduped.forEach((selection) => {
     const parts = normalizeSelectionParts(selection.path);
-    const arrayIndex = findLastArray(parts);
-    if ((selection.selectionMode ?? "single") !== "loop") {
+    const loopInfo = loopInfoByPath.get(selection.path);
+    const loopKey = loopInfo ? pathKey(loopInfo.parentPath) : "";
+    const shouldLoop = !!loopInfo && ((selection.selectionMode ?? "single") === "loop" || (loopCounts.get(loopKey) ?? 0) > 1);
+
+    if (!shouldLoop || !loopInfo) {
       rootFields.push({ outputKey: selection.outputKey, path: parts });
       return;
     }
 
-    if (typeof parts[0] === "number") {
-      const group = getOrCreateArrayGroup(groups, "items", []);
-      addSelectionRemainder(group, selection, parts.slice(1));
-      return;
-    }
-    if (arrayIndex === -1) {
+    if (loopInfo.relativePath.length === 0) {
       rootFields.push({ outputKey: selection.outputKey, path: parts });
       return;
     }
-    const prop = String(parts[arrayIndex]);
-    const accessPath = parts.slice(0, arrayIndex + 1);
-    const group = getOrCreateArrayGroup(groups, prop, accessPath, accessPath);
-    addSelectionRemainder(group, selection, parts.slice(arrayIndex + 2));
+    let group = groups.find((item) => pathKey(item.parentPath) === loopKey);
+    if (!group) {
+      group = {
+        prop: loopInfo.label,
+        parentPath: loopInfo.parentPath,
+        outputKey: sanitizeOutputKey(loopInfo.label),
+        fields: [],
+      };
+      groups.push(group);
+    }
+    group.fields.push({ outputKey: selection.outputKey, path: loopInfo.relativePath });
+  });
+
+  const reservedOutputKeys = new Set(rootFields.map((field) => field.outputKey));
+  groups.forEach((group) => {
+    group.outputKey = uniqueGroupOutputKey(group.outputKey, reservedOutputKeys);
+    reservedOutputKeys.add(group.outputKey);
   });
 
   const lines = [
@@ -5335,13 +5477,13 @@ export function generateParserCode(workspaceName: string, selections: ParserSele
       ? "        data = extract_json_from_script(response.text)"
       : "        data = response if isinstance(response, (dict, list)) else response.json()",
     "    except Exception:",
-    "        return []",
+    "        return {}",
     "",
     "    def _get_value(container, path):",
     "        current = container",
     "        for key in path:",
     "            if isinstance(key, int):",
-    "                if not isinstance(current, list) or key >= len(current):",
+    "                if not isinstance(current, list) or key < 0 or key >= len(current):",
     "                    return None",
     "                current = current[key]",
     "            else:",
@@ -5357,29 +5499,28 @@ export function generateParserCode(workspaceName: string, selections: ParserSele
     "            return value",
     "        return []",
     "",
-    "    def _append_if_present(results, row):",
-    "        if any(value is not None for value in row.values()):",
-    "            results.append(row)",
+    "",
+    "    def _clean_dict(row):",
+    "        return {key: value for key, value in row.items() if value is not None}",
     "",
   ];
 
-  lines.push("    results = []");
+  lines.push("    result = {}");
   lines.push("");
 
   rootFields.forEach((field) => {
-    lines.push("    row = {");
-    lines.push(`        ${pythonString(field.outputKey)}: ${getFromExpression("data", field.path)}`);
-    lines.push("    }");
-    lines.push("    _append_if_present(results, row)");
+    const variable = sanitizePythonName(field.outputKey);
+    lines.push(`    ${variable} = ${getFromExpression("data", field.path)}`);
+    lines.push(`    if ${variable} is not None:`);
+    lines.push(`        result[${pythonString(field.outputKey)}] = ${variable}`);
     lines.push("");
   });
 
-  groups.forEach((group, index) => {
-    emitArrayGroup(lines, group, "data", "    ", new Set());
-    if (index < groups.length - 1) lines.push("");
+  groups.forEach((group) => {
+    emitLoopGroup(lines, group, new Set());
   });
 
-  lines.push("    return results");
+  lines.push("    return result");
   lines.push("");
   return lines.join("\n");
 }
@@ -6454,7 +6595,7 @@ function EmptyState({ title, detail }: { title: string; detail?: string }) {
 }
 
 function ParserOutputTable({ value }: { value: unknown }) {
-  const rows = isListOfRecords(value) ? value : [];
+  const rows = getParserOutputTableRows(value);
   const columns = Array.from(new Set(rows.flatMap((row) => Object.keys(row)))).slice(0, 24);
 
   return (

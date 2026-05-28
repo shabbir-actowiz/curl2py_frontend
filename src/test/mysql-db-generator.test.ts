@@ -47,6 +47,26 @@ const productJson = {
 };
 
 describe("MySQL DB generator", () => {
+  it("uses the main loop array and root metadata from parser object output", () => {
+    const result = generateMysqlDbCode(JSON.stringify({
+      num_found_exact: true,
+      docs: [
+        { id: "1", b_id: 101, b_bid_number: "BID-101", b_status: [1] },
+        { id: "2", b_id: 102, b_bid_number: "BID-102", b_status: [1] },
+      ],
+    }), "request_1");
+
+    expect(result.error).toBeNull();
+    expect(result.code).toContain("TABLE_NAME = f\"docs_{datetime.now().strftime('%Y_%m_%d')}\"");
+    expect(result.code).toContain("num_found_exact BOOLEAN,");
+    expect(result.code).toContain("id_field VARCHAR(255),");
+    expect(result.code).toContain("b_id INT,");
+    expect(result.code).toContain("b_bid_number VARCHAR(255),");
+    expect(result.code).toContain("b_status JSON,");
+    expect(result.code).toContain("json_dict.get('num_found_exact')");
+    expect(result.code).toContain("json_dict.get('b_id')");
+  });
+
   it("preserves pasted JSON arrays as JSON columns without index-map objects", () => {
     const source = `{
       "b_id": [9379993],
