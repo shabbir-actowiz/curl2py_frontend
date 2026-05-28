@@ -85,6 +85,7 @@ export interface RunWorkspaceRequest {
   request_code: string;
   parser_code: string;
   proxy?: ProxyConfig | null;
+  useBackendProxy?: boolean;
 }
 
 export interface ProxyConfig {

@@ -46,6 +46,7 @@ interface Snippet {
   name: string;
   raw: string;
   collapsed?: boolean;
+  useBackendProxy?: boolean;
 }
 
 interface SnippetBlock {
@@ -298,6 +299,7 @@ function createDefaultSnippet(name = "request_1"): Snippet {
     id: newId(),
     name,
     raw: "",
+    useBackendProxy: false,
   };
 }
 
@@ -335,6 +337,7 @@ function normalizeSnippet(snippet: Partial<Snippet>, fallbackName = "request_1")
     name: typeof snippet.name === "string" ? sanitizeName(snippet.name) || fallbackName : fallbackName,
     raw: typeof snippet.raw === "string" ? snippet.raw : "",
     collapsed: !!snippet.collapsed,
+    useBackendProxy: !!snippet.useBackendProxy,
   };
 }
 
@@ -904,6 +907,7 @@ export default function Index() {
         snippetId: snippet.id,
         name: effectiveNames[index],
         raw: snippet.raw,
+        useBackendProxy: !!snippet.useBackendProxy,
         client,
         isAsync,
         mergeMode,
@@ -1322,6 +1326,7 @@ export default function Index() {
         request_code: requestCode,
         parser_code: parserCode,
         proxy: proxyConfig,
+        useBackendProxy: !!requestSnippet.useBackendProxy,
       });
 
       const responsePayload = data.parsed ?? data.response ?? { error: data.error || "Execution failed", logs: data.logs };
@@ -1470,7 +1475,7 @@ export default function Index() {
       }
       const id = newId();
       focusNameOnMountId.current = id;
-      const next = [...prev, { id, name, raw: "" }];
+      const next = [...prev, { id, name, raw: "", useBackendProxy: false }];
       // scroll into view next tick
       setTimeout(() => {
         snippetRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -4060,6 +4065,25 @@ export default function Index() {
                               <Trash2 className="h-3 w-3" strokeWidth={2} />
                             </button>
                           </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 px-9 pt-1 font-mono text-[10px] text-muted-foreground">
+                          <label
+                            className="flex cursor-pointer items-center gap-1.5"
+                            title="Uses a secure backend proxy during hosted runs. Proxy details are never shown or exported."
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={!!s.useBackendProxy}
+                              onChange={(e) => updateSnippet(s.id, { useBackendProxy: e.target.checked })}
+                              className="h-3 w-3"
+                            />
+                            Enable IP rotation
+                          </label>
+                          {!!s.useBackendProxy && (
+                            <span className="text-primary/80">Backend proxy: enabled</span>
+                          )}
                         </div>
 
                         {collapsed ? (
