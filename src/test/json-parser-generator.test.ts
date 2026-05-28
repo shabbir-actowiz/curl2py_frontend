@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { generateParserCode } from "@/pages/Index";
+import { generateParserCode, getParserPathWarning, getValueByPath, parseJsonPath, preserveValidatedJsonSource } from "@/pages/Index";
 
 function runGeneratedParser(code: string, payload: unknown) {
   const script = [
@@ -25,6 +25,92 @@ function runGeneratedParser(code: string, payload: unknown) {
 }
 
 describe("JSON parser generator", () => {
+  it("validates and extracts final array index paths", () => {
+    const payload = {
+      response: {
+        response: {
+          docs: [
+            {
+              id: "9382948",
+              b_id: [9382948],
+              b_bid_number: ["GEM/2026/R/673215"],
+            },
+          ],
+        },
+      },
+    };
+
+    expect(parseJsonPath("response.response.docs[0].b_id[0]")).toEqual([
+      "response",
+      "response",
+      "docs",
+      0,
+      "b_id",
+      0,
+    ]);
+
+    [
+      "response.response.docs",
+      "response.response.docs[0]",
+      "response.response.docs[0].b_id",
+      "response.response.docs[0].b_id[0]",
+      "response.response.docs[0].b_bid_number[0]",
+    ].forEach((path) => expect(getParserPathWarning(path)).toBe(""));
+
+    expect(Array.isArray(getValueByPath(payload, "response.response.docs"))).toBe(true);
+    expect(getValueByPath(payload, "response.response.docs[0]")).toEqual(payload.response.response.docs[0]);
+    expect(getValueByPath(payload, "response.response.docs[0].b_id")).toEqual([9382948]);
+    expect(getValueByPath(payload, "response.response.docs[0].b_id[0]")).toBe(9382948);
+    expect(getValueByPath(payload, "response.response.docs[0].b_bid_number[0]")).toBe("GEM/2026/R/673215");
+
+    const code = generateParserCode("test_request", [
+      { path: "response.response.docs", outputKey: "docs" },
+      { path: "response.response.docs[0]", outputKey: "doc" },
+      { path: "response.response.docs[0].b_id", outputKey: "b_id" },
+      { path: "response.response.docs[0].b_id[0]", outputKey: "b_id_first" },
+      { path: "response.response.docs[0].b_bid_number[0]", outputKey: "bid_number_first" },
+    ]);
+
+    expect(code).toContain('_get_value(data, ["response", "response", "docs", 0, "b_id", 0])');
+    expect(runGeneratedParser(code, payload)).toEqual([
+      { docs: payload.response.response.docs },
+      { doc: payload.response.response.docs[0] },
+      { b_id: [9382948] },
+      { b_id_first: 9382948 },
+      { bid_number_first: "GEM/2026/R/673215" },
+    ]);
+  });
+
+  it("preserves pasted JSON array structure through source validation and parser output", () => {
+    const source = `{
+      "b_id": [9379993],
+      "b_bid_number": ["GEM/2026/R/672917"],
+      "nested": [{"x": [1, 2, 3]}]
+    }`;
+    const savedSource = preserveValidatedJsonSource(source);
+    const parsed = JSON.parse(savedSource);
+    const sourceView = JSON.stringify(parsed, null, 2);
+    const code = generateParserCode("test_request", [
+      { path: "b_id", outputKey: "b_id" },
+      { path: "b_bid_number", outputKey: "b_bid_number" },
+      { path: "nested[0].x", outputKey: "x" },
+    ]);
+    const output = runGeneratedParser(code, parsed);
+    const outputJson = JSON.stringify(output, null, 2);
+
+    expect(Array.isArray(parsed.b_id)).toBe(true);
+    expect(parsed.b_id[0]).toBe(9379993);
+    expect(Array.isArray(parsed.b_bid_number)).toBe(true);
+    expect(Array.isArray(parsed.nested[0].x)).toBe(true);
+    expect(sourceView).not.toMatch(/"b_id"\s*:\s*\{\s*"0"\s*:/);
+    expect(output).toEqual([
+      { b_id: [9379993] },
+      { b_bid_number: ["GEM/2026/R/672917"] },
+      { x: [1, 2, 3] },
+    ]);
+    expect(outputJson).not.toMatch(/"b_id"\s*:\s*\{\s*"0"\s*:/);
+  });
+
   it("preserves exact indexed paths by default", () => {
     const payload = {
       data: {

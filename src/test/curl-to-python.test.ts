@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCurl, toPython } from "@/lib/curl-to-python";
+import { parseCurl, parse_json_body, toPython } from "@/lib/curl-to-python";
 
 const python = (curl: string) => toPython(parseCurl(curl), { client: "requests", async: false });
 
@@ -20,6 +20,27 @@ describe("curl-to-python conversion", () => {
     expect(code).toContain("json=json_data");
   });
 
+  it("preserves pasted JSON arrays as arrays", () => {
+    const payload = `{
+      "b_id": [9379993],
+      "b_bid_number": ["GEM/2026/R/672917"],
+      "nested": [{"x": [1, 2, 3]}]
+    }`;
+    const parsed = parse_json_body(payload) as {
+      b_id: number[];
+      b_bid_number: string[];
+      nested: Array<{ x: number[] }>;
+    };
+    const rendered = JSON.stringify(parsed, null, 2);
+
+    expect(Array.isArray(parsed.b_id)).toBe(true);
+    expect(parsed.b_id[0]).toBe(9379993);
+    expect(Array.isArray(parsed.b_bid_number)).toBe(true);
+    expect(Array.isArray(parsed.nested[0].x)).toBe(true);
+    expect(rendered).toContain('"b_id": [');
+    expect(rendered).not.toMatch(/"b_id"\s*:\s*\{\s*"0"\s*:/);
+  });
+
   it("strips bash ANSI-C $ prefix from --data-raw JSON", () => {
     const code = python(`curl 'https://example.com/graphql' -H 'content-type: application/json' --data-raw $'{"operationName":"getSearchProducts","query":"query X {\\\\n id \\\\n}"}'`);
     expect(code).not.toContain("json_data = '$");
@@ -27,11 +48,10 @@ describe("curl-to-python conversion", () => {
     expect(code).toContain("json=json_data");
   });
 
-  it("normalizes GraphQL JSON payload escapes", () => {
+  it("preserves GraphQL JSON payload escape text", () => {
     const code = python(`curl 'https://example.com/graphql' --data-raw $'{"query":"query X {\\\\n title\\\\u0021 \\\\n}"}'`);
-    expect(code).toContain(String.raw`"query": "query X {\n title! \n}"`);
+    expect(code).toContain(String.raw`"query": "query X {\\n title\\u0021 \\n}"`);
     expect(code).not.toContain('"""');
-    expect(code).not.toContain("\\\\\\\\n");
   });
 
   it("converts form-urlencoded body", () => {

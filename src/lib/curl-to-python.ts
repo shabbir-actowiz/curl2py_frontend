@@ -108,31 +108,10 @@ export function parse_json_body(body: string): unknown | null {
   const normalized = normalize_shell_body(body);
   if (!normalized.trim()) return null;
   try {
-    return normalizeJsonStrings(JSON.parse(normalized));
+    return JSON.parse(normalized);
   } catch {
     return null;
   }
-}
-
-function normalizeJsonStrings(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(normalizeJsonStrings);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, normalizeJsonStrings(item)])
-    );
-  }
-  if (typeof value === "string") return decodeCommonJsonEscapes(value);
-  return value;
-}
-
-function decodeCommonJsonEscapes(value: string): string {
-  return value.replace(/\\(u[0-9a-fA-F]{4}|[nrt])/g, (_match, escape: string) => {
-    if (escape === "n") return "\n";
-    if (escape === "r") return "\r";
-    if (escape === "t") return "\t";
-    if (escape.startsWith("u")) return String.fromCharCode(Number.parseInt(escape.slice(1), 16));
-    return _match;
-  });
 }
 
 function getHeader(headers: Record<string, string>, name: string): string {

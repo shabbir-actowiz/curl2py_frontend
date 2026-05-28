@@ -47,6 +47,25 @@ const productJson = {
 };
 
 describe("MySQL DB generator", () => {
+  it("preserves pasted JSON arrays as JSON columns without index-map objects", () => {
+    const source = `{
+      "b_id": [9379993],
+      "b_bid_number": ["GEM/2026/R/672917"],
+      "nested": [{"x": [1, 2, 3]}]
+    }`;
+    const result = generateMysqlDbCode(source, "data");
+
+    expect(result.error).toBeNull();
+    expect(result.sourceJson).toBe(source.trim());
+    expect(JSON.parse(result.sourceJson).b_id).toEqual([9379993]);
+    expect(result.code).toContain("b_id JSON,");
+    expect(result.code).toContain("b_bid_number JSON,");
+    expect(result.code).toContain("nested JSON,");
+    expect(result.code).toContain("json.dumps(json_dict.get('b_id')) if json_dict.get('b_id') else None");
+    expect(result.sourceJson).not.toMatch(/"b_id"\s*:\s*\{\s*"0"\s*:/);
+    expect(result.code).not.toContain('"0": 9379993');
+  });
+
   it("generates generic insert functions and JSON columns from product output", () => {
     const result = generateMysqlDbCode(JSON.stringify(productJson), "products");
 

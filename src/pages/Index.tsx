@@ -425,6 +425,12 @@ function defaultResponseFileName(workspaceName: string): string {
   return `${workspaceName}_response.json`;
 }
 
+export function preserveValidatedJsonSource(source: string): string {
+  const trimmed = source.trim();
+  JSON.parse(trimmed);
+  return trimmed;
+}
+
 function isResponseFile(file: string): boolean {
   return /_response\.(json|txt|html)$/i.test(file);
 }
@@ -801,7 +807,7 @@ export default function Index() {
     [dbJsonSourceContent, parserWorkspaceName]
   );
   const dbCode = dbGeneration.code;
-  const dbSourceJson = dbGeneration.sourceJson || dbJsonSourceContent;
+  const dbSourceJson = dbJsonSourceContent;
 
   const handleParserPathSelect = useCallback((path: string | null, value?: unknown) => {
     setSelectedParserPath(path);
@@ -2066,24 +2072,23 @@ export default function Index() {
     const workspaceId = parserWorkspaceId || MANUAL_PARSER_WORKSPACE_ID;
     if (!parserJsonDraft.trim()) return;
     try {
-      const parsed = JSON.parse(parserJsonDraft);
-      const pretty = JSON.stringify(parsed, null, 2);
+      const sourceJson = preserveValidatedJsonSource(parserJsonDraft);
       if (isScriptJsonRoute && scriptJsonSourceKey && activeScriptJsonSource) {
         setScriptJsonSourcesByRequest((prev) => ({
           ...prev,
           [scriptJsonSourceKey]: {
             ...activeScriptJsonSource,
-            json: pretty,
+            json: sourceJson,
           },
         }));
-        setParserJsonDraft(pretty);
+        setParserJsonDraft(sourceJson);
         setIsEditingParserJson(false);
         toast.success("JSON saved");
         return;
       }
       setManualParserJsonByWorkspace((prev) => ({
         ...prev,
-        [workspaceId]: pretty,
+        [workspaceId]: sourceJson,
       }));
       setCollections((prev) => {
         const targetCollection = isParserRoute ? parserCollection : activeCollection;
@@ -2104,7 +2109,7 @@ export default function Index() {
               ...artifacts,
               [workspaceId]: {
                 ...currentArtifact,
-                responseJson: pretty,
+                responseJson: sourceJson,
                 responseContentType: "application/json",
                 responseExtension: "json",
                 responseFileName: "manual_response.json",
@@ -2113,7 +2118,7 @@ export default function Index() {
           },
         };
       });
-      setParserJsonDraft(pretty);
+      setParserJsonDraft(sourceJson);
       setIsEditingParserJson(false);
       toast.success("JSON saved");
     } catch {
@@ -2124,7 +2129,13 @@ export default function Index() {
   const saveDbJsonSource = () => {
     const workspaceId = parserWorkspaceId || MANUAL_PARSER_WORKSPACE_ID;
     const requestKey = activeParserRequestKey || `${parserCollection.id}:${workspaceId}`;
-    const nextSource = dbJsonDraft.trim();
+    let nextSource: string;
+    try {
+      nextSource = preserveValidatedJsonSource(dbJsonDraft);
+    } catch {
+      toast.error("Invalid JSON. Please check syntax.");
+      return;
+    }
     const nextGeneration = generateMysqlDbCode(nextSource, parserWorkspaceName);
 
     setDbJsonByRequest((prev) => ({
@@ -4410,15 +4421,6 @@ type ResponseMode =
 function detectResponseMode(source: string): ResponseMode {
   try {
     const parsed = JSON.parse(source);
-    if (typeof parsed === "string") {
-      const trimmed = parsed.trim();
-      try {
-        const nested = JSON.parse(trimmed);
-        return { kind: "json", value: nested };
-      } catch {
-        return { kind: "html", value: parsed };
-      }
-    }
     return { kind: "json", value: parsed };
   } catch {
     return { kind: "html", value: source };
@@ -4569,16 +4571,106 @@ function formatJsonPath(path: Array<string | number>): string {
   }, "");
 }
 
-function parseJsonPath(path: string): Array<string | number> {
-  const parts: Array<string | number> = [];
-  const pattern = /([A-Za-z_$][A-Za-z0-9_$]*)|\[(\d+)\]|\["([^"]+)"\]/g;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(path))) {
-    if (match[1]) parts.push(match[1]);
-    else if (match[2]) parts.push(Number(match[2]));
-    else if (match[3]) parts.push(match[3]);
+interface JsonPathToken {
+  type: "key" | "index";
+  value: string | number;
+}
+
+function tokenizeJsonPath(path: string): JsonPathToken[] | null {
+  const trimmed = path.trim();
+  if (!trimmed) return null;
+  const tokens: JsonPathToken[] = [];
+  let index = 0;
+  let needsKey = true;
+
+  while (index < trimmed.length) {
+    const char = trimmed[index];
+
+    if (char === ".") {
+      if (needsKey) return null;
+      needsKey = true;
+      index += 1;
+      continue;
+    }
+
+    if (char === "[") {
+      const closeIndex = trimmed.indexOf("]", index + 1);
+      if (closeIndex === -1) return null;
+      const raw = trimmed.slice(index + 1, closeIndex);
+      if (/^\d+$/.test(raw)) {
+        tokens.push({ type: "index", value: Number(raw) });
+      } else if (
+        (raw.startsWith("\"") && raw.endsWith("\"")) ||
+        (raw.startsWith("'") && raw.endsWith("'"))
+      ) {
+        try {
+          const key = raw.startsWith("'")
+            ? raw.slice(1, -1).replace(/\\'/g, "'").replace(/\\"/g, "\"")
+            : JSON.parse(raw);
+          if (typeof key !== "string" || !key) return null;
+          tokens.push({ type: "key", value: key });
+        } catch {
+          return null;
+        }
+      } else {
+        return null;
+      }
+      needsKey = false;
+      index = closeIndex + 1;
+      continue;
+    }
+
+    const keyMatch = trimmed.slice(index).match(/^[A-Za-z_$][A-Za-z0-9_$]*/);
+    if (!keyMatch || !needsKey) return null;
+    tokens.push({ type: "key", value: keyMatch[0] });
+    needsKey = false;
+    index += keyMatch[0].length;
   }
-  return parts;
+
+  return tokens.length > 0 && !needsKey ? tokens : null;
+}
+
+export function parseJsonPath(path: string): Array<string | number> {
+  const tokens = tokenizeJsonPath(path);
+  if (!tokens) return [];
+  return tokens.map((token) => token.value);
+}
+
+export function getValueByPath(data: unknown, path: string): unknown {
+  const tokens = tokenizeJsonPath(path);
+  if (!tokens) return undefined;
+  let current = data;
+
+  for (const token of tokens) {
+    if (current == null) return undefined;
+
+    if (token.type === "key") {
+      if (
+        typeof current !== "object" ||
+        Array.isArray(current) ||
+        !(token.value in current)
+      ) {
+        return undefined;
+      }
+      current = (current as Record<string, unknown>)[token.value as string];
+      continue;
+    }
+
+    if (!Array.isArray(current)) return undefined;
+    const itemIndex = token.value as number;
+    if (itemIndex < 0 || itemIndex >= current.length) return undefined;
+    current = current[itemIndex];
+  }
+
+  return current;
+}
+
+function getJsonPathSyntaxWarning(path: string) {
+  const trimmed = path.trim();
+  if (!trimmed) return "Path is required";
+  if (trimmed.endsWith(".") || trimmed.endsWith("[")) return "Path is incomplete";
+  if (!tokenizeJsonPath(trimmed)) return "Path is invalid";
+  return "";
 }
 
 function sanitizeOutputKey(value: string): string {
@@ -4598,13 +4690,8 @@ function uniqueOutputKey(baseKey: string, selections: ParserSelection[]) {
   return `${baseKey}_${index}`;
 }
 
-function getParserPathWarning(path: string) {
-  const trimmed = path.trim();
-  if (!trimmed) return "Path is required";
-  if (/[.[\]]$/.test(trimmed)) return "Path is incomplete";
-  const parts = parseJsonPath(trimmed);
-  if (parts.length === 0) return "Path is invalid";
-  return "";
+export function getParserPathWarning(path: string) {
+  return getJsonPathSyntaxWarning(path);
 }
 
 function getOutputKeyFromPath(path: string, fallback = "value") {
@@ -4836,20 +4923,20 @@ export function generateMysqlDbCode(source: string, contextName = "data"): Mysql
     records = [parsed];
   } else if (Array.isArray(parsed)) {
     if (parsed.length === 0) {
-      return { sourceJson: JSON.stringify(parsed, null, 2), code: "", error: "Cannot infer schema from empty array." };
+      return { sourceJson: trimmed, code: "", error: "Cannot infer schema from empty array." };
     }
     records = parsed.filter(isRecord);
   }
 
   if (records.length === 0) {
-    return { sourceJson: JSON.stringify(parsed, null, 2), code: "", error: "DB code generation needs a JSON object or an array of objects." };
+    return { sourceJson: trimmed, code: "", error: "DB code generation needs a JSON object or an array of objects." };
   }
 
   const baseTableName = inferBaseTableName(contextName, parsed);
   const dbName = `${baseTableName.replace(/s$/, "")}_db`;
   const columns = buildMysqlColumns(records, baseTableName);
   if (columns.length === 0) {
-    return { sourceJson: JSON.stringify(parsed, null, 2), code: "", error: "No top-level JSON fields found for DB columns." };
+    return { sourceJson: trimmed, code: "", error: "No top-level JSON fields found for DB columns." };
   }
 
   const columnDefinitions = columns.map((column) => {
@@ -4879,7 +4966,7 @@ export function generateMysqlDbCode(source: string, contextName = "data"): Mysql
     "}",
     "",
     `DB_NAME = 'YOUR_DB_NAME'`,
-    `TABLE_NAME = "YOUR_TABLE_NAME_{datetime.now().strftime('%Y_%m_%d')}"`,
+    `TABLE_NAME = f"${baseTableName}_{datetime.now().strftime('%Y_%m_%d')}"`,
     "# ================================================",
     "",
     "def get_connection():",
@@ -4990,7 +5077,7 @@ export function generateMysqlDbCode(source: string, contextName = "data"): Mysql
   ].join("\n");
 
   return {
-    sourceJson: JSON.stringify(parsed, null, 2),
+    sourceJson: trimmed,
     code,
     error: null,
   };
@@ -5982,7 +6069,7 @@ function JsonResponseViewer({
   );
 }
 
-function JsonTreeNode({
+export function JsonTreeNode({
   value,
   path,
   name,
@@ -5999,7 +6086,11 @@ function JsonTreeNode({
 }) {
   const isArray = Array.isArray(value);
   const isObject = value !== null && typeof value === "object";
-  const entries = isObject ? Object.entries(value as Record<string, unknown>) : [];
+  const entries: Array<[string | number, unknown]> = isArray
+    ? (value as unknown[]).map((child, index) => [index, child])
+    : isObject
+      ? Object.entries(value as Record<string, unknown>)
+      : [];
   const displayName = name !== undefined ? String(name) : "";
   const pathString = formatJsonPath(path);
   const isTemporarySelected = selectedPath === pathString;
@@ -6076,13 +6167,13 @@ function JsonTreeNode({
       <span className="text-syntax-punct">{isArray ? "[" : "{"}</span>
       <div className="pl-4">
         {entries.map(([key, child], index) => {
-          const childPath = [...path, isArray ? Number(key) : key];
+          const childPath = [...path, key];
           return (
             <div key={`${key}-${index}`} className="flex items-start gap-1">
               <JsonTreeNode
                 value={child}
                 path={childPath}
-                name={isArray ? Number(key) : key}
+                name={isArray ? undefined : key}
                 selectedPath={selectedPath}
                 addedPaths={addedPaths}
                 onSelect={onSelect}
