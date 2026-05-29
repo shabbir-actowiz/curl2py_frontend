@@ -3,6 +3,7 @@ export const apiRoutes = {
   login: "/api/v1/auth/login",
   googleLogin: "/api/v1/auth/google",
   forgotPassword: "/api/v1/auth/forgot-password",
+  verifyOTP: "/api/v1/auth/verify-otp",
   resetPassword: "/api/v1/auth/reset-password",
   refresh: "/api/v1/auth/refresh",
   me: "/api/v1/auth/me",
@@ -27,5 +28,7 @@ export const apiRoutes = {
   listIssuesAdminFallback: "/issues/admin",
   resolveIssue: (issueId: string) => `/api/v1/issues/admin/${encodeURIComponent(issueId)}/resolve`,
   resolveIssueFallback: (issueId: string) => `/issues/admin/${encodeURIComponent(issueId)}/resolve`,
+  updateIssueStatus: (issueId: string) => `/api/v1/issues/admin/${encodeURIComponent(issueId)}/status`,
+  updateIssueStatusFallback: (issueId: string) => `/issues/admin/${encodeURIComponent(issueId)}/status`,
   health: "/health",
 } as const;

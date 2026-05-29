@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Loader2 } from "lucide-react";
+import { Loader2, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
-import { downloadIssueFile, extractApiErrorMessage, listIssues, listIssuesAdmin, resolveIssue, type Issue } from "@/lib/api";
+import { downloadIssueFile, extractApiErrorMessage, listIssues, listIssuesAdmin, resolveIssue, updateIssueStatus, type Issue } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import ImageViewer from "@/components/ImageViewer";
 import ImageThumbnailGrid from "@/components/ImageThumbnailGrid";
@@ -39,6 +39,8 @@ export default function Issues({ admin = false }: { admin?: boolean }) {
   const [isLoading, setIsLoading] = useState(false);
   const [resolvingId, setResolvingId] = useState("");
   const [downloadingFileKey, setDownloadingFileKey] = useState("");
+  const [updatingStatusId, setUpdatingStatusId] = useState("");
+  const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const imageViewer = useImageViewer();
 
   // Check admin access on mount and when admin prop changes
@@ -103,6 +105,23 @@ export default function Issues({ admin = false }: { admin?: boolean }) {
     const images = extractImageFiles(issueId, selected?.files || []);
     if (images.length > 0) {
       imageViewer.openViewer(images, startIndex);
+    }
+  };
+
+  const handleUpdateStatus = async (newStatus: string) => {
+    if (!selected) return;
+    
+    try {
+      setUpdatingStatusId(selected.issue_id);
+      setStatusDropdownOpen(false);
+      const updated = await updateIssueStatus(selected.issue_id, newStatus, accessToken);
+      setIssues((prev) => prev.map((issue) => issue.issue_id === selected.issue_id ? updated : issue));
+      setSelected(updated);
+      toast.success(`Issue status updated to ${newStatus}`);
+    } catch (error) {
+      toast.error(extractApiErrorMessage(error));
+    } finally {
+      setUpdatingStatusId("");
     }
   };
 
@@ -204,7 +223,39 @@ export default function Issues({ admin = false }: { admin?: boolean }) {
             <div className="space-y-3">
               <div className="text-primary">{selected.issue_id}</div>
               <div><span className="text-muted-foreground">Type:</span> {selected.issue_type}</div>
-              <div><span className="text-muted-foreground">Status:</span> {selected.status}</div>
+              <div className="flex items-center justify-between">
+                <span><span className="text-muted-foreground">Status:</span> {selected.status}</span>
+                {admin && (
+                  <div className="relative">
+                    <button
+                      onClick={() => setStatusDropdownOpen(!statusDropdownOpen)}
+                      disabled={updatingStatusId === selected.issue_id}
+                      className="inline-flex items-center gap-1 rounded-sm border border-border px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-50"
+                    >
+                      {updatingStatusId === selected.issue_id ? (
+                        <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} />
+                      ) : (
+                        <ChevronDown className="h-3 w-3" />
+                      )}
+                      Update
+                    </button>
+                    {statusDropdownOpen && (
+                      <div className="absolute right-0 top-full mt-1 z-10 rounded-sm border border-border bg-surface shadow-lg">
+                        {["pending", "in_progress", "resolved", "rejected"].map((statusOption) => (
+                          <button
+                            key={statusOption}
+                            onClick={() => void handleUpdateStatus(statusOption)}
+                            disabled={updatingStatusId === selected.issue_id}
+                            className="block w-full px-3 py-2 text-left text-[11px] text-muted-foreground hover:bg-surface-elevated hover:text-foreground disabled:opacity-50 first:rounded-t-sm last:rounded-b-sm"
+                          >
+                            {statusOption.replace("_", " ")}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
               <div><span className="text-muted-foreground">Email:</span> {selected.email}</div>
               <div><span className="text-muted-foreground">Created:</span> {new Date(selected.created_at).toLocaleString()}</div>
               {selected.resolved_at && <div><span className="text-muted-foreground">Resolved:</span> {new Date(selected.resolved_at).toLocaleString()}</div>}

@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { User, Lock, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { AuthShell, Divider, SocialButtons } from "@/components/auth/AuthShell";
-import { extractApiErrorMessage, forgotPassword } from "@/lib/api";
+import { extractApiErrorMessage } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
 
 export default function Login() {
@@ -14,8 +14,6 @@ export default function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showForgot, setShowForgot] = useState(false);
-  const [forgotEmail, setForgotEmail] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -113,35 +111,8 @@ export default function Login() {
               </button>
               <span onClick={() => setRemember((r) => !r)}>Remember me</span>
             </label>
-            <button type="button" onClick={() => setShowForgot((value) => !value)} className="text-[12px] text-primary hover:underline">Forgot password?</button>
+            <Link to="/forgot-password" className="text-[12px] text-primary hover:underline">Forgot password?</Link>
           </div>
-
-          {showForgot && (
-            <div className="space-y-2 rounded-md border border-border bg-background p-3">
-              <input
-                type="email"
-                value={forgotEmail}
-                onChange={(e) => setForgotEmail(e.target.value)}
-                placeholder="you@example.com"
-                className="h-9 w-full rounded-md border border-border bg-background px-3 text-[13px] outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/60 focus:ring-1 focus:ring-primary/30"
-              />
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    const response = await forgotPassword({ email: forgotEmail.trim() });
-                    toast.success(response.message);
-                    setShowForgot(false);
-                  } catch (forgotError) {
-                    toast.error(extractApiErrorMessage(forgotError));
-                  }
-                }}
-                className="h-9 w-full rounded-md border border-border bg-transparent text-[12px] text-foreground transition-colors hover:border-border-strong hover:bg-surface-elevated"
-              >
-                Send reset link
-              </button>
-            </div>
-          )}
 
           {error && (
             <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-[12px] text-destructive">
