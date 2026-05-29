@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { generateParserCode, getJsonLoopParentPath, getParserPathWarning, getValueByPath, parseJsonPath, preserveValidatedJsonSource } from "@/pages/Index";
+import { generateParserCode, getJsonLoopParentPath, getJsonLoopSourcePaths, getParserPathWarning, getValueByPath, parseJsonPath, preserveValidatedJsonSource } from "@/pages/Index";
 
 function runGeneratedParser(code: string, payload: unknown) {
   const script = [
@@ -314,6 +314,129 @@ describe("JSON parser generator", () => {
 
     expect(runGeneratedParser(singleCode, payload)).toEqual({ title: "A" });
     expect(runGeneratedParser(loopCode, payload)).toEqual({ groups: [{ title: "A" }, { title: "C" }] });
+  });
+
+  it("detects every array parent in nested JSON paths", () => {
+    expect(getJsonLoopSourcePaths("response.snippets[1].data.media_container.items[0].image.url")).toEqual([
+      "response.snippets",
+      "response.snippets[].data.media_container.items",
+    ]);
+    expect(getJsonLoopSourcePaths("response.snippets[1].data.variant_list[0].data.media_container.items[0].image.url")).toEqual([
+      "response.snippets",
+      "response.snippets[].data.variant_list",
+      "response.snippets[].data.variant_list[].data.media_container.items",
+    ]);
+  });
+
+  it("supports outer, inner, and nested loop selections while preserving fixed indexes", () => {
+    const payload = {
+      response: {
+        snippets: [
+          {
+            tracking: { common_attributes: { product_id: "p1", name: "One", price: 10 } },
+            data: { media_container: { items: [{ image: { url: "p1-a" } }, { image: { url: "p1-b" } }] } },
+          },
+          {
+            tracking: { common_attributes: { product_id: "p2", name: "Two", price: 20 } },
+            data: { media_container: { items: [{ image: { url: "p2-a" } }, { image: { url: "p2-b" } }] } },
+          },
+        ],
+      },
+    };
+    const path = "response.snippets[1].data.media_container.items[0].image.url";
+
+    // 1. single mode = exact fixed indexes only
+    const singleCode = generateParserCode("test_request", [
+      { path, outputKey: "image_url", selectionMode: "single" },
+    ]);
+    expect(runGeneratedParser(singleCode, payload)).toEqual({
+      image_url: "p2-a"
+    });
+
+    // 2. loop snippets only = items[0] only (preserving other fixed indexes)
+    const outerCode = generateParserCode("test_request", [
+      { path, outputKey: "image_url", loopPaths: ["response.snippets"] },
+    ]);
+    expect(runGeneratedParser(outerCode, payload)).toEqual({
+      snippets: [{ image_url: "p1-a" }, { image_url: "p2-a" }],
+    });
+
+    // 3. loop snippets + items = image_url array/list
+    const nestedCode = generateParserCode("test_request", [
+      { path: "response.snippets[1].tracking.common_attributes.product_id", outputKey: "product_id", loopPaths: ["response.snippets"] },
+      { path: "response.snippets[1].tracking.common_attributes.name", outputKey: "name", loopPaths: ["response.snippets"] },
+      { path: "response.snippets[1].tracking.common_attributes.price", outputKey: "price", loopPaths: ["response.snippets"] },
+      { path, outputKey: "image_url", loopPaths: ["response.snippets", "response.snippets[].data.media_container.items"] },
+    ]);
+    expect(runGeneratedParser(nestedCode, payload)).toEqual({
+      items: [
+        { product_id: "p1", name: "One", price: 10, image_url: ["p1-a", "p1-b"] },
+        { product_id: "p2", name: "Two", price: 20, image_url: ["p2-a", "p2-b"] },
+      ],
+    });
+  });
+
+  it("supports three levels of parent-child nested loop selections (snippets -> variant_list -> items)", () => {
+    const payload = {
+      response: {
+        snippets: [
+          {
+            tracking: { common_attributes: { product_id: "p1", name: "One" } },
+            data: {
+              variant_list: [
+                {
+                  data: {
+                    media_container: {
+                      items: [
+                        { image: { url: "p1-v1-a" } },
+                        { image: { url: "p1-v1-b" } }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    };
+    const path = "response.snippets[1].data.variant_list[0].data.media_container.items[0].image.url";
+    const code = generateParserCode("test_request", [
+      { path: "response.snippets[1].tracking.common_attributes.product_id", outputKey: "product_id", loopPaths: ["response.snippets"] },
+      { path, outputKey: "image_url", loopPaths: ["response.snippets", "response.snippets[].data.variant_list", "response.snippets[].data.variant_list[].data.media_container.items"] },
+    ]);
+    expect(runGeneratedParser(code, payload)).toEqual({
+      items: [
+        { product_id: "p1", image_url: ["p1-v1-a", "p1-v1-b"] }
+      ]
+    });
+  });
+
+  it("does not group sibling/unrelated loops and generates separate flat outputs", () => {
+    const payload = {
+      products: [
+        { product_id: "p1" },
+        { product_id: "p2" },
+      ],
+      categories: [
+        { cat_id: "c1" },
+        { cat_id: "c2" },
+      ]
+    };
+    const code = generateParserCode("test_request", [
+      { path: "products[0].product_id", outputKey: "product_id", loopPaths: ["products"] },
+      { path: "categories[0].cat_id", outputKey: "cat_id", loopPaths: ["categories"] },
+    ]);
+    expect(runGeneratedParser(code, payload)).toEqual({
+      products: [
+        { product_id: "p1" },
+        { product_id: "p2" },
+      ],
+      categories: [
+        { cat_id: "c1" },
+        { cat_id: "c2" },
+      ]
+    });
   });
 
   it("handles large nested JSON without automatic broad loops", () => {

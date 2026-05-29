@@ -1,4 +1,4 @@
-﻿import { Component, type ErrorInfo, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Component, type ErrorInfo, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Check, Copy, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, AlertCircle, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil, Moon, Sun, Play, Loader2, WrapText } from "lucide-react";
 import JSZip from "jszip";
@@ -79,6 +79,7 @@ interface ParserSelection {
   path: string;
   outputKey: string;
   selectionMode?: "single" | "loop";
+  loopPaths?: string[];
   xpath?: string;
   css?: string;
   selectorType?: "xpath" | "css";
@@ -475,6 +476,7 @@ export default function Index() {
   const [activePanelTab, setActivePanelTab] = useState<WorkspacePanelTab>("code");
   const [parserBuilderMode, setParserBuilderMode] = useState<ParserBuilderMode>("json");
   const [parserPageTab, setParserPageTab] = useState<ParserPageTab>("source");
+  const [openLoopDropdownIndex, setOpenLoopDropdownIndex] = useState<number | null>(null);
   const [selectedParserPath, setSelectedParserPath] = useState<string | null>(null);
   const [selectedParserValue, setSelectedParserValue] = useState<unknown>(null);
   const [selectedParserOutputKey, setSelectedParserOutputKey] = useState("");
@@ -3124,16 +3126,113 @@ export default function Index() {
                             className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
                             placeholder="output field"
                           />
-                          <select
-                            value={loopParentPath ? selection.selectionMode ?? "single" : "single"}
-                            onChange={(event) => updateParserSelectionRow(index, { selectionMode: event.target.value as "single" | "loop" })}
-                            disabled={!loopParentPath}
-                            title={loopParentPath ? `Loop source: ${loopParentPath}` : "Loop is not available for this path"}
-                            className="h-8 rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
-                          >
-                            <option value="single">single</option>
-                            {loopParentPath && <option value="loop">loop over {loopParentPath.split(".").pop() || "items"}</option>}
-                          </select>
+                          {(() => {
+                            const candidates = getJsonLoopCandidatesFromParts(normalizeSelectionParts(selection.path));
+                            if (candidates.length === 0) {
+                              return (
+                                <button
+                                  disabled
+                                  className="h-8 rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-muted-foreground w-full text-left"
+                                >
+                                  single
+                                </button>
+                              );
+                            }
+
+                            const explicitLoopPaths = selection.loopPaths ?? [];
+                            const selectedCount = selection.selectionMode === "loop" ? (explicitLoopPaths.length > 0 ? explicitLoopPaths.length : 1) : 0;
+                            const dropdownOpen = openLoopDropdownIndex === index;
+
+                            return (
+                              <div className="relative w-full">
+                                <button
+                                  onClick={() => setOpenLoopDropdownIndex(dropdownOpen ? null : index)}
+                                  className="h-8 rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong w-full text-left flex items-center justify-between"
+                                >
+                                  <span className="truncate">
+                                    {selectedCount === 0 ? "single" : `${selectedCount} loop${selectedCount > 1 ? "s" : ""}`}
+                                  </span>
+                                  <span className="text-[8px] text-muted-foreground ml-1">▼</span>
+                                </button>
+
+                                {dropdownOpen && (
+                                  <>
+                                    <div 
+                                      className="fixed inset-0 z-40" 
+                                      onClick={() => setOpenLoopDropdownIndex(null)}
+                                    />
+                                    <div className="absolute right-0 top-9 z-50 min-w-[280px] max-w-[320px] rounded-md border border-border bg-popover p-2 shadow-md animate-in fade-in-50 slide-in-from-top-1 text-popover-foreground">
+                                      <div className="text-[10px] font-semibold text-muted-foreground px-2 py-1 border-b border-border mb-1.5 flex justify-between items-center">
+                                        <span>SELECT LOOPS</span>
+                                        {selectedCount > 0 && (
+                                          <button 
+                                            onClick={() => {
+                                              updateParserSelectionRow(index, { selectionMode: "single", loopPaths: [] });
+                                              setOpenLoopDropdownIndex(null);
+                                            }}
+                                            className="text-[9px] text-destructive hover:underline"
+                                          >
+                                            Clear all
+                                          </button>
+                                        )}
+                                      </div>
+                                      <div className="space-y-1 max-h-[200px] overflow-y-auto">
+                                        {candidates.map((candidate, idx) => {
+                                          const isChecked = selection.selectionMode === "loop" && (
+                                            explicitLoopPaths.includes(candidate.displayPath) || 
+                                            (explicitLoopPaths.length === 0 && idx === 0)
+                                          );
+
+                                          return (
+                                            <label 
+                                              key={candidate.displayPath} 
+                                              className="flex items-start gap-2.5 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground cursor-pointer text-left select-none"
+                                            >
+                                              <input
+                                                type="checkbox"
+                                                checked={isChecked}
+                                                onChange={(event) => {
+                                                  const checked = event.target.checked;
+                                                  let nextPaths = [...explicitLoopPaths];
+                                                  if (explicitLoopPaths.length === 0 && selection.selectionMode === "loop") {
+                                                    nextPaths = [candidates[0].displayPath];
+                                                  }
+                                                  if (checked) {
+                                                    if (!nextPaths.includes(candidate.displayPath)) {
+                                                      nextPaths.push(candidate.displayPath);
+                                                    }
+                                                  } else {
+                                                    nextPaths = nextPaths.filter(p => p !== candidate.displayPath);
+                                                  }
+                                                  nextPaths = candidates
+                                                    .filter(c => nextPaths.includes(c.displayPath))
+                                                    .map(c => c.displayPath);
+                                                  const nextMode = nextPaths.length > 0 ? "loop" : "single";
+                                                  updateParserSelectionRow(index, { 
+                                                    selectionMode: nextMode, 
+                                                    loopPaths: nextPaths 
+                                                  });
+                                                }}
+                                                className="mt-0.5 rounded border-border bg-background text-primary focus:ring-ring focus:ring-offset-background h-3.5 w-3.5"
+                                              />
+                                              <div className="min-w-0 flex-1">
+                                                <div className="text-[11px] font-medium leading-none text-foreground truncate" title={candidate.displayPath}>
+                                                  {candidate.label}
+                                                </div>
+                                                <div className="text-[9px] text-muted-foreground font-mono mt-0.5 truncate" title={candidate.displayPath}>
+                                                  {candidate.displayPath}
+                                                </div>
+                                              </div>
+                                            </label>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            );
+                          })()}
                           <button
                             onClick={() => deleteParserSelectionRow(index)}
                             className="flex h-8 w-8 items-center justify-center rounded-sm border border-border bg-transparent text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
@@ -4752,6 +4851,143 @@ export function getJsonLoopParentPath(path: string): string | null {
   return info ? formatJsonPath(info.parentPath) : null;
 }
 
+function getJsonLoopCandidatesFromParts(parts: Array<string | number>): JsonLoopCandidate[] {
+  const candidates: JsonLoopCandidate[] = [];
+  const labels: string[] = [];
+  for (let index = 0; index < parts.length - 1; index += 1) {
+    if (typeof parts[index] !== "string" || typeof parts[index + 1] !== "number") continue;
+    const parentPath = parts.slice(0, index + 1);
+    const label = String(parts[index]);
+    labels.push(label);
+    const displayParts = parentPath.filter((part, partIndex) => (
+      typeof part !== "number" || !(partIndex > 0 && typeof parentPath[partIndex - 1] === "string")
+    ));
+    candidates.push({
+      parentPath,
+      parentKey: pathKey(parentPath),
+      displayPath: formatJsonPath(displayParts).replace(/([A-Za-z_$][A-Za-z0-9_$]*)(?=\.|$)/g, (match, _name, offset, text) => {
+        const next = text.slice(offset + match.length, offset + match.length + 2);
+        return next === "[]" ? match : match;
+      }),
+      label,
+      shortLabel: labels.length === 1 ? `Loop over ${label}` : `Loop over ${labels.join(" \u2192 ")}`,
+      sourceIndex: index,
+    });
+  }
+  return candidates.map((candidate) => ({
+    ...candidate,
+    displayPath: formatLoopDisplayPath(candidate.parentPath),
+  }));
+}
+
+function formatLoopDisplayPath(path: Array<string | number>) {
+  let value = "";
+  path.forEach((part, index) => {
+    if (typeof part === "number") {
+      value += "[]";
+      return;
+    }
+    const simpleKey = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(part);
+    if (value && simpleKey) value += ".";
+    value += simpleKey ? part : `[${JSON.stringify(part)}]`;
+  });
+  return value;
+}
+
+export function getJsonLoopSourcePaths(path: string): string[] {
+  if (getParserPathWarning(path)) return [];
+  return getJsonLoopCandidatesFromParts(normalizeSelectionParts(path)).map((candidate) => candidate.displayPath);
+}
+
+function getSelectedJsonLoopCandidates(
+  selection: ParserSelection,
+  candidates: JsonLoopCandidate[],
+  loopCounts: Map<string, number>,
+) {
+  if (candidates.length === 0) return [];
+  if (selection.selectionMode === "single") return [];
+
+  const explicitLoopPaths = selection.loopPaths ?? [];
+  const explicit = explicitLoopPaths.length > 0
+    ? candidates.filter((candidate) => (
+      explicitLoopPaths.includes(candidate.displayPath) ||
+      explicitLoopPaths.includes(formatJsonPath(candidate.parentPath)) ||
+      explicitLoopPaths.includes(candidate.parentKey)
+    ))
+    : [];
+  if (explicit.length > 0) return explicit;
+  if (selection.selectionMode === "loop") return [candidates[0]];
+  if (selection.selectionMode === undefined && candidates.length > 0) {
+    if (loopCounts.get(candidates[0].parentKey)! > 1) {
+      return [candidates[0]];
+    }
+  }
+  return [];
+}
+
+function isLoopPrefix(prefix: SelectedLoopCandidate[], value: SelectedLoopCandidate[]) {
+  return prefix.length <= value.length && prefix.every((loop, index) => loop.parentKey === value[index]?.parentKey);
+}
+
+function selectedLoopChainKey(loops: SelectedLoopCandidate[]) {
+  return loops.map((loop) => loop.parentKey).join("|");
+}
+
+function relativePathAfterLoop(path: Array<string | number>, loop: SelectedLoopCandidate) {
+  const offset = loop.parentPath.length;
+  return pathKey(path.slice(0, offset)) === pathKey(loop.parentPath)
+    ? path.slice(offset + 1)
+    : path;
+}
+
+function relativeCollectionPath(loop: SelectedLoopCandidate, previous?: SelectedLoopCandidate) {
+  if (!previous) return loop.parentPath;
+  const offset = previous.parentPath.length;
+  return pathKey(loop.parentPath.slice(0, offset)) === pathKey(previous.parentPath)
+    ? loop.parentPath.slice(offset + 1)
+    : loop.parentPath;
+}
+
+function emitNestedJsonLoopPlan(
+  lines: string[],
+  plan: JsonLoopOutputPlan,
+  loopIndex: number,
+  baseVar: string,
+  indent: string,
+  usedVars: Set<string>,
+) {
+  const loop = plan.loops[loopIndex];
+  const previous = loopIndex > 0 ? plan.loops[loopIndex - 1] : undefined;
+  const itemVar = loop.varName || uniquePythonVar(loopIndex === plan.loops.length - 1 ? "item" : singularName(loop.label), usedVars);
+  loop.varName = itemVar;
+  const collectionVar = uniquePythonVar(`${itemVar}s`, usedVars);
+  const collectionPath = relativeCollectionPath(loop, previous);
+
+  lines.push(`${indent}${collectionVar} = ${collectionExpression(baseVar, collectionPath)}`);
+  lines.push(`${indent}for ${itemVar} in _as_list(${collectionVar}):`);
+  lines.push(`${indent}    if not isinstance(${itemVar}, dict):`);
+  lines.push(`${indent}        continue`);
+
+  if (loopIndex < plan.loops.length - 1) {
+    emitNestedJsonLoopPlan(lines, plan, loopIndex + 1, itemVar, `${indent}    `, usedVars);
+    return;
+  }
+
+  lines.push(`${indent}    row = {`);
+  plan.fields.forEach((field, index) => {
+    const fieldLoop = field.loops[field.loops.length - 1];
+    const planFieldLoop = fieldLoop ? plan.loops.find((loop) => loop.parentKey === fieldLoop.parentKey) : undefined;
+    const fieldBase = planFieldLoop?.varName || itemVar;
+    const relativePath = fieldLoop ? relativePathAfterLoop(field.path, fieldLoop) : field.path;
+    const comma = index < plan.fields.length - 1 ? "," : "";
+    lines.push(`${indent}        ${pythonString(field.outputKey)}: ${getFromExpression(fieldBase, relativePath)}${comma}`);
+  });
+  lines.push(`${indent}    }`);
+  lines.push(`${indent}    row = _clean_dict(row)`);
+  lines.push(`${indent}    if row:`);
+  lines.push(`${indent}        result[${pythonString(plan.outputKey)}].append(row)`);
+}
+
 function optimizeParserSelections(selections: ParserSelection[]) {
   const usedPaths = new Set<string>();
   const optimized: ParserSelection[] = [];
@@ -4997,7 +5233,7 @@ function getMysqlParserLoopArrayEntry(value: Record<string, unknown>): [string, 
   if (recordArrayEntries.length !== 1) return null;
 
   const [arrayKey, rows] = recordArrayEntries[0] as [string, Record<string, unknown>[]];
-  if (arrayKey === "items" || arrayKey === "variants") return null;
+  if (arrayKey !== "items" && arrayKey === "variants") return null;
 
   const hasOnlyScalarRootMetadata = Object.entries(value).every(([key, item]) => (
     key === arrayKey || (!Array.isArray(item) && !isRecord(item))
@@ -5379,6 +5615,85 @@ function emitArrayGroupRows(lines: string[], group: ParserArrayGroup, base: stri
   return rowsVar;
 }
 
+function areLoopsNested(loops: SelectedLoopCandidate[]): boolean {
+  if (loops.length <= 1) return true;
+  for (let i = 0; i < loops.length - 1; i++) {
+    const parent = loops[i];
+    const child = loops[i + 1];
+    if (child.parentPath.length <= parent.parentPath.length) return false;
+    for (let j = 0; j < parent.parentPath.length; j++) {
+      if (child.parentPath[j] !== parent.parentPath[j]) return false;
+    }
+  }
+  return true;
+}
+
+function emitGroupedNestedJsonLoopPlan(
+  lines: string[],
+  plan: JsonLoopOutputPlan,
+  loopIndex: number,
+  baseVar: string,
+  indent: string,
+  usedVars: Set<string>,
+  rowVar: string,
+) {
+  const loop = plan.loops[loopIndex];
+  const previous = loopIndex > 0 ? plan.loops[loopIndex - 1] : undefined;
+  const itemVar = loop.varName || uniquePythonVar(loopIndex === plan.loops.length - 1 ? "item" : singularName(loop.label), usedVars);
+  loop.varName = itemVar;
+  const collectionVar = uniquePythonVar(`${itemVar}s`, usedVars);
+  const collectionPath = relativeCollectionPath(loop, previous);
+
+  lines.push(`${indent}${collectionVar} = ${collectionExpression(baseVar, collectionPath)}`);
+  lines.push(`${indent}for ${itemVar} in _as_list(${collectionVar}):`);
+  lines.push(`${indent}    if not isinstance(${itemVar}, dict):`);
+  lines.push(`${indent}        continue`);
+
+  const innerIndent = `${indent}    `;
+
+  if (loopIndex === 0) {
+    lines.push(`${innerIndent}${rowVar} = {`);
+    plan.fields.forEach((field, index) => {
+      const comma = index < plan.fields.length - 1 ? "," : "";
+      const fieldLoop = field.loops[field.loops.length - 1];
+      const deepestLoop = plan.loops[plan.loops.length - 1];
+      const belongsToDeepest = fieldLoop && fieldLoop.parentKey === deepestLoop.parentKey;
+
+      if (!belongsToDeepest) {
+        const relativePath = fieldLoop ? relativePathAfterLoop(field.path, fieldLoop) : field.path;
+        lines.push(`${innerIndent}    ${pythonString(field.outputKey)}: ${getFromExpression(itemVar, relativePath)}${comma}`);
+      } else {
+        lines.push(`${innerIndent}    ${pythonString(field.outputKey)}: []${comma}`);
+      }
+    });
+    lines.push(`${innerIndent}}`);
+    lines.push("");
+  }
+
+  if (loopIndex < plan.loops.length - 1) {
+    emitGroupedNestedJsonLoopPlan(lines, plan, loopIndex + 1, itemVar, innerIndent, usedVars, rowVar);
+  } else {
+    plan.fields.forEach((field) => {
+      const fieldLoop = field.loops[field.loops.length - 1];
+      if (fieldLoop && fieldLoop.parentKey === loop.parentKey) {
+        const relativePath = relativePathAfterLoop(field.path, fieldLoop);
+        const valVar = uniquePythonVar(sanitizePythonName(field.outputKey), usedVars);
+        lines.push(`${innerIndent}${valVar} = ${getFromExpression(itemVar, relativePath)}`);
+        lines.push(`${innerIndent}if ${valVar} is not None:`);
+        lines.push(`${innerIndent}    ${rowVar}[${pythonString(field.outputKey)}].append(${valVar})`);
+      }
+    });
+  }
+
+  if (loopIndex === 0) {
+    lines.push("");
+    lines.push(`${innerIndent}# Clean row and check if it has any non-empty data`);
+    lines.push(`${innerIndent}${rowVar} = {k: v for k, v in ${rowVar}.items() if v is not None}`);
+    lines.push(`${innerIndent}if any(not isinstance(v, list) or len(v) > 0 for v in ${rowVar}.values()):`);
+    lines.push(`${innerIndent}    result[${pythonString(plan.outputKey)}].append(${rowVar})`);
+  }
+}
+
 function emitLoopGroup(lines: string[], group: ParserLoopGroup, usedVars: Set<string>) {
   const collectionVar = uniquePythonVar(sanitizePythonName(group.prop || "items"), usedVars);
   const itemVar = uniquePythonVar("item", usedVars);
@@ -5420,54 +5735,61 @@ export function generateParserCode(workspaceName: string, selections: ParserSele
     deduped.push({
       path,
       outputKey: uniqueOutputKey(sanitizeOutputKey(selection.outputKey || getOutputKeyFromPath(path)), deduped),
-      selectionMode: selection.selectionMode ?? "single",
+      selectionMode: selection.selectionMode,
+      loopPaths: selection.loopPaths,
     });
   });
   const rootFields: ParserField[] = [];
-  const groups: ParserLoopGroup[] = [];
-  const loopInfoByPath = new Map<string, JsonLoopInfo>();
+  const loopPlans: JsonLoopFieldPlan[] = [];
+  const candidatesByPath = new Map<string, JsonLoopCandidate[]>();
   const loopCounts = new Map<string, number>();
 
   deduped.forEach((selection) => {
-    const info = getJsonLoopInfoFromParts(normalizeSelectionParts(selection.path));
-    if (!info) return;
-    const key = pathKey(info.parentPath);
-    loopInfoByPath.set(selection.path, info);
-    loopCounts.set(key, (loopCounts.get(key) ?? 0) + 1);
+    const candidates = getJsonLoopCandidatesFromParts(normalizeSelectionParts(selection.path));
+    candidatesByPath.set(selection.path, candidates);
+    const first = candidates[0];
+    if (first) loopCounts.set(first.parentKey, (loopCounts.get(first.parentKey) ?? 0) + 1);
   });
 
   deduped.forEach((selection) => {
     const parts = normalizeSelectionParts(selection.path);
-    const loopInfo = loopInfoByPath.get(selection.path);
-    const loopKey = loopInfo ? pathKey(loopInfo.parentPath) : "";
-    const shouldLoop = !!loopInfo && ((selection.selectionMode ?? "single") === "loop" || (loopCounts.get(loopKey) ?? 0) > 1);
+    const candidates = candidatesByPath.get(selection.path) ?? [];
+    const selectedLoops = getSelectedJsonLoopCandidates(selection, candidates, loopCounts)
+      .map((candidate) => ({ ...candidate, varName: "" }))
+      .sort((a, b) => a.sourceIndex - b.sourceIndex);
 
-    if (!shouldLoop || !loopInfo) {
+    if (selectedLoops.length === 0) {
       rootFields.push({ outputKey: selection.outputKey, path: parts });
       return;
     }
 
-    if (loopInfo.relativePath.length === 0) {
+    const deepestLoop = selectedLoops[selectedLoops.length - 1];
+    if (relativePathAfterLoop(parts, deepestLoop).length === 0) {
       rootFields.push({ outputKey: selection.outputKey, path: parts });
       return;
     }
-    let group = groups.find((item) => pathKey(item.parentPath) === loopKey);
-    if (!group) {
-      group = {
-        prop: loopInfo.label,
-        parentPath: loopInfo.parentPath,
-        outputKey: sanitizeOutputKey(loopInfo.label),
-        fields: [],
-      };
-      groups.push(group);
-    }
-    group.fields.push({ outputKey: selection.outputKey, path: loopInfo.relativePath });
+    loopPlans.push({ outputKey: selection.outputKey, path: parts, loops: selectedLoops });
+  });
+
+  const outputChains = new Map<string, SelectedLoopCandidate[]>();
+  loopPlans.forEach((field) => {
+    outputChains.set(selectedLoopChainKey(field.loops), field.loops);
+  });
+  Array.from(outputChains.entries()).forEach(([key, loops]) => {
+    const hasDeeperChain = Array.from(outputChains.values()).some((candidate) => candidate.length > loops.length && isLoopPrefix(loops, candidate));
+    if (hasDeeperChain) outputChains.delete(key);
   });
 
   const reservedOutputKeys = new Set(rootFields.map((field) => field.outputKey));
-  groups.forEach((group) => {
-    group.outputKey = uniqueGroupOutputKey(group.outputKey, reservedOutputKeys);
-    reservedOutputKeys.add(group.outputKey);
+  const outputPlans: JsonLoopOutputPlan[] = Array.from(outputChains.values()).map((loops) => {
+    const deepest = loops[loops.length - 1];
+    const outputKey = uniqueGroupOutputKey(sanitizeOutputKey(deepest?.label || "items"), reservedOutputKeys);
+    reservedOutputKeys.add(outputKey);
+    return {
+      loops,
+      outputKey,
+      fields: loopPlans.filter((field) => isLoopPrefix(field.loops, loops)),
+    };
   });
 
   const lines = [
@@ -5492,12 +5814,15 @@ export function generateParserCode(workspaceName: string, selections: ParserSele
     "                current = current.get(key)",
     "        return current",
     "",
-    "    def _iter_items(value):",
-    "        if isinstance(value, dict):",
-    "            return value.values()",
+    "    def _as_list(value):",
     "        if isinstance(value, list):",
     "            return value",
     "        return []",
+    "",
+    "    def _iter_items(value):",
+    "        if isinstance(value, dict):",
+    "            return value.values()",
+    "        return _as_list(value)",
     "",
     "",
     "    def _clean_dict(row):",
@@ -5516,8 +5841,14 @@ export function generateParserCode(workspaceName: string, selections: ParserSele
     lines.push("");
   });
 
-  groups.forEach((group) => {
-    emitLoopGroup(lines, group, new Set());
+  outputPlans.forEach((plan) => {
+    lines.push(`    result[${pythonString(plan.outputKey)}] = []`);
+    if (plan.loops.length > 1 && areLoopsNested(plan.loops)) {
+      emitGroupedNestedJsonLoopPlan(lines, plan, 0, "data", "    ", new Set(), "row");
+    } else {
+      emitNestedJsonLoopPlan(lines, plan, 0, "data", "    ", new Set());
+    }
+    lines.push("");
   });
 
   lines.push("    return result");
