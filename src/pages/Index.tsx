@@ -477,6 +477,7 @@ export default function Index() {
   const [parserBuilderMode, setParserBuilderMode] = useState<ParserBuilderMode>("json");
   const [parserPageTab, setParserPageTab] = useState<ParserPageTab>("source");
   const [openLoopDropdownIndex, setOpenLoopDropdownIndex] = useState<number | null>(null);
+  const [quickAddMode, setQuickAddMode] = useState(false);
   const [selectedParserPath, setSelectedParserPath] = useState<string | null>(null);
   const [selectedParserValue, setSelectedParserValue] = useState<unknown>(null);
   const [selectedParserOutputKey, setSelectedParserOutputKey] = useState("");
@@ -1776,8 +1777,8 @@ export default function Index() {
     });
   };
 
-  const addSelectedPathToParser = () => {
-    const selectedPath = selectedParserPath;
+  const addSelectedPathToParser = (path?: string) => {
+    const selectedPath = typeof path === "string" ? path : selectedParserPath;
     const targetCollection = isParserRoute ? parserCollection : activeCollection;
     const targetNames = targetCollection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(targetCollection.snippets);
     const workspaceId = isParserRoute ? parserWorkspaceId : activeResponseTab?.workspaceId || activeWorkspaceId;
@@ -1814,7 +1815,7 @@ export default function Index() {
       ];
       console.debug("new parser selections", nextSelections);
       if (!isScriptJsonRoute) writeParserSelectionsToArtifact(targetCollection.id, workspaceId, workspaceName, nextSelections);
-      toast.success("Path added");
+      toast.success(`Added path: ${selectedPath}`);
       return {
         ...prev,
         [requestKey]: nextSelections,
@@ -2830,6 +2831,16 @@ export default function Index() {
                   <Copy className="h-3 w-3" strokeWidth={2} />
                   Copy JSON
                 </button>
+                {!parserJsonEditorVisible && (
+                  <button
+                    onClick={() => setQuickAddMode(!quickAddMode)}
+                    disabled={!canUseParser}
+                    title={quickAddMode ? "Click to return to normal node selection mode" : "Click any JSON field to automatically add it to parser paths"}
+                    className={quickAddMode ? primaryToolbarButtonClass : quietToolbarButtonClass}
+                  >
+                    {quickAddMode ? "Add Mode Active" : "Enable Add Mode"}
+                  </button>
+                )}
                 {parserJsonEditorVisible ? (
                   <button
                     onClick={saveParserJson}
@@ -3074,6 +3085,7 @@ export default function Index() {
                   addedPaths={addedParserPaths}
                   onAddToParser={addSelectedPathToParser}
                   onSelectedPathChange={handleParserPathSelect}
+                  quickAddMode={quickAddMode}
                 />
               ) : (
                 <div className="px-4 py-3 text-[11px] text-muted-foreground">JSON parser builder works only for JSON responses.</div>
@@ -6402,12 +6414,14 @@ function ResponseBodyViewer({
   addedPaths,
   onAddToParser,
   onSelectedPathChange,
+  quickAddMode,
 }: {
   source: string;
   selectedPath?: string | null;
   addedPaths?: Set<string>;
   onAddToParser?: (path: string) => void;
   onSelectedPathChange?: (path: string | null, value?: unknown) => void;
+  quickAddMode?: boolean;
 }) {
   const mode = useMemo(() => detectResponseMode(source), [source]);
 
@@ -6419,6 +6433,7 @@ function ResponseBodyViewer({
         addedPaths={addedPaths}
         onAddToParser={onAddToParser}
         onSelectedPathChange={onSelectedPathChange}
+        quickAddMode={quickAddMode}
       />
     );
   }
@@ -6432,12 +6447,14 @@ function JsonResponseViewer({
   addedPaths,
   onAddToParser,
   onSelectedPathChange,
+  quickAddMode,
 }: {
   value: unknown;
   selectedPath?: string | null;
   addedPaths?: Set<string>;
   onAddToParser?: (path: string) => void;
   onSelectedPathChange?: (path: string | null, value?: unknown) => void;
+  quickAddMode?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
@@ -6500,12 +6517,20 @@ function JsonResponseViewer({
         }
       }}
     >
-      {!selected && (
+      {quickAddMode ? (
+        <div className="mb-3 flex items-center gap-2 rounded-sm border border-primary/30 bg-primary/5 px-3 py-2 text-[11px] text-primary">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+          </span>
+          <span>Quick Add Mode Active: Click any JSON key or value to immediately add its path.</span>
+        </div>
+      ) : !selected && (
         <div className="mb-3 rounded-sm border border-border bg-surface/35 px-3 py-2 text-[11px] text-muted-foreground">
           Select a JSON key or value
         </div>
       )}
-      {selected && (
+      {!quickAddMode && selected && (
         <div
           ref={toolbarRef}
           className="fixed z-50 flex items-center gap-2 rounded-sm border border-border bg-background px-2 py-1 text-[11px] shadow-sm"
@@ -6545,6 +6570,13 @@ function JsonResponseViewer({
         addedPaths={addedPaths}
         onSelect={(path, nodeValue, event) => {
           const nextPath = formatJsonPath(path);
+          if (quickAddMode) {
+            onAddToParser?.(nextPath);
+            setSelected(null);
+            setToolbarPosition(null);
+            onSelectedPathChange?.(nextPath, nodeValue);
+            return;
+          }
           const valueText = stringifyJsonValue(nodeValue);
           const key = path.length ? String(path[path.length - 1]) : "root";
           selectedAnchorRef.current = event.currentTarget as HTMLElement;
