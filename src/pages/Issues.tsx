@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { downloadIssueFile, extractApiErrorMessage, listIssues, listIssuesAdmin, resolveIssue, type Issue } from "@/lib/api";
@@ -8,10 +8,30 @@ import ImageViewer from "@/components/ImageViewer";
 import ImageThumbnailGrid from "@/components/ImageThumbnailGrid";
 import { useImageViewer } from "@/hooks/use-image-viewer";
 import { extractImageFiles, isImageFile } from "@/lib/image-utils";
+import { useAuth } from "@/contexts/auth-context";
 
 type StatusFilter = "all" | "open" | "resolved";
 
+interface TokenPayload {
+  is_admin?: boolean;
+  [key: string]: unknown;
+}
+
+function decodeToken(token: string): TokenPayload | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    
+    const decoded = atob(parts[1]);
+    return JSON.parse(decoded) as TokenPayload;
+  } catch {
+    return null;
+  }
+}
+
 export default function Issues({ admin = false }: { admin?: boolean }) {
+  const navigate = useNavigate();
+  const { accessToken } = useAuth();
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
   const [issues, setIssues] = useState<Issue[]>([]);
@@ -21,11 +41,22 @@ export default function Issues({ admin = false }: { admin?: boolean }) {
   const [downloadingFileKey, setDownloadingFileKey] = useState("");
   const imageViewer = useImageViewer();
 
+  // Check admin access on mount and when admin prop changes
+  useEffect(() => {
+    if (admin && accessToken) {
+      const decoded = decodeToken(accessToken);
+      if (!decoded || !decoded.is_admin) {
+        toast.error("You don't have permission to access this resource.");
+        navigate("/", { replace: true });
+      }
+    }
+  }, [admin, accessToken, navigate]);
+
   const loadIssues = async () => {
     try {
       setIsLoading(true);
       const loader = admin ? listIssuesAdmin : listIssues;
-      const data = await loader({ q: q.trim(), status });
+      const data = await loader({ q: q.trim(), status }, accessToken);
       setIssues(data);
       if (selected) {
         setSelected(data.find((issue) => issue.issue_id === selected.issue_id) ?? null);
@@ -40,12 +71,12 @@ export default function Issues({ admin = false }: { admin?: boolean }) {
   useEffect(() => {
     void loadIssues();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [admin]);
+  }, [admin, accessToken]);
 
   const handleResolve = async (issueId: string) => {
     try {
       setResolvingId(issueId);
-      const updated = await resolveIssue(issueId);
+      const updated = await resolveIssue(issueId, accessToken);
       setIssues((prev) => prev.map((issue) => issue.issue_id === issueId ? updated : issue));
       setSelected((current) => current?.issue_id === issueId ? updated : current);
       toast.success("Issue resolved");
