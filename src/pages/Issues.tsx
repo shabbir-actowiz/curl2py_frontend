@@ -4,6 +4,10 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { downloadIssueFile, extractApiErrorMessage, listIssues, listIssuesAdmin, resolveIssue, type Issue } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import ImageViewer from "@/components/ImageViewer";
+import ImageThumbnailGrid from "@/components/ImageThumbnailGrid";
+import { useImageViewer } from "@/hooks/use-image-viewer";
+import { extractImageFiles, isImageFile } from "@/lib/image-utils";
 
 type StatusFilter = "all" | "open" | "resolved";
 
@@ -15,6 +19,7 @@ export default function Issues({ admin = false }: { admin?: boolean }) {
   const [isLoading, setIsLoading] = useState(false);
   const [resolvingId, setResolvingId] = useState("");
   const [downloadingFileKey, setDownloadingFileKey] = useState("");
+  const imageViewer = useImageViewer();
 
   const loadIssues = async () => {
     try {
@@ -60,6 +65,13 @@ export default function Issues({ admin = false }: { admin?: boolean }) {
       toast.error(extractApiErrorMessage(error));
     } finally {
       setDownloadingFileKey("");
+    }
+  };
+
+  const handleOpenImageViewer = (issueId: string, startIndex = 0) => {
+    const images = extractImageFiles(issueId, selected?.files || []);
+    if (images.length > 0) {
+      imageViewer.openViewer(images, startIndex);
     }
   };
 
@@ -156,7 +168,7 @@ export default function Issues({ admin = false }: { admin?: boolean }) {
           </div>
         </section>
 
-        <aside className="hidden w-80 shrink-0 rounded-sm border border-border bg-surface/35 p-3 text-[12px] lg:block">
+        <aside className="hidden w-80 shrink-0 rounded-sm border border-border bg-surface/35 p-3 text-[12px] lg:block overflow-y-auto">
           {selected ? (
             <div className="space-y-3">
               <div className="text-primary">{selected.issue_id}</div>
@@ -169,6 +181,19 @@ export default function Issues({ admin = false }: { admin?: boolean }) {
                 <div className="mb-1 text-muted-foreground">Description:</div>
                 <div className="whitespace-pre-wrap rounded-sm border border-border bg-background p-2">{selected.description}</div>
               </div>
+
+              {/* Image Preview Section */}
+              {selected.files.some((f) => isImageFile(f.filename)) && (
+                <div className="border-t border-border pt-3">
+                  <ImageThumbnailGrid
+                    images={extractImageFiles(selected.issue_id, selected.files)}
+                    onSelectImage={(index) => handleOpenImageViewer(selected.issue_id, index)}
+                    imageCount={selected.files.filter((f) => isImageFile(f.filename)).length}
+                  />
+                </div>
+              )}
+
+              {/* Files Section */}
               <div>
                 <div className="mb-1 text-muted-foreground">Files:</div>
                 {selected.files.length ? selected.files.map((file, index) => {
@@ -192,6 +217,15 @@ export default function Issues({ admin = false }: { admin?: boolean }) {
           )}
         </aside>
       </main>
+
+      {/* Image Viewer Modal */}
+      {imageViewer.isOpen && (
+        <ImageViewer
+          images={imageViewer.images}
+          initialIndex={imageViewer.selectedIndex}
+          onClose={imageViewer.closeViewer}
+        />
+      )}
     </div>
   );
 }
