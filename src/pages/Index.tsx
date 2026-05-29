@@ -96,6 +96,19 @@ interface ParserSelection {
   relativeCss?: string;
 }
 
+interface JsonLoopCandidate {
+  parentPath: Array<string | number>;
+  parentKey: string;
+  displayPath: string;
+  label: string;
+  shortLabel: string;
+  sourceIndex: number;
+}
+
+interface SelectedLoopCandidate extends JsonLoopCandidate {
+  varName: string;
+}
+
 interface HtmlElementSelection {
   tagName: string;
   xpath: string;
@@ -286,7 +299,7 @@ function newId(): string {
 function resolveEffectiveNames(snippets: Snippet[]): string[] {
   const used = new Set<string>();
   return snippets.map((s, i) => {
-    let base = (s.name || "").trim() || `request_${i + 1}`;
+    const base = (s.name || "").trim() || `request_${i + 1}`;
     let n = base;
     let k = 2;
     while (used.has(n)) n = `${base}_${k++}`;
@@ -2329,7 +2342,7 @@ export default function Index() {
       const workspaceName = workspaceIndex >= 0
         ? targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`
         : parserWorkspaceName || "manual_json";
-      let artifact = targetCollection.workspaceArtifacts[workspaceId];
+      const artifact = targetCollection.workspaceArtifacts[workspaceId];
       let responseContent = workspaceId === parserWorkspaceId
         ? (parserBuilderMode === "html" ? parserResponseHtml : parserResponseJson ?? "")
         : artifact?.responseJson ?? "";
@@ -2611,7 +2624,7 @@ export default function Index() {
         setOpenResponseTabs(Array.isArray(data.openResponseTabs) ? data.openResponseTabs : []);
         setActiveResponseTabId(typeof data.activeResponseTabId === "string" ? data.activeResponseTabId : null);
       } else if (Array.isArray(data.snippets)) {
-        const migratedSnippets = data.snippets.map((s: any, index: number) => normalizeSnippet(s, `request_${index + 1}`));
+        const migratedSnippets = data.snippets.map((s: Partial<Snippet>, index: number) => normalizeSnippet(s, `request_${index + 1}`));
         setCollections({
           tmp: createCollection("tmp", "tmp", migratedSnippets, true),
         });
@@ -4006,7 +4019,7 @@ export default function Index() {
         {/* MAIN SPLIT */}
         <main
           ref={mainRef}
-          style={{ ["--split-left" as any]: `${dividerPos}%` }}
+          style={{ "--split-left": `${dividerPos}%` } as React.CSSProperties}
           className="relative grid flex-1 min-h-0 grid-cols-1 overflow-hidden md:[grid-template-columns:var(--split-left)_1px_minmax(0,1fr)]"
         >
           {/* LEFT - SNIPPET INPUT */}
@@ -4123,7 +4136,7 @@ export default function Index() {
                             onDragStart={(e) => {
                               setDragId(s.id);
                               e.dataTransfer.effectAllowed = "move";
-                              try { e.dataTransfer.setData("text/plain", s.id); } catch {}
+                              try { e.dataTransfer.setData("text/plain", s.id); } catch { /* ignore */ }
                             }}
                             onDragEnd={() => { setDragId(null); setDragOverId(null); }}
                             onClick={(e) => e.stopPropagation()}
@@ -4995,8 +5008,7 @@ function emitNestedJsonLoopPlan(
     lines.push(`${indent}        ${pythonString(field.outputKey)}: ${getFromExpression(fieldBase, relativePath)}${comma}`);
   });
   lines.push(`${indent}    }`);
-  lines.push(`${indent}    row = _clean_dict(row)`);
-  lines.push(`${indent}    if row:`);
+  lines.push(`${indent}    if any(v is not None for v in row.values()):`);
   lines.push(`${indent}        result[${pythonString(plan.outputKey)}].append(row)`);
 }
 
@@ -5411,7 +5423,7 @@ export function generateMysqlDbCode(source: string, contextName = "data"): Mysql
     "",
     "        for json_dict in json_list:",
     "            values = (",
-    valueExpressions.replace(/^            /gm, "                "),
+    valueExpressions.replace(/^ {12}/gm, "                "),
     "            )",
     "            values_list.append(values)",
     "",
@@ -5462,6 +5474,18 @@ interface ParserLoopGroup {
   parentPath: Array<string | number>;
   outputKey: string;
   fields: ParserField[];
+}
+
+interface JsonLoopFieldPlan {
+  outputKey: string;
+  path: Array<string | number>;
+  loops: SelectedLoopCandidate[];
+}
+
+interface JsonLoopOutputPlan {
+  loops: SelectedLoopCandidate[];
+  outputKey: string;
+  fields: JsonLoopFieldPlan[];
 }
 
 function singularName(value: string) {
@@ -5700,8 +5724,7 @@ function emitGroupedNestedJsonLoopPlan(
   if (loopIndex === 0) {
     lines.push("");
     lines.push(`${innerIndent}# Clean row and check if it has any non-empty data`);
-    lines.push(`${innerIndent}${rowVar} = {k: v for k, v in ${rowVar}.items() if v is not None}`);
-    lines.push(`${innerIndent}if any(not isinstance(v, list) or len(v) > 0 for v in ${rowVar}.values()):`);
+    lines.push(`${innerIndent}if any(v is not None and (not isinstance(v, list) or len(v) > 0) for v in ${rowVar}.values()):`);
     lines.push(`${innerIndent}    result[${pythonString(plan.outputKey)}].append(${rowVar})`);
   }
 }
@@ -5722,8 +5745,7 @@ function emitLoopGroup(lines: string[], group: ParserLoopGroup, usedVars: Set<st
     lines.push(`                ${pythonString(field.outputKey)}: ${getFromExpression(itemVar, field.path)}${comma}`);
   });
   lines.push(`            }`);
-  lines.push(`            row = _clean_dict(row)`);
-  lines.push(`            if row:`);
+  lines.push(`            if any(v is not None for v in row.values()):`);
   lines.push(`                result[${pythonString(group.outputKey)}].append(row)`);
   lines.push("");
 }
@@ -5838,7 +5860,7 @@ export function generateParserCode(workspaceName: string, selections: ParserSele
     "",
     "",
     "    def _clean_dict(row):",
-    "        return {key: value for key, value in row.items() if value is not None}",
+    "        return row",
     "",
   ];
 

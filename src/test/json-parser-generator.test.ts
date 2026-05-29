@@ -286,15 +286,22 @@ describe("JSON parser generator", () => {
     });
   });
 
-  it("skips all-None rows for missing single paths and dedupes exact paths", () => {
+  it("preserves selected keys as null while skipping fully empty loop rows", () => {
     const code = generateParserCode("test_request", [
       { path: "items[0].title", outputKey: "first_title" },
       { path: "items[0].missing", outputKey: "missing" },
       { path: "items[0].title", outputKey: "duplicate_title" },
     ]);
 
-    expect(runGeneratedParser(code, { items: [{ title: "First" }] })).toEqual({
-      items: [{ first_title: "First" }],
+    const payload = {
+      items: [
+        { title: "First" },
+        { title: null, missing: null }
+      ]
+    };
+
+    expect(runGeneratedParser(code, payload)).toEqual({
+      items: [{ first_title: "First", missing: null }],
     });
   });
 
