@@ -42,8 +42,14 @@ export interface ForgotPasswordRequest {
   email: string;
 }
 
+export interface VerifyOTPRequest {
+  email: string;
+  otp: string;
+}
+
 export interface ResetPasswordRequest {
-  token: string;
+  email: string;
+  otp: string;
   password: string;
 }
 
@@ -346,6 +352,13 @@ export async function forgotPassword(payload: ForgotPasswordRequest): Promise<Me
   });
 }
 
+export async function verifyOTP(payload: VerifyOTPRequest): Promise<MessageResponse> {
+  return request<MessageResponse>(apiRoutes.verifyOTP, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function resetPassword(payload: ResetPasswordRequest): Promise<MessageResponse> {
   return request<MessageResponse>(apiRoutes.resetPassword, {
     method: "POST",
@@ -558,28 +571,55 @@ export async function getIssue(issueId: string): Promise<Issue> {
   }
 }
 
-export async function listIssuesAdmin(params: { q?: string; status?: string; skip?: number; limit?: number } = {}): Promise<Issue[]> {
+export async function listIssuesAdmin(params: { q?: string; status?: string; skip?: number; limit?: number } = {}, accessToken?: string): Promise<Issue[]> {
   const query = new URLSearchParams();
   if (params.q) query.set("q", params.q);
   if (params.status) query.set("status", params.status);
   query.set("skip", String(params.skip ?? 0));
   query.set("limit", String(params.limit ?? 20));
   try {
-    return await request<Issue[]>(`${apiRoutes.listIssuesAdmin}?${query.toString()}`, { method: "GET" });
+    return await request<Issue[]>(`${apiRoutes.listIssuesAdmin}?${query.toString()}`, { method: "GET" }, accessToken);
   } catch (error) {
     if (error instanceof ApiError && error.status === 404) {
-      return request<Issue[]>(`${apiRoutes.listIssuesAdminFallback}?${query.toString()}`, { method: "GET" });
+      return request<Issue[]>(`${apiRoutes.listIssuesAdminFallback}?${query.toString()}`, { method: "GET" }, accessToken);
     }
     throw error;
   }
 }
 
-export async function resolveIssue(issueId: string): Promise<Issue> {
+export async function resolveIssue(issueId: string, accessToken?: string): Promise<Issue> {
   try {
-    return await request<Issue>(apiRoutes.resolveIssue(issueId), { method: "PATCH" });
+    return await request<Issue>(apiRoutes.resolveIssue(issueId), { method: "PATCH" }, accessToken);
   } catch (error) {
     if (error instanceof ApiError && error.status === 404) {
-      return request<Issue>(apiRoutes.resolveIssueFallback(issueId), { method: "PATCH" });
+      return request<Issue>(apiRoutes.resolveIssueFallback(issueId), { method: "PATCH" }, accessToken);
+    }
+    throw error;
+  }
+}
+
+export async function updateIssueStatus(issueId: string, status: string, accessToken?: string): Promise<Issue> {
+  try {
+    return await request<Issue>(
+      apiRoutes.updateIssueStatus(issueId),
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      },
+      accessToken
+    );
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      return request<Issue>(
+        apiRoutes.updateIssueStatusFallback(issueId),
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status }),
+        },
+        accessToken
+      );
     }
     throw error;
   }
