@@ -1,3 +1,5 @@
+import { getIssueFileUrl } from "./api";
+
 /**
  * Image utility functions for preview system
  */
@@ -33,14 +35,14 @@ export function getImageMimeType(filename: string): string {
  * Uses the full image URL as thumbnail (browser will cache it)
  */
 export function getThumbnailUrl(issueId: string, fileIndex: number): string {
-  return `/api/v1/issues/${issueId}/files/${fileIndex}`;
+  return getIssueFileUrl(issueId, fileIndex);
 }
 
 /**
  * Generate full image URL for viewing
  */
 export function getImageUrl(issueId: string, fileIndex: number): string {
-  return `/api/v1/issues/${issueId}/files/${fileIndex}`;
+  return getIssueFileUrl(issueId, fileIndex);
 }
 
 /**

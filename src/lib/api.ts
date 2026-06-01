@@ -15,6 +15,7 @@ export interface UserResponse {
   id: string;
   username: string;
   email: string;
+  is_admin: boolean;
   scopes: string[];
   created_at: string;
 }
@@ -175,7 +176,7 @@ export interface Issue {
   description: string;
   email: string;
   files: IssueFileMetadata[];
-  status: "open" | "resolved";
+  status: "open" | "pending" | "in_progress" | "resolved" | "rejected";
   created_at: string;
   resolved_at?: string | null;
 }
@@ -620,6 +621,18 @@ export async function updateIssueStatus(issueId: string, status: string, accessT
         },
         accessToken
       );
+    }
+    throw error;
+  }
+}
+
+export async function deleteIssue(issueId: string, accessToken?: string): Promise<void> {
+  try {
+    await request<void>(apiRoutes.deleteIssue(issueId), { method: "DELETE" }, accessToken);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      await request<void>(apiRoutes.deleteIssueFallback(issueId), { method: "DELETE" }, accessToken);
+      return;
     }
     throw error;
   }

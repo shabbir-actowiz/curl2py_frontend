@@ -78,13 +78,13 @@ export default function ImageThumbnailGrid({
       </div>
 
       <div className="flex flex-wrap gap-2">
-        {images.map((image) => (
+        {images.map((image, imagePosition) => (
           <Thumbnail
             key={`${image.filename}-${image.index}`}
             filename={image.filename}
             url={image.url}
             index={image.index}
-            onSelect={onSelectImage}
+            onSelect={() => onSelectImage(imagePosition)}
           />
         ))}
       </div>

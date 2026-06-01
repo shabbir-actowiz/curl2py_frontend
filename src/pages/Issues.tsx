@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { Loader2, ChevronDown } from "lucide-react";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
+import { Loader2, ChevronDown, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { downloadIssueFile, extractApiErrorMessage, listIssues, listIssuesAdmin, resolveIssue, updateIssueStatus, type Issue } from "@/lib/api";
+import { deleteIssue, downloadIssueFile, extractApiErrorMessage, listIssues, listIssuesAdmin, resolveIssue, updateIssueStatus, type Issue } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import ImageViewer from "@/components/ImageViewer";
 import ImageThumbnailGrid from "@/components/ImageThumbnailGrid";
@@ -10,29 +10,12 @@ import { useImageViewer } from "@/hooks/use-image-viewer";
 import { extractImageFiles, isImageFile } from "@/lib/image-utils";
 import { useAuth } from "@/contexts/auth-context";
 
-type StatusFilter = "all" | "open" | "resolved";
-
-interface TokenPayload {
-  is_admin?: boolean;
-  [key: string]: unknown;
-}
-
-function decodeToken(token: string): TokenPayload | null {
-  try {
-    const parts = token.split(".");
-    if (parts.length !== 3) return null;
-    
-    const decoded = atob(parts[1]);
-    return JSON.parse(decoded) as TokenPayload;
-  } catch {
-    return null;
-  }
-}
+type StatusFilter = "all" | "open" | "pending" | "in_progress" | "resolved" | "rejected";
 
 export default function Issues({ admin = false }: { admin?: boolean }) {
-  const navigate = useNavigate();
-  const { accessToken } = useAuth();
-  const [q, setQ] = useState("");
+  const [searchParams] = useSearchParams();
+  const { accessToken, isLoading: isAuthLoading, user } = useAuth();
+  const [q, setQ] = useState(searchParams.get("q") ?? "");
   const [status, setStatus] = useState<StatusFilter>("all");
   const [issues, setIssues] = useState<Issue[]>([]);
   const [selected, setSelected] = useState<Issue | null>(null);
@@ -40,19 +23,9 @@ export default function Issues({ admin = false }: { admin?: boolean }) {
   const [resolvingId, setResolvingId] = useState("");
   const [downloadingFileKey, setDownloadingFileKey] = useState("");
   const [updatingStatusId, setUpdatingStatusId] = useState("");
+  const [deletingId, setDeletingId] = useState("");
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const imageViewer = useImageViewer();
-
-  // Check admin access on mount and when admin prop changes
-  useEffect(() => {
-    if (admin && accessToken) {
-      const decoded = decodeToken(accessToken);
-      if (!decoded || !decoded.is_admin) {
-        toast.error("You don't have permission to access this resource.");
-        navigate("/", { replace: true });
-      }
-    }
-  }, [admin, accessToken, navigate]);
 
   const loadIssues = async () => {
     try {
@@ -71,9 +44,24 @@ export default function Issues({ admin = false }: { admin?: boolean }) {
   };
 
   useEffect(() => {
+    if (admin && (isAuthLoading || !accessToken || !user?.is_admin)) {
+      return;
+    }
     void loadIssues();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [admin, accessToken]);
+  }, [admin, accessToken, isAuthLoading, user?.is_admin]);
+
+  if (admin && isAuthLoading) {
+    return <div className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">Loading...</div>;
+  }
+
+  if (admin && !accessToken) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (admin && !user?.is_admin) {
+    return <Navigate to="/" replace />;
+  }
 
   const handleResolve = async (issueId: string) => {
     try {
@@ -125,6 +113,22 @@ export default function Issues({ admin = false }: { admin?: boolean }) {
     }
   };
 
+  const handleDelete = async (issueId: string) => {
+    if (!window.confirm(`Delete issue ${issueId}? This cannot be undone.`)) return;
+
+    try {
+      setDeletingId(issueId);
+      await deleteIssue(issueId, accessToken);
+      setIssues((prev) => prev.filter((issue) => issue.issue_id !== issueId));
+      setSelected((current) => current?.issue_id === issueId ? null : current);
+      toast.success("Issue deleted");
+    } catch (error) {
+      toast.error(extractApiErrorMessage(error));
+    } finally {
+      setDeletingId("");
+    }
+  };
+
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
       <header className="flex h-12 items-center justify-between border-b border-border bg-surface/70 px-4">
@@ -150,7 +154,10 @@ export default function Issues({ admin = false }: { admin?: boolean }) {
             >
               <option value="all">all</option>
               <option value="open">open</option>
+              {admin && <option value="pending">pending</option>}
+              {admin && <option value="in_progress">in progress</option>}
               <option value="resolved">resolved</option>
+              {admin && <option value="rejected">rejected</option>}
             </select>
             <button
               onClick={() => void loadIssues()}
@@ -188,7 +195,8 @@ export default function Issues({ admin = false }: { admin?: boolean }) {
                     <td className="px-3 py-2">{new Date(issue.created_at).toLocaleString()}</td>
                     {admin && (
                       <td className="px-3 py-2">
-                        {issue.status === "open" ? (
+                        <div className="flex items-center gap-2">
+                          {issue.status === "open" ? (
                           <button
                             onClick={(event) => {
                               event.stopPropagation();
@@ -199,9 +207,25 @@ export default function Issues({ admin = false }: { admin?: boolean }) {
                           >
                             {resolvingId === issue.issue_id ? "Resolving..." : "Resolve"}
                           </button>
-                        ) : (
-                          <span className="text-muted-foreground">{issue.resolved_at ? new Date(issue.resolved_at).toLocaleString() : "resolved"}</span>
-                        )}
+                          ) : (
+                          <span className="text-muted-foreground">
+                            {issue.status === "resolved" && issue.resolved_at ? new Date(issue.resolved_at).toLocaleString() : issue.status.replace("_", " ")}
+                          </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void handleDelete(issue.issue_id);
+                            }}
+                            disabled={deletingId === issue.issue_id}
+                            className="rounded-sm border border-destructive/50 px-2 py-1 text-[11px] text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                            title="Delete issue"
+                            aria-label={`Delete ${issue.issue_id}`}
+                          >
+                            {deletingId === issue.issue_id ? <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} /> : <Trash2 className="h-3 w-3" strokeWidth={2} />}
+                          </button>
+                        </div>
                       </td>
                     )}
                   </tr>

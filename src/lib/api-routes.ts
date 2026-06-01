@@ -30,5 +30,7 @@ export const apiRoutes = {
   resolveIssueFallback: (issueId: string) => `/issues/admin/${encodeURIComponent(issueId)}/resolve`,
   updateIssueStatus: (issueId: string) => `/api/v1/issues/admin/${encodeURIComponent(issueId)}/status`,
   updateIssueStatusFallback: (issueId: string) => `/issues/admin/${encodeURIComponent(issueId)}/status`,
+  deleteIssue: (issueId: string) => `/api/v1/issues/admin/${encodeURIComponent(issueId)}`,
+  deleteIssueFallback: (issueId: string) => `/issues/admin/${encodeURIComponent(issueId)}`,
   health: "/health",
 } as const;

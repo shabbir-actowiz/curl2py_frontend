@@ -3662,7 +3662,7 @@ export default function Index() {
                 <button
                   onClick={() => {
                     setRaiseIssueOpen(false);
-                    navigate("/issues");
+                    navigate(`/issues?q=${encodeURIComponent(submittedIssueId)}`);
                   }}
                   className={quietToolbarButtonClass}
                 >
