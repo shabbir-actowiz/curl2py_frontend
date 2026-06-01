@@ -475,6 +475,9 @@ export default function Index() {
   const [isRunning, setIsRunning] = useState(false);
   const [isRunningParser, setIsRunningParser] = useState(false);
   const [raiseIssueOpen, setRaiseIssueOpen] = useState(false);
+  const [htmlParserOpen, setHtmlParserOpen] = useState(false);
+  const [htmlScriptJsonSources, setHtmlScriptJsonSources] = useState<ScriptJsonSource[]>([]);
+  const [selectedHtmlScriptJsonId, setSelectedHtmlScriptJsonId] = useState("");
   const [issueType, setIssueType] = useState("Workspace");
   const [issueDescription, setIssueDescription] = useState("");
   const [issueEmail, setIssueEmail] = useState("");
@@ -1131,6 +1134,11 @@ export default function Index() {
         return next;
       });
       setActiveTabId(tabId);
+      return;
+    }
+
+    if (collectionId && collections[collectionId]?.workspaceArtifacts?.[workspaceId]?.responseOutputs?.[file]) {
+      openResponseFile(collectionId, workspaceId, file);
       return;
     }
 
@@ -2502,6 +2510,79 @@ export default function Index() {
     });
   };
 
+  const openHtmlParser = () => {
+    if (!activeResponseJson || !activeResponseIsHtml) {
+      toast.info("Open an HTML response to extract JSON from script tags");
+      return;
+    }
+    setHtmlScriptJsonSources([]);
+    setSelectedHtmlScriptJsonId("");
+    setHtmlParserOpen(true);
+  };
+
+  const scanHtmlScriptJson = () => {
+    if (!activeResponseJson) return;
+    const sources = extractJsonSourcesFromHtml(normalizeHtmlSource(activeResponseJson));
+    setHtmlScriptJsonSources(sources);
+    setSelectedHtmlScriptJsonId(sources[0]?.scriptId ?? "");
+    if (sources.length === 0) {
+      toast.info("No JSON found inside script tags");
+    }
+  };
+
+  const saveExtractedHtmlScriptJson = () => {
+    const source = htmlScriptJsonSources.find((item) => item.scriptId === selectedHtmlScriptJsonId);
+    const workspaceId = activeResponseTab?.workspaceId || activeWorkspaceId;
+    if (!source || !workspaceId) return;
+
+    const baseName = `${sanitizeName(activeResponseWorkspaceName || activeWorkspaceDisplayName || "request") || "request"}_extracted_json`;
+    const sourceIndex = htmlScriptJsonSources.findIndex((item) => item.scriptId === source.scriptId);
+    const preferredName = htmlScriptJsonSources.length > 1 ? `${baseName}_${sourceIndex + 1}.json` : `${baseName}.json`;
+    const existingOutputs = workspaceArtifacts[workspaceId]?.responseOutputs ?? {};
+    let fileName = preferredName;
+    let duplicateIndex = 2;
+    while (existingOutputs[fileName]) {
+      fileName = `${baseName}_${duplicateIndex}.json`;
+      duplicateIndex += 1;
+    }
+    const metaJson = JSON.stringify({
+      status: activeResponseMeta?.status ?? 200,
+      time_ms: 0,
+      size: formatSize(source.json.length),
+      content_type: "application/json",
+    }, null, 2);
+
+    updateWorkspaceArtifact(workspaceId, (artifact) => ({
+      ...artifact,
+      responseOutputs: {
+        ...artifact.responseOutputs,
+        [fileName]: {
+          content: source.json,
+          contentType: "application/json",
+          extension: "json",
+          metaJson,
+        },
+      },
+    }));
+    setManualParserJsonByWorkspace((prev) => ({ ...prev, [workspaceId]: source.json }));
+    setScriptJsonParserByWorkspace((prev) => ({ ...prev, [workspaceId]: false }));
+    openResponseFile(activeCollection.id, workspaceId, fileName, { preserveWorkspaceTabs: true });
+    setParserBuilderMode("json");
+    setParserPageTab("source");
+    setActiveWorkspaceId(workspaceId);
+    setActiveWorkspaceFile(fileName);
+    setHtmlParserOpen(false);
+    navigate(`/parser/${encodeURIComponent(activeCollection.id)}/${encodeURIComponent(workspaceId)}`, {
+      state: {
+        collectionId: activeCollection.id,
+        snippetId: workspaceId,
+        responseFile: fileName,
+        parserMode: "json",
+      },
+    });
+    toast.success(`Saved ${fileName}`);
+  };
+
   const handleSubmitIssue = async (event: FormEvent) => {
     event.preventDefault();
     if (!issueDescription.trim()) {
@@ -3760,6 +3841,76 @@ export default function Index() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={htmlParserOpen} onOpenChange={setHtmlParserOpen}>
+        <DialogContent className="max-w-xl border-border bg-background font-mono text-foreground">
+          <DialogHeader>
+            <DialogTitle className="text-[15px]">HTML Parser</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-[12px]">
+            <div className="rounded-sm border border-border bg-surface px-3 py-3">
+              <div className="font-semibold text-foreground">Extract JSON from script tag</div>
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                Scan the current HTML response and choose the script JSON block to save.
+              </div>
+              <button onClick={scanHtmlScriptJson} className={cn(primaryToolbarButtonClass, "mt-3")}>
+                Extract JSON
+              </button>
+            </div>
+
+            {htmlScriptJsonSources.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-[11px] text-muted-foreground">
+                  Found {htmlScriptJsonSources.length} script JSON block{htmlScriptJsonSources.length === 1 ? "" : "s"}. Select one to save.
+                </div>
+                <div className="max-h-56 space-y-2 overflow-auto">
+                  {htmlScriptJsonSources.map((source) => (
+                    <label
+                      key={source.scriptId}
+                      className={cn(
+                        "block cursor-pointer rounded-sm border px-3 py-2 transition-colors",
+                        selectedHtmlScriptJsonId === source.scriptId
+                          ? "border-primary/60 bg-primary/10"
+                          : "border-border bg-background hover:border-border-strong"
+                      )}
+                    >
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          name="html-script-json"
+                          value={source.scriptId}
+                          checked={selectedHtmlScriptJsonId === source.scriptId}
+                          onChange={() => setSelectedHtmlScriptJsonId(source.scriptId)}
+                        />
+                        <span className="font-semibold text-foreground">{source.title}</span>
+                      </div>
+                      <pre className="mt-2 max-h-20 overflow-hidden whitespace-pre-wrap text-[10px] leading-4 text-muted-foreground">
+                        {source.json.slice(0, 500)}
+                      </pre>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="rounded-sm border border-border bg-surface px-3 py-2 text-[11px] text-muted-foreground">
+              CSS selector parsing, XPath parsing, DOM table extraction, and other HTML actions: Coming soon.
+            </div>
+          </div>
+          <DialogFooter>
+            <button onClick={() => setHtmlParserOpen(false)} className={quietToolbarButtonClass}>
+              Close
+            </button>
+            <button
+              onClick={saveExtractedHtmlScriptJson}
+              disabled={!selectedHtmlScriptJsonId}
+              className={primaryToolbarButtonClass}
+            >
+              Save and Open JSON Parser
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* OPTIONS */}
       {/* {optionsOpen && (
         <div className="flex animate-fade-in items-center gap-6 border-b border-border bg-surface px-4 py-2 text-[11px]">
@@ -3895,9 +4046,11 @@ export default function Index() {
                             const hasError = !b.raw.trim() || !!b.parsed.error;
                             const method = (b.parsed.method || "GET").toUpperCase();
                             const artifact = collection.workspaceArtifacts[b.id];
+                            const responseFileName = artifact?.responseFileName ?? defaultResponseFileName(collectionNames[i]);
                             const files: WorkspaceFile[] = [
                               "request.py",
-                              artifact?.responseFileName ?? defaultResponseFileName(collectionNames[i]),
+                              responseFileName,
+                              ...Object.keys(artifact?.responseOutputs ?? {}).filter((file) => file !== responseFileName),
                               ...(artifact?.dbCode ? ["db.py"] : []),
                             ];
                             return (
@@ -4332,13 +4485,8 @@ export default function Index() {
                     <DropdownMenuItem className="text-[11px]" onClick={() => openParserPage("json")}>
                       JSON Parser
                     </DropdownMenuItem>
-                    <DropdownMenuItem
-                      className="cursor-not-allowed text-[11px] text-muted-foreground opacity-60 focus:bg-transparent focus:text-muted-foreground"
-                      disabled
-                      title="HTML Parser coming soon"
-                    >
+                    <DropdownMenuItem className="text-[11px]" onClick={openHtmlParser}>
                       HTML Parser
-                      <span className="ml-2 text-[10px] text-muted-foreground/70">coming soon</span>
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -6387,6 +6535,23 @@ function getFullScriptJsonExtraction(rawHtmlFull: string, previewScript: Element
     extractorCode: buildScriptJsonExtractorCode(scriptXPath, extracted.mode),
     scriptId: stableHash({ scriptXPath, raw: extracted.raw.slice(0, 2000), length: extracted.raw.length }),
   };
+}
+
+export function extractJsonSourcesFromHtml(rawHtmlFull: string): ScriptJsonSource[] {
+  const document = new DOMParser().parseFromString(rawHtmlFull, "text/html");
+  return Array.from(document.querySelectorAll("script")).flatMap((script, index) => {
+    const extraction = getFullScriptJsonExtraction(rawHtmlFull, script);
+    if (!extraction || extraction.ok === false) return [];
+    const type = script.getAttribute("type");
+    const id = script.getAttribute("id");
+    const details = [type, id ? `#${id}` : ""].filter(Boolean).join(" - ");
+    return [{
+      scriptId: extraction.scriptId,
+      title: `Script ${index + 1}${details ? ` - ${details}` : ""}`,
+      json: extraction.json,
+      extractorCode: extraction.extractorCode,
+    }];
+  });
 }
 
 function getElementAttributes(element: Element): Record<string, string> {
