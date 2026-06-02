@@ -3852,11 +3852,11 @@ export default function Index() {
       </Dialog>
 
       <Dialog open={htmlParserOpen} onOpenChange={setHtmlParserOpen}>
-        <DialogContent className="max-w-xl border-border bg-background font-mono text-foreground">
-          <DialogHeader>
+        <DialogContent className="max-h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] max-w-3xl grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden border-border bg-background p-4 font-mono text-foreground sm:p-6">
+          <DialogHeader className="min-w-0">
             <DialogTitle className="text-[15px]">HTML Parser</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3 text-[12px]">
+          <div className="min-h-0 min-w-0 space-y-3 overflow-y-auto pr-1 text-[12px]">
             <div className="rounded-sm border border-border bg-surface px-3 py-3">
               <div className="font-semibold text-foreground">Extract JSON from script tag</div>
               <div className="mt-1 text-[11px] text-muted-foreground">
@@ -3868,34 +3868,39 @@ export default function Index() {
             </div>
 
             {htmlScriptJsonSources.length > 0 && (
-              <div className="space-y-2">
+              <div className="min-w-0 space-y-2">
                 <div className="text-[11px] text-muted-foreground">
                   Found {htmlScriptJsonSources.length} script JSON block{htmlScriptJsonSources.length === 1 ? "" : "s"}. Select one to save.
                 </div>
-                <div className="max-h-56 space-y-2 overflow-auto">
+                <div className="max-h-[min(46vh,24rem)] min-w-0 space-y-2 overflow-y-auto overflow-x-hidden pr-1">
                   {htmlScriptJsonSources.map((source) => (
                     <label
                       key={source.scriptId}
                       className={cn(
-                        "block cursor-pointer rounded-sm border px-3 py-2 transition-colors",
+                        "block min-w-0 cursor-pointer overflow-hidden rounded-sm border px-3 py-2 transition-colors",
                         selectedHtmlScriptJsonId === source.scriptId
                           ? "border-primary/60 bg-primary/10"
                           : "border-border bg-background hover:border-border-strong"
                       )}
                     >
-                      <div className="flex items-center gap-2">
+                      <div className="flex min-w-0 items-center gap-2">
                         <input
                           type="radio"
                           name="html-script-json"
                           value={source.scriptId}
                           checked={selectedHtmlScriptJsonId === source.scriptId}
                           onChange={() => setSelectedHtmlScriptJsonId(source.scriptId)}
+                          className="shrink-0"
                         />
-                        <span className="font-semibold text-foreground">{source.title}</span>
+                        <span className="min-w-0 truncate font-semibold text-foreground" title={source.title}>
+                          {source.title}
+                        </span>
                       </div>
-                      <pre className="mt-2 max-h-20 overflow-hidden whitespace-pre-wrap text-[10px] leading-4 text-muted-foreground">
-                        {source.json.slice(0, 500)}
-                      </pre>
+                      <div className="mt-2 max-h-28 min-w-0 overflow-y-auto overflow-x-hidden rounded-sm border border-border/70 bg-surface px-2 py-1.5">
+                        <pre className="max-w-full whitespace-pre-wrap break-all text-[10px] leading-4 text-muted-foreground">
+                          {source.json.slice(0, 500)}
+                        </pre>
+                      </div>
                     </label>
                   ))}
                 </div>
@@ -3906,14 +3911,14 @@ export default function Index() {
               CSS selector parsing, XPath parsing, DOM table extraction, and other HTML actions: Coming soon.
             </div>
           </div>
-          <DialogFooter>
-            <button onClick={() => setHtmlParserOpen(false)} className={quietToolbarButtonClass}>
+          <DialogFooter className="shrink-0 gap-2 sm:space-x-0">
+            <button onClick={() => setHtmlParserOpen(false)} className={cn(quietToolbarButtonClass, "w-full justify-center whitespace-nowrap sm:w-auto")}>
               Close
             </button>
             <button
               onClick={saveExtractedHtmlScriptJson}
               disabled={!selectedHtmlScriptJsonId}
-              className={primaryToolbarButtonClass}
+              className={cn(primaryToolbarButtonClass, "w-full justify-center whitespace-nowrap sm:w-auto")}
             >
               Save and Open JSON Parser
             </button>
