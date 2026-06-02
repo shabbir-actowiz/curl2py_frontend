@@ -27,5 +27,11 @@ describe("HTML script JSON extraction", () => {
     expect(JSON.parse(sources[1].json)).toEqual({
       user: { name: "Ada" },
     });
+    expect(sources[0].standaloneExtractorCode).toContain("SCRIPT_XPATH = \"//script[@id='page-data']/text()\"");
+    expect(sources[0].standaloneExtractorCode).toContain("return json.loads(script)");
+    expect(sources[1].standaloneExtractorCode).toContain('SCRIPT_XPATH = "(//script)[3]/text()"');
+    expect(sources[1].standaloneExtractorCode).toContain("assignment = re.compile");
+    expect(sources[1].standaloneExtractorCode).toContain("return json.loads(converted)");
+    expect(sources[1].standaloneExtractorCode).toContain("Path(args.output).write_text");
   });
 });

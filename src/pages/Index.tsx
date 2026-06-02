@@ -129,6 +129,7 @@ interface ScriptJsonSource {
   title: string;
   json: string;
   extractorCode: string;
+  standaloneExtractorCode: string;
 }
 
 type ScriptJsonExtraction = {
@@ -136,6 +137,7 @@ type ScriptJsonExtraction = {
   value: unknown;
   json: string;
   extractorCode: string;
+  standaloneExtractorCode: string;
   scriptId: string;
 } | { ok: false; error: string };
 
@@ -2545,6 +2547,9 @@ export default function Index() {
       fileName = `${baseName}_${duplicateIndex}.json`;
       duplicateIndex += 1;
     }
+    const codeFileName = fileName
+      .replace(/_extracted_json(?=_|\.json$)/, "_extract_json")
+      .replace(/\.json$/, ".py");
     const metaJson = JSON.stringify({
       status: activeResponseMeta?.status ?? 200,
       time_ms: 0,
@@ -2561,6 +2566,11 @@ export default function Index() {
           contentType: "application/json",
           extension: "json",
           metaJson,
+        },
+        [codeFileName]: {
+          content: source.standaloneExtractorCode.replace("__OUTPUT_FILE_NAME__", fileName),
+          contentType: "text/x-python",
+          extension: "py",
         },
       },
     }));
@@ -6432,8 +6442,6 @@ function getRelativeCssSelector(parent: Element, element: Element) {
 function getScriptXPathForExtractor(script: Element, scriptIndex: number) {
   const id = script.getAttribute("id");
   if (id) return `//script[@id=${xpathLiteral(id)}]/text()`;
-  const type = script.getAttribute("type");
-  if (type) return `(//script[@type=${xpathLiteral(type)}])[${scriptIndex}]/text()`;
   return `(//script)[${scriptIndex}]/text()`;
 }
 
@@ -6510,6 +6518,129 @@ function buildScriptJsonExtractorCode(scriptXPath: string, mode: "json" | "assig
   ].join("\n");
 }
 
+function buildStandaloneScriptJsonExtractorCode(scriptXPath: string, directJson: boolean) {
+  return [
+    "import argparse",
+    "import json",
+    "import re",
+    "from pathlib import Path",
+    "",
+    "from parsel import Selector",
+    "",
+    `SCRIPT_XPATH = ${pythonString(scriptXPath)}`,
+    `DIRECT_JSON = ${directJson ? "True" : "False"}`,
+    'DEFAULT_OUTPUT = "__OUTPUT_FILE_NAME__"',
+    "",
+    "def _extract_balanced_json(text, start):",
+    "    opener = text[start]",
+    "    closer = '}' if opener == '{' else ']'",
+    "    depth = 0",
+    "    in_string = False",
+    "    quote = ''",
+    "    escaped = False",
+    "    for index in range(start, len(text)):",
+    "        char = text[index]",
+    "        if in_string:",
+    "            if escaped:",
+    "                escaped = False",
+    "            elif char == '\\\\':",
+    "                escaped = True",
+    "            elif char == quote:",
+    "                in_string = False",
+    "            continue",
+    "        if char in ('\"', \"'\"):",
+    "            in_string = True",
+    "            quote = char",
+    "        elif char == opener:",
+    "            depth += 1",
+    "        elif char == closer:",
+    "            depth -= 1",
+    "            if depth == 0:",
+    "                return text[start:index + 1]",
+    "    return ''",
+    "",
+    "def _parse_json_like(value):",
+    "    cleaned = re.sub(r';+\\s*$', '', value.strip())",
+    "    try:",
+    "        return json.loads(cleaned)",
+    "    except json.JSONDecodeError:",
+    "        converted = cleaned.replace(\"'\", '\"')",
+    "        converted = re.sub(r'([{,]\\s*)([A-Za-z_$][\\w$-]*)(\\s*:)', r'\\1\"\\2\"\\3', converted)",
+    "        converted = re.sub(r',\\s*([}\\]])', r'\\1', converted)",
+    "        converted = re.sub(r'\\bundefined\\b', 'null', converted)",
+    "        converted = re.sub(r'\\bNaN\\b', 'null', converted)",
+    "        return json.loads(converted)",
+    "",
+    "def _find_balanced_candidates(text):",
+    "    candidates = []",
+    "    index = 0",
+    "    while index < len(text):",
+    "        if text[index] not in '{[':",
+    "            index += 1",
+    "            continue",
+    "        raw = _extract_balanced_json(text, index)",
+    "        if raw:",
+    "            candidates.append(raw)",
+    "            index += len(raw)",
+    "        else:",
+    "            index += 1",
+    "    return candidates",
+    "",
+    "def _extract_script_payload(script):",
+    "    if DIRECT_JSON:",
+    "        try:",
+    "            return json.loads(script)",
+    "        except json.JSONDecodeError:",
+    "            pass",
+    "",
+    "    candidates = []",
+    "    assignment = re.compile(r'(?:window\\.)?[A-Za-z_$][\\w$]*(?:\\s*=\\s*)|(?:var|let|const)\\s+[A-Za-z_$][\\w$]*\\s*=\\s*')",
+    "    for match in assignment.finditer(script):",
+    "        start_match = re.search(r'[\\{\\[]', script[match.end():])",
+    "        if not start_match:",
+    "            continue",
+    "        raw = _extract_balanced_json(script, match.end() + start_match.start())",
+    "        if not raw:",
+    "            continue",
+    "        try:",
+    "            candidates.append((raw, _parse_json_like(raw)))",
+    "        except json.JSONDecodeError:",
+    "            pass",
+    "",
+    "    for raw in _find_balanced_candidates(script):",
+    "        try:",
+    "            candidates.append((raw, _parse_json_like(raw)))",
+    "        except json.JSONDecodeError:",
+    "            pass",
+    "",
+    "    if not candidates:",
+    "        raise ValueError('No script JSON found')",
+    "    return max(candidates, key=lambda item: len(item[0]))[1]",
+    "",
+    "def extract_json_from_html(html):",
+    "    selector = Selector(text=html)",
+    "    script = selector.xpath(SCRIPT_XPATH).get()",
+    "    if not script:",
+    "        raise ValueError(f'Could not find script content at XPath: {SCRIPT_XPATH}')",
+    "    return _extract_script_payload(script)",
+    "",
+    "def main():",
+    "    parser = argparse.ArgumentParser(description='Extract the selected script JSON from an HTML response.')",
+    "    parser.add_argument('html_file', help='Path to the saved HTML response file')",
+    "    parser.add_argument('-o', '--output', default=DEFAULT_OUTPUT, help='Output JSON file path')",
+    "    args = parser.parse_args()",
+    "",
+    "    html = Path(args.html_file).read_text(encoding='utf-8')",
+    "    parsed = extract_json_from_html(html)",
+    "    Path(args.output).write_text(json.dumps(parsed, indent=2, ensure_ascii=False) + '\\n', encoding='utf-8')",
+    "    print(json.dumps(parsed, indent=2, ensure_ascii=False))",
+    "",
+    "if __name__ == '__main__':",
+    "    main()",
+    "",
+  ].join("\n");
+}
+
 function getFullScriptJsonExtraction(rawHtmlFull: string, previewScript: Element): ScriptJsonExtraction | undefined {
   const previewScripts = Array.from(previewScript.ownerDocument.querySelectorAll("script"));
   const scriptIndex = Math.max(1, previewScripts.indexOf(previewScript as HTMLScriptElement) + 1);
@@ -6533,6 +6664,7 @@ function getFullScriptJsonExtraction(rawHtmlFull: string, previewScript: Element
     value: extracted.value,
     json: JSON.stringify(extracted.value, null, 2),
     extractorCode: buildScriptJsonExtractorCode(scriptXPath, extracted.mode),
+    standaloneExtractorCode: buildStandaloneScriptJsonExtractorCode(scriptXPath, directJson),
     scriptId: stableHash({ scriptXPath, raw: extracted.raw.slice(0, 2000), length: extracted.raw.length }),
   };
 }
@@ -6550,6 +6682,7 @@ export function extractJsonSourcesFromHtml(rawHtmlFull: string): ScriptJsonSourc
       title: `Script ${index + 1}${details ? ` - ${details}` : ""}`,
       json: extraction.json,
       extractorCode: extraction.extractorCode,
+      standaloneExtractorCode: extraction.standaloneExtractorCode,
     }];
   });
 }
@@ -7003,6 +7136,7 @@ function HtmlResponseViewer({
                     title: getScriptJsonTitle(selectedElement),
                     json: selectedElement.scriptJson.json,
                     extractorCode: selectedElement.scriptJson.extractorCode,
+                    standaloneExtractorCode: selectedElement.scriptJson.standaloneExtractorCode,
                   });
                 }
               }}
