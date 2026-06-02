@@ -11,6 +11,7 @@ import {
 } from "@/lib/curl-to-python";
 import { HighlightedPython } from "@/lib/python-highlight";
 import { CodeEditor } from "@/components/CodeEditor";
+import { FeasibilityTester } from "@/components/feasibility/FeasibilityTester";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,6 +35,7 @@ import {
   runParserWithBackend,
   runWorkspaceWithBackend,
   saveUserWorkspace,
+  type FeasibilityArtifact,
 } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
 import { convertCurlLocally, CurlConverterError } from "@/services/curlConverterEngine";
@@ -476,6 +478,7 @@ export default function Index() {
   const [isSyncingBackend, setIsSyncingBackend] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [isRunningParser, setIsRunningParser] = useState(false);
+  const [feasibilityTesterOpen, setFeasibilityTesterOpen] = useState(false);
   const [raiseIssueOpen, setRaiseIssueOpen] = useState(false);
   const [htmlParserOpen, setHtmlParserOpen] = useState(false);
   const [htmlScriptJsonSources, setHtmlScriptJsonSources] = useState<ScriptJsonSource[]>([]);
@@ -732,6 +735,7 @@ export default function Index() {
   const activeMetaJson = activeWorkspaceArtifact?.metaJson;
   const activeLogsTxt = activeWorkspaceArtifact?.logsTxt ?? "";
   const activeWorkspaceDisplayName = activeWorkspaceName || "request";
+  const activeFeasibilityRequest = activeWorkspaceIdx >= 0 ? blocks[activeWorkspaceIdx]?.parsed ?? null : null;
   const visibleResponseTabs = useMemo(
     () => openResponseTabs.filter((tab) => tab.collectionId === activeCollection.id),
     [openResponseTabs, activeCollection.id]
@@ -2640,6 +2644,24 @@ export default function Index() {
     setStatusMsg(`Downloaded ${visibleTabs.length} file${visibleTabs.length === 1 ? "" : "s"} as ZIP`);
   };
 
+  const handleFeasibilityArtifacts = useCallback((artifacts: FeasibilityArtifact[]) => {
+    if (!activeWorkspaceId || artifacts.length === 0) return;
+    updateWorkspaceArtifact(activeWorkspaceId, (artifact) => ({
+      ...artifact,
+      responseOutputs: {
+        ...artifact.responseOutputs,
+        ...Object.fromEntries(artifacts.map((file) => [
+          file.filename,
+          {
+            content: file.content,
+            contentType: file.content_type,
+            extension: file.filename.split(".").pop() || "txt",
+          },
+        ])),
+      },
+    }));
+  }, [activeWorkspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleCloseTab = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setClosedTabIds((prev) => {
@@ -4506,6 +4528,14 @@ export default function Index() {
                   </DropdownMenuContent>
                 </DropdownMenu>
                 <button
+                  onClick={() => setFeasibilityTesterOpen(true)}
+                  disabled={!activeWorkspaceId || !activeFeasibilityRequest?.url}
+                  className={quietToolbarButtonClass}
+                  title={activeWorkspaceId ? `Test scraping feasibility for ${activeWorkspaceDisplayName}` : "Select a workspace to test"}
+                >
+                  Feasibility Test
+                </button>
+                <button
                   onClick={() => void handleRunActiveWorkspace()}
                   disabled={!activeWorkspaceId || isRunning}
                   className={cn(
@@ -4697,6 +4727,15 @@ export default function Index() {
             )}
           </section>
         </main>
+        <FeasibilityTester
+          open={feasibilityTesterOpen}
+          onOpenChange={setFeasibilityTesterOpen}
+          collectionName={activeCollection.name}
+          workspaceName={activeWorkspaceDisplayName}
+          request={activeFeasibilityRequest}
+          userProxy={proxyConfig}
+          onArtifacts={handleFeasibilityArtifacts}
+        />
       </div>
 
       {/* STATUS BAR */}
@@ -6658,6 +6697,7 @@ function getFullScriptJsonExtraction(rawHtmlFull: string, previewScript: Element
     standaloneExtractorCode: buildStandaloneScriptJsonExtractorCode(scriptXPath, directJson),
     scriptId: stableHash({ scriptXPath, raw: extracted.raw.slice(0, 2000), length: extracted.raw.length }),
   };
+
 }
 
 export function extractJsonSourcesFromHtml(rawHtmlFull: string): ScriptJsonSource[] {

@@ -143,6 +143,112 @@ export interface RunParserResponse {
   error?: string | null;
 }
 
+export interface FeasibilityRequestSpec {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body?: string | null;
+  timeout_seconds?: number;
+  content_marker?: string | null;
+}
+
+export interface StartFeasibilityTestRequest {
+  collection_name?: string;
+  workspace_name: string;
+  request: FeasibilityRequestSpec;
+  user_proxy?: ProxyConfig | null;
+  test_user_proxy?: boolean;
+  production_like?: boolean;
+  polite_delay_enabled?: boolean;
+  polite_delay_min_ms?: number;
+  polite_delay_max_ms?: number;
+  normal_request_retries?: number;
+  debugging_mode?: boolean;
+}
+
+export interface FeasibilityArtifact {
+  filename: string;
+  content: string;
+  content_type: string;
+}
+
+export interface FeasibilityStageMetrics {
+  phase: string;
+  route: string;
+  total_requests: number;
+  max_workers: number;
+  success_count: number;
+  failure_count: number;
+  http_success_count: number;
+  content_valid_success_count: number;
+  retry_recovered_count: number;
+  final_failed_count: number;
+  success_percentage: number;
+  status_distribution: Record<string, number>;
+  average_response_time_ms: number;
+  min_response_time_ms: number;
+  max_response_time_ms: number;
+  timeout_count: number;
+  status_403_count: number;
+  status_429_count: number;
+  block_detection_count: number;
+  low_confidence_block_count: number;
+  medium_confidence_block_count: number;
+  high_confidence_block_count: number;
+  average_response_size_bytes: number;
+  response_size_variance: number;
+  total_duration_ms: number;
+  requests_per_second: number;
+  route_retry_count: number;
+  avg_route_attempts_per_request: number;
+  requests_passed_after_retry: number;
+  requests_failed_after_5_attempts: number;
+  route_instability_count: number;
+  managed_route_stability: string;
+  stability_classification: string;
+  validation_reason_distribution: Record<string, number>;
+  acceptable: boolean;
+  stop_reason?: string | null;
+}
+
+export interface FeasibilityRouteResult {
+  route: string;
+  passed: boolean;
+  warmup_passed: boolean;
+  highest_stable_workers: number;
+  max_tested_workers: number;
+  max_tested_total_requests: number;
+  managed_route_stability: string;
+  stop_reason?: string | null;
+  unstable_worker_stage?: number | null;
+}
+
+export interface FeasibilitySummary {
+  feasibility: string;
+  recommended_route: string;
+  recommended_workers: string;
+  max_tested_total_requests: number;
+  block_risk: string;
+  data_availability: boolean;
+  parser_possible: boolean;
+}
+
+export interface FeasibilityTestStatus {
+  test_id: string;
+  status: "queued" | "running" | "completed" | "cancelled" | "failed";
+  workspace_name: string;
+  logs: string[];
+  current_phase?: string | null;
+  current_route?: string | null;
+  current_stage?: number | null;
+  current_max_workers?: number | null;
+  stage_metrics: FeasibilityStageMetrics[];
+  route_results: FeasibilityRouteResult[];
+  summary?: FeasibilitySummary | null;
+  artifacts: FeasibilityArtifact[];
+  error?: string | null;
+}
+
 export interface ConversionHistory {
   _id: string;
   user_id: string;
@@ -412,6 +518,21 @@ export async function runParserWithBackend(payload: RunParserRequest): Promise<R
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export async function startFeasibilityTest(payload: StartFeasibilityTestRequest): Promise<{ test_id: string; status: string }> {
+  return request<{ test_id: string; status: string }>(apiRoutes.feasibilityTests, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getFeasibilityTest(testId: string): Promise<FeasibilityTestStatus> {
+  return request<FeasibilityTestStatus>(apiRoutes.feasibilityTest(testId), { method: "GET" });
+}
+
+export async function cancelFeasibilityTest(testId: string): Promise<FeasibilityTestStatus> {
+  return request<FeasibilityTestStatus>(apiRoutes.cancelFeasibilityTest(testId), { method: "POST" });
 }
 
 export async function getConversionHistory(accessToken: string, skip = 0, limit = 20): Promise<ConversionHistory[]> {
