@@ -8,6 +8,7 @@ interface CodeEditorProps {
   filename: string;
   onChange: (value: string) => void;
   wordWrap?: boolean;
+  readOnly?: boolean;
   className?: string;
 }
 
@@ -104,7 +105,7 @@ const defineCurlCraftTheme: BeforeMount = (monaco) => {
   } satisfies Monaco.editor.IStandaloneThemeData);
 };
 
-export function CodeEditor({ value, filename, onChange, wordWrap = false, className }: CodeEditorProps) {
+export function CodeEditor({ value, filename, onChange, wordWrap = false, readOnly = false, className }: CodeEditorProps) {
   return (
     <div className={cn("min-h-0 h-full", className)}>
       <Editor
@@ -133,6 +134,7 @@ export function CodeEditor({ value, filename, onChange, wordWrap = false, classN
           multiCursorModifier: "alt",
           overviewRulerBorder: false,
           padding: { top: 12, bottom: 12 },
+          readOnly,
           renderLineHighlight: "line",
           scrollBeyondLastLine: false,
           smoothScrolling: true,

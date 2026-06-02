@@ -4663,7 +4663,11 @@ export default function Index() {
                 </div>
                 <div className="relative min-h-0 flex-1 overflow-auto">
                   {activeResponseJson ? (
-                    <ResponseBodyViewer source={activeResponseJson} />
+                    <ResponseBodyViewer
+                      source={activeResponseJson}
+                      filename={activeResponseTab?.fileName}
+                      contentType={activeResponseContentType}
+                    />
                   ) : (
                     <EmptyState title="No response yet" detail="Run the selected request to inspect its response." />
                   )}
@@ -4742,6 +4746,11 @@ function isHtmlResponse(source: string, contentType?: string) {
   if (type.includes("text/html") || type.includes("html")) return true;
   const trimmed = source.trim().toLowerCase();
   return trimmed.startsWith("<!doctype html") || trimmed.startsWith("<html") || /<body[\s>]/i.test(source);
+}
+
+export function isPythonCodeFile(filename?: string, contentType?: string) {
+  const type = (contentType || "").toLowerCase();
+  return /\.py$/i.test(filename || "") || type.includes("python");
 }
 
 function normalizeHtmlSource(source: string) {
@@ -6730,6 +6739,8 @@ function createHtmlElementSelection(
 
 function ResponseBodyViewer({
   source,
+  filename,
+  contentType,
   selectedPath,
   addedPaths,
   onAddToParser,
@@ -6737,6 +6748,8 @@ function ResponseBodyViewer({
   quickAddMode,
 }: {
   source: string;
+  filename?: string;
+  contentType?: string;
   selectedPath?: string | null;
   addedPaths?: Set<string>;
   onAddToParser?: (path: string) => void;
@@ -6744,6 +6757,18 @@ function ResponseBodyViewer({
   quickAddMode?: boolean;
 }) {
   const mode = useMemo(() => detectResponseMode(source), [source]);
+
+  if (isPythonCodeFile(filename, contentType)) {
+    return (
+      <CodeEditor
+        value={source}
+        filename={filename || "response.py"}
+        onChange={() => undefined}
+        readOnly
+        className="absolute inset-0"
+      />
+    );
+  }
 
   if (mode.kind === "json") {
     return (

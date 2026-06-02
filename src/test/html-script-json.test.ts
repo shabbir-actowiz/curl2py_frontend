@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractJsonSourcesFromHtml } from "@/pages/Index";
+import { extractJsonSourcesFromHtml, isPythonCodeFile } from "@/pages/Index";
 
 describe("HTML script JSON extraction", () => {
   it("finds selectable JSON blocks inside script tags and ignores scripts without JSON", () => {
@@ -33,5 +33,14 @@ describe("HTML script JSON extraction", () => {
     expect(sources[1].standaloneExtractorCode).toContain("assignment = re.compile");
     expect(sources[1].standaloneExtractorCode).toContain("return json.loads(converted)");
     expect(sources[1].standaloneExtractorCode).toContain("Path(args.output).write_text");
+  });
+});
+
+describe("generated extraction code file rendering", () => {
+  it("detects Python output files by extension or content type", () => {
+    expect(isPythonCodeFile("request_1_extract_json_2.py", "text/x-python")).toBe(true);
+    expect(isPythonCodeFile("request_1_extract_json_2.py")).toBe(true);
+    expect(isPythonCodeFile("generated.txt", "text/x-python")).toBe(true);
+    expect(isPythonCodeFile("request_1_extracted_json_2.json", "application/json")).toBe(false);
   });
 });
