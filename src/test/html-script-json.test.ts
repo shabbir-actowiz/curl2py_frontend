@@ -28,11 +28,27 @@ describe("HTML script JSON extraction", () => {
       user: { name: "Ada" },
     });
     expect(sources[0].standaloneExtractorCode).toContain("SCRIPT_XPATH = \"//script[@id='page-data']/text()\"");
-    expect(sources[0].standaloneExtractorCode).toContain("return json.loads(script)");
+    expect(sources[0].standaloneExtractorCode).toContain("return script");
     expect(sources[1].standaloneExtractorCode).toContain('SCRIPT_XPATH = "(//script)[3]/text()"');
     expect(sources[1].standaloneExtractorCode).toContain("assignment = re.compile");
-    expect(sources[1].standaloneExtractorCode).toContain("return json.loads(converted)");
-    expect(sources[1].standaloneExtractorCode).toContain("Path(args.output).write_text");
+    expect(sources[1].standaloneExtractorCode).toContain("Path(args.output).write_text(payload");
+    expect(sources[1].standaloneExtractorCode).not.toContain("converted");
+  });
+
+  it("preserves non-JSON assignment payloads without rewriting values", () => {
+    const rawPayload = "{name: 'Ada', missing: undefined, score: NaN, enabled: true, empty: null}";
+    const sources = extractJsonSourcesFromHtml(`
+      <script>
+        window.__INITIAL_STATE__ = ${rawPayload};
+      </script>
+    `);
+
+    expect(sources).toHaveLength(1);
+    expect(sources[0].json).toBe(rawPayload);
+    expect(sources[0].standaloneExtractorCode).not.toContain("replace(\"'\"");
+    expect(sources[0].standaloneExtractorCode).not.toContain("undefined\\b");
+    expect(sources[0].standaloneExtractorCode).not.toContain("NaN\\b");
+    expect(sources[0].standaloneExtractorCode).not.toContain("converted");
   });
 });
 

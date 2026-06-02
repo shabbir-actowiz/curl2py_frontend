@@ -4813,28 +4813,17 @@ function findBalancedJsonCandidates(text: string) {
   return candidates;
 }
 
-function parseJsonLike(value: string) {
-  const cleaned = value.trim().replace(/;+\s*$/, "");
+function parseJsonPayload(value: string) {
   try {
-    return JSON.parse(cleaned);
+    return JSON.parse(value);
   } catch {
-    const converted = cleaned
-      .replace(/'/g, "\"")
-      .replace(/([{,]\s*)([A-Za-z_$][\w$-]*)(\s*:)/g, "$1\"$2\"$3")
-      .replace(/,\s*([}\]])/g, "$1")
-      .replace(/\bundefined\b/g, "null")
-      .replace(/\bNaN\b/g, "null");
-    return JSON.parse(converted);
+    return value;
   }
 }
 
 function extractJsonFromScriptText(script: string, directJson = false): ScriptJsonTextExtraction {
   if (directJson) {
-    try {
-      return { ok: true, value: JSON.parse(script), raw: script, mode: "json" };
-    } catch {
-      // Some JSON script tags contain whitespace/comments around a JSON object; fall through to balanced candidates.
-    }
+    return { ok: true, value: parseJsonPayload(script), raw: script, mode: "json" };
   }
 
   const validCandidates: Array<{ value: unknown; raw: string; mode: "json" | "assignment" }> = [];
@@ -4846,18 +4835,14 @@ function extractJsonFromScriptText(script: string, directJson = false): ScriptJs
     const absoluteStart = match.index + match[0].length + start;
     const jsonLike = extractBalancedJsonLike(script, absoluteStart);
     if (!jsonLike) continue;
-    try {
-      validCandidates.push({ value: parseJsonLike(jsonLike), raw: jsonLike, mode: "assignment" });
-    } catch {
-      // Keep scanning; the largest valid assignment wins below.
-    }
+    validCandidates.push({ value: parseJsonPayload(jsonLike), raw: jsonLike, mode: "assignment" });
   }
 
   findBalancedJsonCandidates(script).forEach((candidate) => {
     try {
-      validCandidates.push({ value: parseJsonLike(candidate.raw), raw: candidate.raw, mode: "json" });
+      validCandidates.push({ value: JSON.parse(candidate.raw), raw: candidate.raw, mode: "json" });
     } catch {
-      // Ignore invalid balanced JS blocks.
+      // Ignore non-assignment blocks unless they are valid JSON.
     }
   });
 
@@ -6468,6 +6453,12 @@ function buildScriptJsonExtractorCode(scriptXPath: string, mode: "json" | "assig
     "from parsel import Selector",
     "import json",
     "",
+    "def _parse_json_payload(payload):",
+    "    try:",
+    "        return json.loads(payload)",
+    "    except json.JSONDecodeError:",
+    "        return payload",
+    "",
   ];
 
   if (mode === "json") {
@@ -6478,7 +6469,7 @@ function buildScriptJsonExtractorCode(scriptXPath: string, mode: "json" | "assig
       `    raw = selector.xpath(${pythonString(scriptXPath)}).get()`,
       "    if not raw:",
       "        return None",
-      "    return json.loads(raw)",
+      "    return _parse_json_payload(raw)",
       "",
     ].join("\n");
   }
@@ -6522,7 +6513,7 @@ function buildScriptJsonExtractorCode(scriptXPath: string, mode: "json" | "assig
     "    if not raw:",
     "        return None",
     "    payload = _extract_balanced_json(raw)",
-    "    return json.loads(payload)",
+    "    return _parse_json_payload(payload)",
     "",
   ].join("\n");
 }
@@ -6568,18 +6559,6 @@ function buildStandaloneScriptJsonExtractorCode(scriptXPath: string, directJson:
     "                return text[start:index + 1]",
     "    return ''",
     "",
-    "def _parse_json_like(value):",
-    "    cleaned = re.sub(r';+\\s*$', '', value.strip())",
-    "    try:",
-    "        return json.loads(cleaned)",
-    "    except json.JSONDecodeError:",
-    "        converted = cleaned.replace(\"'\", '\"')",
-    "        converted = re.sub(r'([{,]\\s*)([A-Za-z_$][\\w$-]*)(\\s*:)', r'\\1\"\\2\"\\3', converted)",
-    "        converted = re.sub(r',\\s*([}\\]])', r'\\1', converted)",
-    "        converted = re.sub(r'\\bundefined\\b', 'null', converted)",
-    "        converted = re.sub(r'\\bNaN\\b', 'null', converted)",
-    "        return json.loads(converted)",
-    "",
     "def _find_balanced_candidates(text):",
     "    candidates = []",
     "    index = 0",
@@ -6597,10 +6576,7 @@ function buildStandaloneScriptJsonExtractorCode(scriptXPath: string, directJson:
     "",
     "def _extract_script_payload(script):",
     "    if DIRECT_JSON:",
-    "        try:",
-    "            return json.loads(script)",
-    "        except json.JSONDecodeError:",
-    "            pass",
+    "        return script",
     "",
     "    candidates = []",
     "    assignment = re.compile(r'(?:window\\.)?[A-Za-z_$][\\w$]*(?:\\s*=\\s*)|(?:var|let|const)\\s+[A-Za-z_$][\\w$]*\\s*=\\s*')",
@@ -6611,20 +6587,18 @@ function buildStandaloneScriptJsonExtractorCode(scriptXPath: string, directJson:
     "        raw = _extract_balanced_json(script, match.end() + start_match.start())",
     "        if not raw:",
     "            continue",
-    "        try:",
-    "            candidates.append((raw, _parse_json_like(raw)))",
-    "        except json.JSONDecodeError:",
-    "            pass",
+    "        candidates.append(raw)",
     "",
     "    for raw in _find_balanced_candidates(script):",
     "        try:",
-    "            candidates.append((raw, _parse_json_like(raw)))",
+    "            json.loads(raw)",
+    "            candidates.append(raw)",
     "        except json.JSONDecodeError:",
     "            pass",
     "",
     "    if not candidates:",
     "        raise ValueError('No script JSON found')",
-    "    return max(candidates, key=lambda item: len(item[0]))[1]",
+    "    return max(candidates, key=len)",
     "",
     "def extract_json_from_html(html):",
     "    selector = Selector(text=html)",
@@ -6640,9 +6614,12 @@ function buildStandaloneScriptJsonExtractorCode(scriptXPath: string, directJson:
     "    args = parser.parse_args()",
     "",
     "    html = Path(args.html_file).read_text(encoding='utf-8')",
-    "    parsed = extract_json_from_html(html)",
-    "    Path(args.output).write_text(json.dumps(parsed, indent=2, ensure_ascii=False) + '\\n', encoding='utf-8')",
-    "    print(json.dumps(parsed, indent=2, ensure_ascii=False))",
+    "    payload = extract_json_from_html(html)",
+    "    Path(args.output).write_text(payload, encoding='utf-8')",
+    "    try:",
+    "        print(json.dumps(json.loads(payload), indent=2, ensure_ascii=False))",
+    "    except json.JSONDecodeError:",
+    "        print(payload)",
     "",
     "if __name__ == '__main__':",
     "    main()",
@@ -6671,7 +6648,7 @@ function getFullScriptJsonExtraction(rawHtmlFull: string, previewScript: Element
   return {
     ok: true,
     value: extracted.value,
-    json: JSON.stringify(extracted.value, null, 2),
+    json: extracted.raw,
     extractorCode: buildScriptJsonExtractorCode(scriptXPath, extracted.mode),
     standaloneExtractorCode: buildStandaloneScriptJsonExtractorCode(scriptXPath, directJson),
     scriptId: stableHash({ scriptXPath, raw: extracted.raw.slice(0, 2000), length: extracted.raw.length }),
@@ -6781,6 +6758,10 @@ function ResponseBodyViewer({
         quickAddMode={quickAddMode}
       />
     );
+  }
+
+  if ((contentType || "").toLowerCase().includes("json")) {
+    return <pre className="whitespace-pre-wrap px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground">{source}</pre>;
   }
 
   return <HtmlResponseViewer html={mode.value} />;
