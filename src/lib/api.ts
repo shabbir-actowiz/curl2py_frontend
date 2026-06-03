@@ -227,6 +227,9 @@ export interface FeasibilitySummary {
   feasibility: string;
   recommended_route: string;
   recommended_workers: string;
+  next_tested_stage?: string | null;
+  next_stage_failure_reason?: string | null;
+  recommendation?: string | null;
   max_tested_total_requests: number;
   block_risk: string;
   data_availability: boolean;
