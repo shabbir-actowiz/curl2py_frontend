@@ -796,6 +796,10 @@ export default function Index() {
   const parserSelections = activeParserRequestKey
     ? parserSelectionsByRequest[activeParserRequestKey] ?? (isScriptJsonRoute ? [] : parserArtifact?.parserSelections ?? [])
     : [];
+  const existingParserSelections = useMemo(
+    () => filterSelectionsByJsonSource(parserSelections, parserResponseJson),
+    [parserSelections, parserResponseJson]
+  );
   const htmlParserSelections = activeParserRequestKey
     ? htmlParserSelectionsByRequest[activeParserRequestKey] ?? (isScriptJsonRoute ? [] : parserArtifact?.htmlParserSelections ?? [])
     : [];
@@ -811,15 +815,15 @@ export default function Index() {
   const parserOutputContent = activeParserRun?.output !== undefined && activeParserRun?.output !== null
     ? JSON.stringify(activeParserRun.output, null, 2)
     : "";
-  const currentJsonLoop = useMemo(() => getPrimaryJsonLoopContext(parserSelections), [parserSelections]);
+  const currentJsonLoop = useMemo(() => getPrimaryJsonLoopContext(existingParserSelections), [existingParserSelections]);
   const currentHtmlLoop = useMemo(() => getPrimaryHtmlLoopContext(htmlParserSelections), [htmlParserSelections]);
   const parserLoopCount = parserBuilderMode === "html"
     ? getHtmlLoopContexts(htmlParserSelections).length
-    : getJsonLoopContexts(parserSelections).length;
+    : getJsonLoopContexts(existingParserSelections).length;
   const parserCode = parserBuilderMode === "html"
     ? safeGenerateHtmlParserCode(parserWorkspaceName, htmlParserSelections)
-    : parserSelections.length > 0
-      ? generateParserCode(parserWorkspaceName, parserSelections, parserUsesScriptJson ? "script_json" : "response_json")
+    : existingParserSelections.length > 0
+      ? generateParserCode(parserWorkspaceName, existingParserSelections, parserUsesScriptJson ? "script_json" : "response_json")
       : parserArtifact?.parserCode ?? buildParserStub(parserWorkspaceName);
   const hasSavedDbJsonSource = !!activeParserRequestKey && (
     Object.prototype.hasOwnProperty.call(dbJsonByRequest, activeParserRequestKey) ||
@@ -1723,8 +1727,10 @@ export default function Index() {
     workspaceName: string,
     nextSelections: ParserSelection[],
   ) => {
-    const parserCode = nextSelections.length > 0
-      ? generateParserCode(workspaceName, nextSelections, scriptJsonParserByWorkspace[workspaceId] ? "script_json" : "response_json")
+    const sourceJson = manualParserJsonByWorkspace[workspaceId] ?? collections[collectionId]?.workspaceArtifacts?.[workspaceId]?.responseJson ?? null;
+    const codeSelections = filterSelectionsByJsonSource(nextSelections, sourceJson);
+    const parserCode = codeSelections.length > 0
+      ? generateParserCode(workspaceName, codeSelections, scriptJsonParserByWorkspace[workspaceId] ? "script_json" : "response_json")
       : buildParserStub(workspaceName);
 
     setCollections((prev) => {
@@ -1815,6 +1821,10 @@ export default function Index() {
     console.debug("activeRequestKey", requestKey);
 
     if (!selectedPath || !workspaceId || !requestKey) return;
+    if (parserResponseJson?.trim() && !jsonPathExistsInSource(parserResponseJson, selectedPath)) {
+      toast.error("Path not found in JSON");
+      return;
+    }
     const workspaceIndex = targetCollection.snippets.findIndex((snippet) => snippet.id === workspaceId);
     const hasManualJsonSource = !!manualParserJsonByWorkspace[workspaceId] || (workspaceId === parserWorkspaceId && !!parserResponseJson);
     if (workspaceIndex === -1 && !hasManualJsonSource) return;
@@ -1861,6 +1871,10 @@ export default function Index() {
     const workspaceIndex = targetCollection.snippets.findIndex((snippet) => snippet.id === workspaceId);
     const hasManualJsonSource = !!manualParserJsonByWorkspace[workspaceId] || (workspaceId === parserWorkspaceId && !!parserResponseJson);
     if (workspaceIndex === -1 && !hasManualJsonSource) return;
+    if (parserResponseJson?.trim() && !jsonPathExistsInSource(parserResponseJson, path)) {
+      toast.error("Path not found in JSON");
+      return;
+    }
     const workspaceName = workspaceIndex >= 0
       ? targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`
       : parserWorkspaceName || "manual_json";
@@ -3246,7 +3260,7 @@ export default function Index() {
                 ) : (
                   <div className="space-y-2">
                     {parserSelections.map((selection, index) => {
-                      const warning = getParserPathWarning(selection.path);
+                      const warning = getParserPathExistenceWarning(selection.path, parserResponseJson);
                       const loopParentPath = getJsonLoopParentPath(selection.path);
                       return (
                         <div key={`${selection.path}-${index}`} className="grid gap-1 md:grid-cols-[minmax(0,1fr)_220px_96px_28px] md:items-start">
@@ -4914,8 +4928,8 @@ function getJsonValuePreview(value: unknown): string {
 function formatJsonPath(path: Array<string | number>): string {
   return path.reduce<string>((acc, part) => {
     if (typeof part === "number") return `${acc}[${part}]`;
-    if (!acc) return part;
-    return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(part) ? `${acc}.${part}` : `${acc}[${JSON.stringify(part)}]`;
+    if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(part)) return acc ? `${acc}.${part}` : part;
+    return `${acc}[${JSON.stringify(part)}]`;
   }, "");
 }
 
@@ -4931,6 +4945,32 @@ function tokenizeJsonPath(path: string): JsonPathToken[] | null {
   let index = 0;
   let needsKey = true;
 
+  const findClosingBracket = (start: number) => {
+    let quote: string | null = null;
+    let escaped = false;
+    for (let pos = start + 1; pos < trimmed.length; pos += 1) {
+      const current = trimmed[pos];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (current === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (quote) {
+        if (current === quote) quote = null;
+        continue;
+      }
+      if (current === "\"" || current === "'") {
+        quote = current;
+        continue;
+      }
+      if (current === "]") return pos;
+    }
+    return -1;
+  };
+
   while (index < trimmed.length) {
     const char = trimmed[index];
 
@@ -4942,7 +4982,7 @@ function tokenizeJsonPath(path: string): JsonPathToken[] | null {
     }
 
     if (char === "[") {
-      const closeIndex = trimmed.indexOf("]", index + 1);
+      const closeIndex = findClosingBracket(index);
       if (closeIndex === -1) return null;
       const raw = trimmed.slice(index + 1, closeIndex);
       if (/^\d+$/.test(raw)) {
@@ -4955,7 +4995,7 @@ function tokenizeJsonPath(path: string): JsonPathToken[] | null {
           const key = raw.startsWith("'")
             ? raw.slice(1, -1).replace(/\\'/g, "'").replace(/\\"/g, "\"")
             : JSON.parse(raw);
-          if (typeof key !== "string" || !key) return null;
+          if (typeof key !== "string") return null;
           tokens.push({ type: "key", value: key });
         } catch {
           return null;
@@ -4968,11 +5008,18 @@ function tokenizeJsonPath(path: string): JsonPathToken[] | null {
       continue;
     }
 
-    const keyMatch = trimmed.slice(index).match(/^[A-Za-z_$][A-Za-z0-9_$]*/);
-    if (!keyMatch || !needsKey) return null;
-    tokens.push({ type: "key", value: keyMatch[0] });
+    const keyEnd = (() => {
+      const dotIndex = trimmed.indexOf(".", index);
+      const bracketIndex = trimmed.indexOf("[", index);
+      if (dotIndex === -1) return bracketIndex === -1 ? trimmed.length : bracketIndex;
+      if (bracketIndex === -1) return dotIndex;
+      return Math.min(dotIndex, bracketIndex);
+    })();
+    const key = trimmed.slice(index, keyEnd);
+    if (!key || !needsKey) return null;
+    tokens.push({ type: "key", value: key });
     needsKey = false;
-    index += keyMatch[0].length;
+    index = keyEnd;
   }
 
   return tokens.length > 0 && !needsKey ? tokens : null;
@@ -4980,11 +5027,20 @@ function tokenizeJsonPath(path: string): JsonPathToken[] | null {
 
 export function parseJsonPath(path: string): Array<string | number> {
   const tokens = tokenizeJsonPath(path);
-  if (!tokens) return [];
+  if (!tokens) return path.trim() ? [path.trim()] : [];
   return tokens.map((token) => token.value);
 }
 
 export function getValueByPath(data: unknown, path: string): unknown {
+  if (
+    data !== null &&
+    typeof data === "object" &&
+    !Array.isArray(data) &&
+    path in data
+  ) {
+    return (data as Record<string, unknown>)[path];
+  }
+
   const tokens = tokenizeJsonPath(path);
   if (!tokens) return undefined;
   let current = data;
@@ -5013,11 +5069,37 @@ export function getValueByPath(data: unknown, path: string): unknown {
   return current;
 }
 
+function jsonPathExists(data: unknown, path: string): boolean {
+  if (!path.trim()) return false;
+  return getValueByPath(data, path) !== undefined;
+}
+
+function parseJsonSourceValue(source: string | null | undefined): unknown | null {
+  if (!source?.trim()) return null;
+  try {
+    return JSON.parse(source);
+  } catch {
+    return null;
+  }
+}
+
+function jsonPathExistsInSource(source: string | null | undefined, path: string): boolean {
+  const data = parseJsonSourceValue(source);
+  return data !== null && jsonPathExists(data, path);
+}
+
+function getParserPathExistenceWarning(path: string, source: string | null | undefined) {
+  if (!path.trim() || !source?.trim()) return "";
+  return jsonPathExistsInSource(source, path) ? "" : "Path not found in JSON";
+}
+
+function filterSelectionsByJsonSource(selections: ParserSelection[], source: string | null | undefined) {
+  const data = parseJsonSourceValue(source);
+  if (data === null) return selections;
+  return selections.filter((selection) => jsonPathExists(data, selection.path));
+}
+
 function getJsonPathSyntaxWarning(path: string) {
-  const trimmed = path.trim();
-  if (!trimmed) return "Path is required";
-  if (trimmed.endsWith(".") || trimmed.endsWith("[")) return "Path is incomplete";
-  if (!tokenizeJsonPath(trimmed)) return "Path is invalid";
   return "";
 }
 

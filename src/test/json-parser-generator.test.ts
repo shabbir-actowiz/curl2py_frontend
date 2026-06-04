@@ -189,6 +189,67 @@ describe("JSON parser generator", () => {
     });
   });
 
+  it("accepts JSON keys like @id without identifier validation", () => {
+    const payload = {
+      "@id": "root-id",
+      "123abc": "number-start",
+      "a.b": "dot-key",
+      "weird[key]": "bracket-key",
+      "": "empty-key",
+      products: [
+        {
+          "@id": "product-1",
+          "sku-code": "SKU-1",
+        },
+      ],
+    };
+
+    expect(getParserPathWarning("@id")).toBe("");
+    expect(getParserPathWarning("totally..not[closed")).toBe("");
+    expect(getParserPathWarning("products[0].@id")).toBe("");
+    expect(getParserPathWarning("products[0].sku-code")).toBe("");
+    expect(parseJsonPath("@id")).toEqual(["@id"]);
+    expect(parseJsonPath("[\"@id\"]")).toEqual(["@id"]);
+    expect(parseJsonPath("123abc")).toEqual(["123abc"]);
+    expect(parseJsonPath("[\"a.b\"]")).toEqual(["a.b"]);
+    expect(parseJsonPath("[\"weird[key]\"]")).toEqual(["weird[key]"]);
+    expect(parseJsonPath("[\"\"]")).toEqual([""]);
+    expect(parseJsonPath("products[0].@id")).toEqual(["products", 0, "@id"]);
+    expect(getValueByPath(payload, "@id")).toBe("root-id");
+    expect(getValueByPath(payload, "[\"@id\"]")).toBe("root-id");
+    expect(getValueByPath(payload, "123abc")).toBe("number-start");
+    expect(getValueByPath(payload, "a.b")).toBe("dot-key");
+    expect(getValueByPath(payload, "[\"a.b\"]")).toBe("dot-key");
+    expect(getValueByPath(payload, "[\"weird[key]\"]")).toBe("bracket-key");
+    expect(getValueByPath(payload, "[\"\"]")).toBe("empty-key");
+    expect(getValueByPath(payload, "products[0].@id")).toBe("product-1");
+    expect(getValueByPath(payload, "products[0].sku-code")).toBe("SKU-1");
+
+    const code = generateParserCode("test_request", [
+      { path: "[\"@id\"]", outputKey: "root_id" },
+      { path: "123abc", outputKey: "number_start" },
+      { path: "[\"a.b\"]", outputKey: "dot_key" },
+      { path: "[\"weird[key]\"]", outputKey: "bracket_key" },
+      { path: "[\"\"]", outputKey: "empty_key" },
+      { path: "products[0].@id", outputKey: "product_id" },
+      { path: "products[0].sku-code", outputKey: "sku_code" },
+    ]);
+
+    expect(runGeneratedParser(code, payload)).toEqual({
+      root_id: "root-id",
+      number_start: "number-start",
+      dot_key: "dot-key",
+      bracket_key: "bracket-key",
+      empty_key: "empty-key",
+      products: [
+        {
+          product_id: "product-1",
+          sku_code: "SKU-1",
+        },
+      ],
+    });
+  });
+
   it("preserves pasted JSON array structure through source validation and parser output", () => {
     const source = `{
       "b_id": [9379993],
