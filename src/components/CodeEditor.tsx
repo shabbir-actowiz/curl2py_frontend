@@ -10,6 +10,7 @@ interface CodeEditorProps {
   wordWrap?: boolean;
   readOnly?: boolean;
   className?: string;
+  parserInsertGroups?: Array<{ requestName: string; keys: string[] }>;
 }
 
 const defineCurlCraftTheme: BeforeMount = (monaco) => {
@@ -105,15 +106,65 @@ const defineCurlCraftTheme: BeforeMount = (monaco) => {
   } satisfies Monaco.editor.IStandaloneThemeData);
 };
 
-export function CodeEditor({ value, filename, onChange, wordWrap = false, readOnly = false, className }: CodeEditorProps) {
+function cursorIsInsideQuotes(line: string, column: number): boolean {
+  const before = line.slice(0, Math.max(0, column - 1));
+  let single = false;
+  let double = false;
+  let escape = false;
+  for (const char of before) {
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (char === "\\") {
+      escape = true;
+      continue;
+    }
+    if (char === "'" && !double) single = !single;
+    if (char === '"' && !single) double = !double;
+  }
+  return single || double;
+}
+
+export function CodeEditor({ value, filename, onChange, wordWrap = false, readOnly = false, className, parserInsertGroups = [] }: CodeEditorProps) {
   return (
     <div className={cn("min-h-0 h-full", className)}>
       <Editor
+        key={`${filename}:${parserInsertGroups.map((group) => `${group.requestName}:${group.keys.join(",")}`).join("|")}`}
         path={filename}
         language="python"
         theme="curlcraft-dark"
         value={value}
         beforeMount={defineCurlCraftTheme}
+        onMount={(editor, monaco) => {
+          parserInsertGroups.forEach((group) => {
+            group.keys.forEach((key) => {
+              const actionId = `insert-parser-output-${group.requestName}-${key}`;
+              editor.addAction({
+                id: actionId,
+                label: `Insert From Parser Output / ${group.requestName} / ${key}`,
+                contextMenuGroupId: `navigation/${group.requestName}`,
+                contextMenuOrder: 1,
+                run: (ed) => {
+                  const model = ed.getModel();
+                  const position = ed.getPosition();
+                  if (!model || !position) return;
+                  const placeholder = `{{${group.requestName}.${key}}}`;
+                  const line = model.getLineContent(position.lineNumber);
+                  const text = cursorIsInsideQuotes(line, position.column) ? placeholder : `"${placeholder}"`;
+                  ed.executeEdits("insert-parser-output", [
+                    {
+                      range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column),
+                      text,
+                      forceMoveMarkers: true,
+                    },
+                  ]);
+                  ed.focus();
+                },
+              });
+            });
+          });
+        }}
         onChange={(next) => onChange(next ?? "")}
         options={{
           automaticLayout: true,

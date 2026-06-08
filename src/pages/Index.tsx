@@ -39,7 +39,7 @@ import {
 } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
 import { convertCurlLocally, CurlConverterError } from "@/services/curlConverterEngine";
-import { buildCurlCraftScript, buildParserStubs, enhanceCurlConverterPython } from "@/services/curlCraftEnhancer";
+import { buildCurlCraftScript, buildMergedScript, buildParserStubs, enhanceCurlConverterPython, PIPELINE_UTILS_CODE, repairPythonPipelinePlaceholders, scriptUsesPipeline } from "@/services/curlCraftEnhancer";
 
 type Client = "requests" | "httpx";
 
@@ -333,6 +333,30 @@ function createCollection(id: string, name: string, snippets: Snippet[] = [creat
     backendMergedOutput: null,
     backendParserOutput: null,
   };
+}
+
+function collectParserOutputKeys(value: unknown): string[] {
+  if (!value) return [];
+  const keys = new Set<string>();
+  const addFromObject = (item: unknown) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return;
+    Object.keys(item as Record<string, unknown>).forEach((key) => keys.add(key));
+  };
+  if (Array.isArray(value)) {
+    value.forEach(addFromObject);
+  } else {
+    addFromObject(value);
+  }
+  return Array.from(keys).sort();
+}
+
+function parseJsonKeys(content: string | undefined): string[] {
+  if (!content) return [];
+  try {
+    return collectParserOutputKeys(JSON.parse(content));
+  } catch {
+    return [];
+  }
 }
 
 function normalizeProxyConfig(value: unknown): ProxyConfig {
@@ -724,11 +748,19 @@ export default function Index() {
   const isActiveCodeDirty = !!(activeTab && dirtyCodeTabs[activeTab.id]);
   const panelCodeFilename = activeWorkspaceFile === "db.py"
     ? "db.py"
+    : activeWorkspaceFile === "parser.py"
+    ? "parser.py"
+    : activeWorkspaceFile === "pipeline_utils.py"
+    ? "pipeline_utils.py"
     : activeTab?.kind === "merged" || activeTab?.kind === "parser"
     ? activeTab.filename
     : activeCodeFilename;
   const panelCodeContent = activeWorkspaceFile === "db.py"
     ? activeWorkspaceArtifact?.dbCode ?? ""
+    : activeWorkspaceFile === "parser.py"
+    ? activeWorkspaceArtifact?.parserCode ?? buildParserStub(activeWorkspaceDisplayName)
+    : activeWorkspaceFile === "pipeline_utils.py"
+    ? PIPELINE_UTILS_CODE
     : activeTab?.kind === "merged" || activeTab?.kind === "parser"
     ? activeTab.code
     : activeCodeContent;
@@ -815,6 +847,21 @@ export default function Index() {
   const parserOutputContent = activeParserRun?.output !== undefined && activeParserRun?.output !== null
     ? JSON.stringify(activeParserRun.output, null, 2)
     : "";
+  const parserInsertGroups = useMemo(() => {
+    return snippets.map((snippet, index) => {
+      const requestName = effectiveNames[index] ?? snippet.name ?? `request_${index + 1}`;
+      const artifact = workspaceArtifacts[snippet.id];
+      const run = parserRunsByRequest[`${activeCollection.id}:${snippet.id}`];
+      const keys = new Set<string>();
+      (artifact?.parserSelections ?? []).forEach((selection) => keys.add(sanitizeOutputKey(selection.outputKey)));
+      (artifact?.htmlParserSelections ?? []).forEach((selection) => keys.add(sanitizeOutputKey(selection.outputKey)));
+      collectParserOutputKeys(run?.output).forEach((key) => keys.add(key));
+      Object.entries(artifact?.responseOutputs ?? {})
+        .filter(([file]) => file.endsWith("_parser_output.json"))
+        .forEach(([, output]) => parseJsonKeys(output.content).forEach((key) => keys.add(key)));
+      return { requestName, keys: Array.from(keys).filter(Boolean).sort() };
+    }).filter((group) => group.keys.length > 0);
+  }, [snippets, effectiveNames, workspaceArtifacts, parserRunsByRequest, activeCollection.id]);
   const currentJsonLoop = useMemo(() => getPrimaryJsonLoopContext(existingParserSelections), [existingParserSelections]);
   const currentHtmlLoop = useMemo(() => getPrimaryHtmlLoopContext(htmlParserSelections), [htmlParserSelections]);
   const parserLoopCount = parserBuilderMode === "html"
@@ -1134,7 +1181,7 @@ export default function Index() {
       return;
     }
 
-    if (file === "parser.py" || file === "db.py") {
+    if (file === "parser.py" || file === "db.py" || file === "pipeline_utils.py") {
       const tabId = `req-${workspaceId}`;
       setActivePanelTab("code");
       setClosedTabIds((prev) => {
@@ -1591,6 +1638,12 @@ export default function Index() {
     if (activeWorkspaceFile === "db.py") {
       return "db.py";
     }
+    if (activeWorkspaceFile === "parser.py") {
+      return "parser.py";
+    }
+    if (activeWorkspaceFile === "pipeline_utils.py") {
+      return "pipeline_utils.py";
+    }
     if (activePanelTab === "response") {
       return activeResponseTab?.label ?? activeWorkspaceFile;
     }
@@ -1606,6 +1659,12 @@ export default function Index() {
   const getActivePanelContent = () => {
     if (activeWorkspaceFile === "db.py") {
       return activeWorkspaceArtifact?.dbCode || "";
+    }
+    if (activeWorkspaceFile === "parser.py") {
+      return activeWorkspaceArtifact?.parserCode ?? buildParserStub(activeWorkspaceDisplayName);
+    }
+    if (activeWorkspaceFile === "pipeline_utils.py") {
+      return PIPELINE_UTILS_CODE;
     }
     if (activePanelTab === "response") {
       return activeWorkspaceFile === "meta.json"
@@ -1630,6 +1689,15 @@ export default function Index() {
       return;
     }
 
+    if (activeWorkspaceFile === "parser.py" && activeWorkspaceId) {
+      updateWorkspaceArtifact(activeWorkspaceId, (artifact) => ({ ...artifact, parserCode: value, parserGenerated: false }));
+      return;
+    }
+
+    if (activeWorkspaceFile === "pipeline_utils.py") {
+      return;
+    }
+
     if (activeTab.kind === "merged") {
       setBackendMergedOutput(value);
       return;
@@ -1638,7 +1706,15 @@ export default function Index() {
     if (activeTab.kind === "request" && activeTab.reqIdx != null) {
       const block = blocks[activeTab.reqIdx];
       if (block) {
-        setBackendOutputs((prev) => ({ ...prev, [block.id]: value }));
+        let nextValue = value;
+        try {
+          nextValue = repairPythonPipelinePlaceholders(value);
+        } catch {
+          nextValue = value;
+        }
+        delete lastSyncedSnippetHashesRef.current[block.id];
+        lastSuccessfulSyncKeyRef.current = null;
+        setBackendOutputs((prev) => ({ ...prev, [block.id]: nextValue }));
       }
     }
   };
@@ -2641,9 +2717,34 @@ export default function Index() {
   };
 
   const handleDownloadAll = async () => {
-    if (visibleTabs.length === 0) return;
+    const requestFiles = snippets
+      .map((snippet, index) => {
+        const name = effectiveNames[index] ?? snippet.name ?? `request_${index + 1}`;
+        const code = backendOutputs[snippet.id];
+        if (!code) return null;
+        return {
+          filename: `${name}.py`,
+          code: repairPythonPipelinePlaceholders(code),
+        };
+      })
+      .filter((file): file is { filename: string; code: string } => !!file);
+    const mergedFile = mergeMode && backendMergedOutput
+      ? [{ filename: "generated_script.py", code: backendMergedOutput }]
+      : [];
+    const filesToDownload = [...requestFiles, ...mergedFile];
+    if (filesToDownload.length === 0) return;
+
     const zip = new JSZip();
-    for (const t of visibleTabs) zip.file(t.filename, t.code);
+    for (const file of filesToDownload) zip.file(file.filename, file.code);
+    const hasPipeline = filesToDownload.some((file) => scriptUsesPipeline(file.code));
+    if (hasPipeline) zip.file("pipeline_utils.py", PIPELINE_UTILS_CODE);
+    snippets.forEach((snippet, index) => {
+      const name = effectiveNames[index] ?? snippet.name ?? `request_${index + 1}`;
+      const parser = workspaceArtifacts[snippet.id]?.parserCode;
+      if (parser && parser !== buildParserStub(name)) {
+        zip.file(`${name}_parser.py`, parser);
+      }
+    });
     const blob = await zip.generateAsync({ type: "blob" });
     const zipName = `${sanitizeName(activeCollection.name || activeCollection.id) || "collection"}.zip`;
     const url = URL.createObjectURL(blob);
@@ -2655,7 +2756,7 @@ export default function Index() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
     setStatusKind("success");
-    setStatusMsg(`Downloaded ${visibleTabs.length} file${visibleTabs.length === 1 ? "" : "s"} as ZIP`);
+    setStatusMsg(`Downloaded ${filesToDownload.length} file${filesToDownload.length === 1 ? "" : "s"} as ZIP`);
   };
 
   const handleFeasibilityArtifacts = useCallback((artifacts: FeasibilityArtifact[]) => {
@@ -2848,11 +2949,15 @@ export default function Index() {
         .map(({ block, index, converted, functionName }) => {
           return {
             id: block.id,
-            code: enhanceCurlConverterPython(converted.pythonCode, {
+            code: repairPythonPipelinePlaceholders(enhanceCurlConverterPython(converted.pythonCode, {
               functionName,
               request: converted.request,
               proxy: proxyConfig,
-            }),
+              contextRequests: convertedTargets.map(({ converted: contextConverted, functionName: contextFunctionName }) => ({
+                functionName: contextFunctionName,
+                request: contextConverted.request,
+              })),
+            })),
             functionName,
             hash: snippetSyncHashes[block.id],
           };
@@ -2877,7 +2982,13 @@ export default function Index() {
           functionName,
           request: converted.request,
         }));
-        setBackendMergedOutput(buildCurlCraftScript({ requests: batchEntries, proxy: proxyConfig }));
+        const parserFunctionNames = convertedTargets
+          .filter(({ block, functionName }) => {
+            const parser = workspaceArtifacts[block.id]?.parserCode;
+            return !!parser && parser !== buildParserStub(functionName);
+          })
+          .map(({ functionName }) => `${functionName}_parser`);
+        setBackendMergedOutput(buildMergedScript({ requests: batchEntries, parserFunctionNames }));
         setBackendParserOutput(buildParserStubs(batchEntries.map((entry) => entry.functionName)));
         setDirtyCodeTabs((prev) => {
           const next = { ...prev };
@@ -4098,8 +4209,12 @@ export default function Index() {
                             const method = (b.parsed.method || "GET").toUpperCase();
                             const artifact = collection.workspaceArtifacts[b.id];
                             const responseFileName = artifact?.responseFileName ?? defaultResponseFileName(collectionNames[i]);
+                            const requestCode = collection.backendOutputs[b.id] ?? "";
+                            const collectionUsesPipeline = Object.values(collection.backendOutputs).some(scriptUsesPipeline);
                             const files: WorkspaceFile[] = [
                               "request.py",
+                              "parser.py",
+                              ...(collectionUsesPipeline && scriptUsesPipeline(requestCode) ? ["pipeline_utils.py"] : []),
                               responseFileName,
                               ...Object.keys(artifact?.responseOutputs ?? {}).filter((file) => file !== responseFileName),
                               ...(artifact?.dbCode ? ["db.py"] : []),
@@ -4649,6 +4764,7 @@ export default function Index() {
                           filename={panelCodeFilename}
                           onChange={handleCodePanelChange}
                           wordWrap={codeWordWrap}
+                          parserInsertGroups={activeWorkspaceFile === "request.py" && activeTab.kind === "request" ? parserInsertGroups : []}
                           className="absolute inset-0"
                         />
                       )}
@@ -4716,6 +4832,10 @@ export default function Index() {
                       source={activeResponseJson}
                       filename={activeResponseTab?.fileName}
                       contentType={activeResponseContentType}
+                      selectedPath={selectedParserPath}
+                      addedPaths={addedParserPaths}
+                      onAddToParser={addPathToParser}
+                      onSelectedPathChange={handleParserPathSelect}
                     />
                   ) : (
                     <EmptyState title="No response yet" detail="Run the selected request to inspect its response." />

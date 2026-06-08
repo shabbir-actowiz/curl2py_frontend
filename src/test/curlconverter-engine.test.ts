@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { convertCurlLocally, CurlConverterError } from "@/services/curlConverterEngine";
-import { enhanceCurlConverterPython } from "@/services/curlCraftEnhancer";
+import { buildMergedScript, enhanceCurlConverterPython, repairPythonPipelinePlaceholders } from "@/services/curlCraftEnhancer";
 
 function generate(curl: string, functionName = "request_1") {
   const converted = convertCurlLocally(curl);
@@ -15,6 +15,7 @@ describe("frontend curlconverter pipeline", () => {
     const code = generate("curl 'https://example.com/api?q=milk'");
     expect(code).toContain("from curl_cffi import requests");
     expect(code).toContain("def request_1():");
+    expect(code).not.toContain("pipeline_utils");
     expect(code).toContain("response = requests.get(");
     expect(code).toContain('timeout=30');
   });
@@ -66,5 +67,95 @@ describe("frontend curlconverter pipeline", () => {
 
   it("throws a frontend conversion error for invalid cURL", () => {
     expect(() => convertCurlLocally("not a curl")).toThrow(CurlConverterError);
+  });
+
+  it("compiles parser output references through pipeline_context", () => {
+    const request1 = convertCurlLocally("curl 'https://example.com/bootstrap'").request;
+    const request2 = convertCurlLocally(
+      "curl 'https://example.com/stores?lat={{request_1.coordinates[0]}}&lng={{request_1.coordinates[1]}}&store={request_1.store_id}' -H 'Authorization: Bearer {request_1.token}'"
+    ).request;
+
+    const code = enhanceCurlConverterPython("", {
+      functionName: "request_2",
+      request: request2,
+    });
+    expect(code).toContain("def request_2(pipeline_context=None):");
+    expect(code).toContain('get_pipeline_value("request_1", ".coordinates[0]", pipeline_context)');
+    expect(code).toContain('get_pipeline_value("request_1", ".coordinates[1]", pipeline_context)');
+    expect(code).toContain('get_pipeline_value("request_1", ".store_id", pipeline_context)');
+    expect(code).toContain('get_pipeline_value("request_1", ".token", pipeline_context)');
+    expect(code).not.toContain("{{request_1.");
+    expect(code).not.toContain("{request_1.");
+    expect(code).toContain("pipeline_context = pipeline_context or DEFAULT_PIPELINE_CONTEXT");
+    expect(code).toContain('"coordinates": [');
+    expect(code).toContain("12.9716");
+    expect(code).toContain('"store_id": "12345"');
+    expect(code).toContain('"token": "abc123"');
+
+    const merged = buildMergedScript({
+      requests: [
+        { functionName: "request_1", request: request1 },
+        { functionName: "request_2", request: request2 },
+      ],
+      parserFunctionNames: ["request_1_parser"],
+    });
+    expect(merged).toContain("pipeline_context = {}");
+    expect(merged).toContain("response_request_2 = request_2(pipeline_context=pipeline_context)");
+    expect(merged).toContain('pipeline_context["request_1"] = request_1_parser(response_request_1)');
+  });
+
+  it("does not leave query placeholders in standalone request files", () => {
+    const request1 = convertCurlLocally("curl 'https://example.com/bootstrap'").request;
+    const request2 = convertCurlLocally("curl 'https://example.com/search?searchTerm={{request_1.suggestion_word}}'").request;
+
+    const code = enhanceCurlConverterPython("", {
+      functionName: "request_2",
+      request: request2,
+      contextRequests: [
+        { functionName: "request_1", request: request1 },
+        { functionName: "request_2", request: request2 },
+      ],
+    });
+
+    expect(code).toContain('DEFAULT_PIPELINE_CONTEXT = {');
+    expect(code).toContain('"suggestion_word": "mock_suggestion_word"');
+    expect(code).toContain('"searchTerm": get_pipeline_value("request_1", ".suggestion_word", pipeline_context)');
+    expect(code).toContain("params = resolve_pipeline_placeholders(params, pipeline_context)");
+    expect(code).not.toContain("{{request_1.");
+    expect(code).not.toContain("{request_1.");
+  });
+
+  it("repairs manually edited request.py files with raw pipeline placeholders", () => {
+    const broken = `import json
+import os
+from curl_cffi import requests
+
+def request_2():
+    url = "https://www.nykaafashion.com/rest/appapi/V2/categories/products"
+    params = {
+        "searchTerm": "{{request_1.suggestion_word}}",
+    }
+    response = requests.get(
+        url,
+        params=params,
+        impersonate="chrome",
+        timeout=30,
+    )
+    return response
+
+def do_requests():
+    pipeline_context = {}
+    request_2()
+`;
+
+    const repaired = repairPythonPipelinePlaceholders(broken);
+    expect(repaired).toContain("from pipeline_utils import get_pipeline_value, resolve_pipeline_placeholders");
+    expect(repaired).toContain("DEFAULT_PIPELINE_CONTEXT = {");
+    expect(repaired).toContain("def request_2(pipeline_context=None):");
+    expect(repaired).toContain("pipeline_context = pipeline_context or DEFAULT_PIPELINE_CONTEXT");
+    expect(repaired).toContain('"searchTerm": get_pipeline_value("request_1", ".suggestion_word", pipeline_context)');
+    expect(repaired).toContain("params = resolve_pipeline_placeholders(params, pipeline_context)");
+    expect(repaired).toContain("request_2(pipeline_context=pipeline_context)");
+    expect(repaired).not.toContain("{{request_1.suggestion_word}}");
   });
 });
