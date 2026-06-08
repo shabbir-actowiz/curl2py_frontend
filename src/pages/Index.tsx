@@ -2947,9 +2947,12 @@ export default function Index() {
       const singleResults = convertedTargets
         .filter(({ block }) => force || changedIds.has(block.id))
         .map(({ block, index, converted, functionName }) => {
+          const tabId = `req-${block.id}`;
+          const existingCode = backendOutputs[block.id];
+          const preserveEditedCode = !!dirtyCodeTabs[tabId] && !!existingCode;
           return {
             id: block.id,
-            code: repairPythonPipelinePlaceholders(enhanceCurlConverterPython(converted.pythonCode, {
+            code: preserveEditedCode ? repairPythonPipelinePlaceholders(existingCode) : repairPythonPipelinePlaceholders(enhanceCurlConverterPython(converted.pythonCode, {
               functionName,
               request: converted.request,
               proxy: proxyConfig,
@@ -2960,6 +2963,7 @@ export default function Index() {
             })),
             functionName,
             hash: snippetSyncHashes[block.id],
+            preserveEditedCode,
           };
         });
 
@@ -2972,15 +2976,17 @@ export default function Index() {
       setDirtyCodeTabs((prev) => {
         const next = { ...prev };
         singleResults.forEach((entry) => {
-          delete next[`req-${entry.id}`];
+          if (!entry.preserveEditedCode) delete next[`req-${entry.id}`];
         });
         return next;
       });
 
       if (mergeMode) {
-        const batchEntries = convertedTargets.map(({ converted, functionName }) => ({
+        const currentOutputs = { ...backendOutputs, ...nextOutputs };
+        const batchEntries = convertedTargets.map(({ block, converted, functionName }) => ({
           functionName,
           request: converted.request,
+          code: currentOutputs[block.id],
         }));
         const parserFunctionNames = convertedTargets
           .filter(({ block, functionName }) => {

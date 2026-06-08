@@ -9,7 +9,7 @@ interface EnhanceOptions {
 }
 
 interface BatchEnhanceOptions {
-  requests: Array<{ functionName: string; request: JSONOutput }>;
+  requests: Array<{ functionName: string; request: JSONOutput; code?: string }>;
   proxy?: { enabled?: boolean; url?: string };
   parserFunctionNames?: string[];
 }
@@ -297,8 +297,10 @@ function addPipelineArgAndDefault(code: string): string {
       lines[index] = `def ${match[1]}(${args ? `${args}, ` : ""}pipeline_context=None):`;
     }
     const nextLine = lines[index + 1] ?? "";
-    if (!nextLine.includes("pipeline_context = pipeline_context or DEFAULT_PIPELINE_CONTEXT")) {
-      lines.splice(index + 1, 0, "    pipeline_context = pipeline_context or DEFAULT_PIPELINE_CONTEXT", "");
+    if (nextLine.includes("pipeline_context = pipeline_context or DEFAULT_PIPELINE_CONTEXT")) {
+      lines.splice(index + 1, 1, "    if pipeline_context is None:", "        pipeline_context = DEFAULT_PIPELINE_CONTEXT");
+    } else if (!nextLine.includes("if pipeline_context is None:")) {
+      lines.splice(index + 1, 0, "    if pipeline_context is None:", "        pipeline_context = DEFAULT_PIPELINE_CONTEXT", "");
     }
     break;
   }
@@ -421,7 +423,8 @@ function buildRequestFunction({ functionName, request, proxy }: EnhanceOptions):
 
   lines.push(hasPipeline ? `def ${functionName}(pipeline_context=None):` : `def ${functionName}():`);
   if (hasPipeline) {
-    lines.push("    pipeline_context = pipeline_context or DEFAULT_PIPELINE_CONTEXT");
+    lines.push("    if pipeline_context is None:");
+    lines.push("        pipeline_context = DEFAULT_PIPELINE_CONTEXT");
     lines.push("");
   }
   lines.push(`    url = ${pyPipelineString(url)}`);
@@ -585,7 +588,7 @@ export function buildMergedScript({ requests, parserFunctionNames = [] }: BatchE
   code.push("");
   requests.forEach((entry) => {
     const parserName = `${entry.functionName}_parser`;
-    const args = requestUsesPipeline(entry.request) ? "pipeline_context=pipeline_context" : "";
+    const args = requestUsesPipeline(entry.request) || (entry.code ? scriptNeedsPipelineContext(entry.code) : false) ? "pipeline_context=pipeline_context" : "";
     code.push(`    response_${entry.functionName} = ${entry.functionName}(${args})`);
     if (parserSet.has(parserName)) {
       code.push(`    pipeline_context[${pyString(entry.functionName)}] = ${parserName}(response_${entry.functionName})`);
@@ -598,7 +601,13 @@ export function buildMergedScript({ requests, parserFunctionNames = [] }: BatchE
 }
 
 export function scriptUsesPipeline(code: string): boolean {
-  return PIPELINE_PLACEHOLDER_PATTERN.test(code) || code.includes("pipeline_context") || code.includes("resolve_pipeline_placeholders");
+  return scriptNeedsPipelineContext(code) || code.includes("pipeline_utils");
+}
+
+export function scriptNeedsPipelineContext(code: string): boolean {
+  return PIPELINE_PLACEHOLDER_PATTERN.test(code)
+    || code.includes("get_pipeline_value(")
+    || code.includes("resolve_pipeline_placeholders(");
 }
 
 export function buildParserStubs(functionNames: string[]): string {

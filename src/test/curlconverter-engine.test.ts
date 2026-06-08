@@ -86,7 +86,8 @@ describe("frontend curlconverter pipeline", () => {
     expect(code).toContain('get_pipeline_value("request_1", ".token", pipeline_context)');
     expect(code).not.toContain("{{request_1.");
     expect(code).not.toContain("{request_1.");
-    expect(code).toContain("pipeline_context = pipeline_context or DEFAULT_PIPELINE_CONTEXT");
+    expect(code).toContain("if pipeline_context is None:");
+    expect(code).toContain("pipeline_context = DEFAULT_PIPELINE_CONTEXT");
     expect(code).toContain('"coordinates": [');
     expect(code).toContain("12.9716");
     expect(code).toContain('"store_id": "12345"');
@@ -100,6 +101,8 @@ describe("frontend curlconverter pipeline", () => {
       parserFunctionNames: ["request_1_parser"],
     });
     expect(merged).toContain("pipeline_context = {}");
+    expect(merged).toContain("response_request_1 = request_1()");
+    expect(merged).not.toContain("response_request_1 = request_1(pipeline_context=pipeline_context)");
     expect(merged).toContain("response_request_2 = request_2(pipeline_context=pipeline_context)");
     expect(merged).toContain('pipeline_context["request_1"] = request_1_parser(response_request_1)');
   });
@@ -152,10 +155,35 @@ def do_requests():
     expect(repaired).toContain("from pipeline_utils import get_pipeline_value, resolve_pipeline_placeholders");
     expect(repaired).toContain("DEFAULT_PIPELINE_CONTEXT = {");
     expect(repaired).toContain("def request_2(pipeline_context=None):");
-    expect(repaired).toContain("pipeline_context = pipeline_context or DEFAULT_PIPELINE_CONTEXT");
+    expect(repaired).toContain("if pipeline_context is None:");
+    expect(repaired).toContain("pipeline_context = DEFAULT_PIPELINE_CONTEXT");
     expect(repaired).toContain('"searchTerm": get_pipeline_value("request_1", ".suggestion_word", pipeline_context)');
     expect(repaired).toContain("params = resolve_pipeline_placeholders(params, pipeline_context)");
     expect(repaired).toContain("request_2(pipeline_context=pipeline_context)");
     expect(repaired).not.toContain("{{request_1.suggestion_word}}");
+  });
+
+  it("passes pipeline_context in merged script when edited request code depends on pipeline", () => {
+    const request1 = convertCurlLocally("curl 'https://example.com/bootstrap'").request;
+    const request2 = convertCurlLocally("curl 'https://example.com/products?searchTerm=placeholder'").request;
+    const editedRequest2 = repairPythonPipelinePlaceholders(`def request_2():
+    params = {
+        "searchTerm": "{{request_1.suggestion_word}}",
+    }
+    return None
+`);
+
+    const merged = buildMergedScript({
+      requests: [
+        { functionName: "request_1", request: request1 },
+        { functionName: "request_2", request: request2, code: editedRequest2 },
+      ],
+      parserFunctionNames: ["request_1_parser"],
+    });
+
+    expect(merged).toContain('pipeline_context["request_1"] = request_1_parser(response_request_1)');
+    expect(merged).toContain("response_request_1 = request_1()");
+    expect(merged).not.toContain("response_request_1 = request_1(pipeline_context=pipeline_context)");
+    expect(merged).toContain("response_request_2 = request_2(pipeline_context=pipeline_context)");
   });
 });
