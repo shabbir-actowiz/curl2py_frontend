@@ -156,6 +156,7 @@ export interface StartFeasibilityTestRequest {
   collection_name?: string;
   workspace_name: string;
   request: FeasibilityRequestSpec;
+  request_code?: string | null;
   user_proxy?: ProxyConfig | null;
   test_user_proxy?: boolean;
   production_like?: boolean;

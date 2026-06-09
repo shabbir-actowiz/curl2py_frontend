@@ -745,6 +745,9 @@ export default function Index() {
   const activeWorkspaceDisplayName = activeWorkspaceName || "request";
   const activeWorkspaceArtifact = activeWorkspaceId ? workspaceArtifacts[activeWorkspaceId] : undefined;
   const activeRequestCode = activeTab?.code ?? "";
+  const activeWorkspaceRequestCode = activeWorkspaceId
+    ? allTabs.find((tab) => tab.id === `req-${activeWorkspaceId}`)?.code ?? ""
+    : "";
   const activeCodeFilename = activeTab?.filename || "-";
   const activeCodeContent = activeRequestCode;
   const isActiveCodeDirty = !!(activeTab && dirtyCodeTabs[activeTab.id]);
@@ -4894,6 +4897,7 @@ export default function Index() {
           workspaceId={activeWorkspaceId}
           workspaceName={activeWorkspaceDisplayName}
           request={activeFeasibilityRequest}
+          requestCode={activeWorkspaceRequestCode}
           userProxy={proxyConfig}
           existingFeasibilityCodeSignature={activeWorkspaceArtifact?.feasibilityCodeSignature}
           onArtifacts={handleFeasibilityArtifacts}

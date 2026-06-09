@@ -28,6 +28,7 @@ interface FeasibilityTesterProps {
   workspaceId: string;
   workspaceName: string;
   request: ParsedCurl | null;
+  requestCode: string;
   userProxy: ProxyConfig;
   existingFeasibilityCodeSignature?: string;
   onArtifacts: (workspaceId: string, artifacts: FeasibilityArtifact[]) => void;
@@ -43,6 +44,7 @@ export function FeasibilityTester({
   workspaceId,
   workspaceName,
   request,
+  requestCode,
   userProxy,
   existingFeasibilityCodeSignature,
   onArtifacts,
@@ -60,13 +62,13 @@ export function FeasibilityTester({
   const [contentMarker, setContentMarker] = useState("");
   const [debuggingMode, setDebuggingMode] = useState(false);
   const artifactTestIdRef = useRef("");
-  const codeGenerationKeyRef = useRef("");
 
   const requestSignature = useMemo(() => {
     if (!workspaceId || !request?.url || request.error) return "";
     return JSON.stringify({
       workspaceId,
       workspaceName,
+      requestCode,
       request: {
         url: request.url,
         method: request.method,
@@ -74,13 +76,14 @@ export function FeasibilityTester({
         body: request.data ?? null,
       },
     });
-  }, [request, workspaceId, workspaceName]);
+  }, [request, requestCode, workspaceId, workspaceName]);
 
   const buildPayload = (): StartFeasibilityTestRequest | null => {
     if (!request?.url || request.error) return null;
     return {
       collection_name: collectionName,
       workspace_name: workspaceName,
+      request_code: requestCode,
       request: {
         url: request.url,
         method: request.method,
@@ -99,25 +102,6 @@ export function FeasibilityTester({
       debugging_mode: debuggingMode,
     };
   };
-
-  useEffect(() => {
-    if (!open || !workspaceId || !requestSignature) return;
-    if (existingFeasibilityCodeSignature === requestSignature) return;
-    if (codeGenerationKeyRef.current === requestSignature) return;
-    const payload = buildPayload();
-    if (!payload) return;
-    codeGenerationKeyRef.current = requestSignature;
-    void generateFeasibilityCodeArtifacts(payload)
-      .then(({ artifacts }) => {
-        onCodeArtifacts(workspaceId, artifacts, requestSignature);
-        toast.success("Feasibility tester code added to the selected request");
-      })
-      .catch((error) => {
-        codeGenerationKeyRef.current = "";
-        toast.error(`Feasibility code generation failed: ${extractApiErrorMessage(error)}`);
-      });
-  // Code generation is intentionally keyed to the selected request, not test option tweaks.
-  }, [existingFeasibilityCodeSignature, onCodeArtifacts, open, requestSignature, workspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!testId || !isRunning) return;
@@ -162,6 +146,11 @@ export function FeasibilityTester({
       setLogs([`[${new Date().toLocaleTimeString()}] Preparing feasibility test for ${workspaceName}`]);
       const payload = buildPayload();
       if (!payload) return;
+      if (existingFeasibilityCodeSignature !== requestSignature) {
+        const { artifacts } = await generateFeasibilityCodeArtifacts(payload);
+        onCodeArtifacts(workspaceId, artifacts, requestSignature);
+        toast.success("Feasibility tester code added to the selected request");
+      }
       const started = await startFeasibilityTest(payload);
       setTestId(started.test_id);
       setIsRunning(true);
