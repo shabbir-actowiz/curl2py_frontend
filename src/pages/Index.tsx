@@ -11,7 +11,6 @@ import {
 } from "@/lib/curl-to-python";
 import { HighlightedPython } from "@/lib/python-highlight";
 import { CodeEditor } from "@/components/CodeEditor";
-import { FeasibilityTester } from "@/components/feasibility/FeasibilityTester";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,6 +29,7 @@ import {
   deleteConversionCollection,
   deleteConversionSnippet,
   extractApiErrorMessage,
+  generateFeasibilityCodeArtifacts,
   getUserWorkspace,
   renameConversionCollection,
   runParserWithBackend,
@@ -503,7 +503,6 @@ export default function Index() {
   const [isSyncingBackend, setIsSyncingBackend] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [isRunningParser, setIsRunningParser] = useState(false);
-  const [feasibilityTesterOpen, setFeasibilityTesterOpen] = useState(false);
   const [raiseIssueOpen, setRaiseIssueOpen] = useState(false);
   const [htmlParserOpen, setHtmlParserOpen] = useState(false);
   const [htmlScriptJsonSources, setHtmlScriptJsonSources] = useState<ScriptJsonSource[]>([]);
@@ -2763,24 +2762,6 @@ export default function Index() {
     setStatusMsg(`Downloaded ${filesToDownload.length} file${filesToDownload.length === 1 ? "" : "s"} as ZIP`);
   };
 
-  const handleFeasibilityArtifacts = useCallback((workspaceId: string, artifacts: FeasibilityArtifact[]) => {
-    if (!workspaceId || artifacts.length === 0) return;
-    updateWorkspaceArtifact(workspaceId, (artifact) => ({
-      ...artifact,
-      responseOutputs: {
-        ...artifact.responseOutputs,
-        ...Object.fromEntries(artifacts.map((file) => [
-          file.filename,
-          {
-            content: file.content,
-            contentType: file.content_type,
-            extension: file.filename.split(".").pop() || "txt",
-          },
-        ])),
-      },
-    }));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
   const handleFeasibilityCodeArtifacts = useCallback((workspaceId: string, artifacts: FeasibilityArtifact[], signature: string) => {
     if (!workspaceId || artifacts.length === 0) return;
     updateWorkspaceArtifact(workspaceId, (artifact) => ({
@@ -2799,6 +2780,66 @@ export default function Index() {
       },
     }));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleGenerateLocalFeasibilityCode = useCallback(async () => {
+    if (!activeWorkspaceId || !activeFeasibilityRequest?.url || activeFeasibilityRequest.error) {
+      toast.error("Select a valid request before generating feasibility code");
+      return;
+    }
+
+    const signature = JSON.stringify({
+      workspaceId: activeWorkspaceId,
+      workspaceName: activeWorkspaceDisplayName,
+      requestCode: activeWorkspaceRequestCode,
+      request: {
+        url: activeFeasibilityRequest.url,
+        method: activeFeasibilityRequest.method,
+        headers: activeFeasibilityRequest.headers,
+        body: activeFeasibilityRequest.data ?? null,
+      },
+    });
+
+    try {
+      const { artifacts } = await generateFeasibilityCodeArtifacts({
+        collection_name: activeCollection.name,
+        workspace_name: activeWorkspaceDisplayName,
+        request_code: activeWorkspaceRequestCode,
+        request: {
+          url: activeFeasibilityRequest.url,
+          method: activeFeasibilityRequest.method,
+          headers: activeFeasibilityRequest.headers,
+          body: activeFeasibilityRequest.data,
+          timeout_seconds: 10,
+          content_marker: null,
+        },
+        user_proxy: proxyConfig,
+        test_user_proxy: false,
+        production_like: true,
+        polite_delay_enabled: true,
+        polite_delay_min_ms: 200,
+        polite_delay_max_ms: 500,
+        normal_request_retries: 2,
+        debugging_mode: false,
+      });
+      handleFeasibilityCodeArtifacts(activeWorkspaceId, artifacts, signature);
+      setStatusKind("success");
+      setStatusMsg("Feasibility code generated. Run this file locally to test safely.");
+      toast.success("Feasibility code generated. Run this file locally to test safely.");
+    } catch (error) {
+      const message = extractApiErrorMessage(error);
+      setStatusKind("error");
+      setStatusMsg(message);
+      toast.error(`Feasibility code generation failed: ${message}`);
+    }
+  }, [
+    activeCollection.name,
+    activeFeasibilityRequest,
+    activeWorkspaceDisplayName,
+    activeWorkspaceId,
+    activeWorkspaceRequestCode,
+    handleFeasibilityCodeArtifacts,
+    proxyConfig,
+  ]);
 
   const handleCloseTab = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -4686,12 +4727,12 @@ export default function Index() {
                   </DropdownMenuContent>
                 </DropdownMenu>
                 <button
-                  onClick={() => setFeasibilityTesterOpen(true)}
+                  onClick={() => void handleGenerateLocalFeasibilityCode()}
                   disabled={!activeWorkspaceId || !activeFeasibilityRequest?.url}
                   className={quietToolbarButtonClass}
-                  title={activeWorkspaceId ? `Test scraping feasibility for ${activeWorkspaceDisplayName}` : "Select a workspace to test"}
+                  title={activeWorkspaceId ? `Generate local feasibility tester for ${activeWorkspaceDisplayName}` : "Select a workspace"}
                 >
-                  Feasibility Test
+                  Generate Local Feasibility Code
                 </button>
                 <button
                   onClick={() => void handleRunActiveWorkspace()}
@@ -4890,19 +4931,6 @@ export default function Index() {
             )}
           </section>
         </main>
-        <FeasibilityTester
-          open={feasibilityTesterOpen}
-          onOpenChange={setFeasibilityTesterOpen}
-          collectionName={activeCollection.name}
-          workspaceId={activeWorkspaceId}
-          workspaceName={activeWorkspaceDisplayName}
-          request={activeFeasibilityRequest}
-          requestCode={activeWorkspaceRequestCode}
-          userProxy={proxyConfig}
-          existingFeasibilityCodeSignature={activeWorkspaceArtifact?.feasibilityCodeSignature}
-          onArtifacts={handleFeasibilityArtifacts}
-          onCodeArtifacts={handleFeasibilityCodeArtifacts}
-        />
       </div>
 
       {/* STATUS BAR */}
