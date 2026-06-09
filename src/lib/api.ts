@@ -530,6 +530,13 @@ export async function startFeasibilityTest(payload: StartFeasibilityTestRequest)
   });
 }
 
+export async function generateFeasibilityCodeArtifacts(payload: StartFeasibilityTestRequest): Promise<{ artifacts: FeasibilityArtifact[] }> {
+  return request<{ artifacts: FeasibilityArtifact[] }>(apiRoutes.feasibilityCodeArtifacts, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function getFeasibilityTest(testId: string): Promise<FeasibilityTestStatus> {
   return request<FeasibilityTestStatus>(apiRoutes.feasibilityTest(testId), { method: "GET" });
 }

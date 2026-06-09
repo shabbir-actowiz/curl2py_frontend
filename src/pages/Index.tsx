@@ -188,6 +188,7 @@ interface WorkspaceArtifact {
   parserGenerated?: boolean;
   dbSourceJson?: string;
   dbCode?: string;
+  feasibilityCodeSignature?: string;
 }
 
 interface CollectionState {
@@ -741,6 +742,7 @@ export default function Index() {
   const activeReqIdx = activeTab?.reqIdx ?? null;
   const activeWorkspaceIdx = snippets.findIndex((snippet) => snippet.id === activeWorkspaceId);
   const activeWorkspaceName = activeWorkspaceIdx >= 0 ? effectiveNames[activeWorkspaceIdx] : "";
+  const activeWorkspaceDisplayName = activeWorkspaceName || "request";
   const activeWorkspaceArtifact = activeWorkspaceId ? workspaceArtifacts[activeWorkspaceId] : undefined;
   const activeRequestCode = activeTab?.code ?? "";
   const activeCodeFilename = activeTab?.filename || "-";
@@ -766,7 +768,6 @@ export default function Index() {
     : activeCodeContent;
   const activeMetaJson = activeWorkspaceArtifact?.metaJson;
   const activeLogsTxt = activeWorkspaceArtifact?.logsTxt ?? "";
-  const activeWorkspaceDisplayName = activeWorkspaceName || "request";
   const activeFeasibilityRequest = activeWorkspaceIdx >= 0 ? blocks[activeWorkspaceIdx]?.parsed ?? null : null;
   const visibleResponseTabs = useMemo(
     () => openResponseTabs.filter((tab) => tab.collectionId === activeCollection.id),
@@ -2759,9 +2760,9 @@ export default function Index() {
     setStatusMsg(`Downloaded ${filesToDownload.length} file${filesToDownload.length === 1 ? "" : "s"} as ZIP`);
   };
 
-  const handleFeasibilityArtifacts = useCallback((artifacts: FeasibilityArtifact[]) => {
-    if (!activeWorkspaceId || artifacts.length === 0) return;
-    updateWorkspaceArtifact(activeWorkspaceId, (artifact) => ({
+  const handleFeasibilityArtifacts = useCallback((workspaceId: string, artifacts: FeasibilityArtifact[]) => {
+    if (!workspaceId || artifacts.length === 0) return;
+    updateWorkspaceArtifact(workspaceId, (artifact) => ({
       ...artifact,
       responseOutputs: {
         ...artifact.responseOutputs,
@@ -2775,7 +2776,26 @@ export default function Index() {
         ])),
       },
     }));
-  }, [activeWorkspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleFeasibilityCodeArtifacts = useCallback((workspaceId: string, artifacts: FeasibilityArtifact[], signature: string) => {
+    if (!workspaceId || artifacts.length === 0) return;
+    updateWorkspaceArtifact(workspaceId, (artifact) => ({
+      ...artifact,
+      feasibilityCodeSignature: signature,
+      responseOutputs: {
+        ...artifact.responseOutputs,
+        ...Object.fromEntries(artifacts.map((file) => [
+          file.filename,
+          {
+            content: file.content,
+            contentType: file.content_type,
+            extension: file.filename.split(".").pop() || "txt",
+          },
+        ])),
+      },
+    }));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCloseTab = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -4871,10 +4891,13 @@ export default function Index() {
           open={feasibilityTesterOpen}
           onOpenChange={setFeasibilityTesterOpen}
           collectionName={activeCollection.name}
+          workspaceId={activeWorkspaceId}
           workspaceName={activeWorkspaceDisplayName}
           request={activeFeasibilityRequest}
           userProxy={proxyConfig}
+          existingFeasibilityCodeSignature={activeWorkspaceArtifact?.feasibilityCodeSignature}
           onArtifacts={handleFeasibilityArtifacts}
+          onCodeArtifacts={handleFeasibilityCodeArtifacts}
         />
       </div>
 

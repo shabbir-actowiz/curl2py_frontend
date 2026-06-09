@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Activity, Clipboard, Loader2, Play, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
@@ -6,9 +6,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import {
   cancelFeasibilityTest,
   extractApiErrorMessage,
+  generateFeasibilityCodeArtifacts,
   getFeasibilityTest,
   startFeasibilityTest,
   type FeasibilityArtifact,
+  type StartFeasibilityTestRequest,
   type FeasibilityTestStatus,
 } from "@/lib/api";
 import type { ParsedCurl } from "@/lib/curl-to-python";
@@ -23,10 +25,13 @@ interface FeasibilityTesterProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   collectionName: string;
+  workspaceId: string;
   workspaceName: string;
   request: ParsedCurl | null;
   userProxy: ProxyConfig;
-  onArtifacts: (artifacts: FeasibilityArtifact[]) => void;
+  existingFeasibilityCodeSignature?: string;
+  onArtifacts: (workspaceId: string, artifacts: FeasibilityArtifact[]) => void;
+  onCodeArtifacts: (workspaceId: string, artifacts: FeasibilityArtifact[], signature: string) => void;
 }
 
 const buttonClass = "inline-flex h-7 items-center justify-center gap-1.5 rounded-sm border border-border bg-background/40 px-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-surface-elevated hover:text-foreground disabled:cursor-not-allowed disabled:opacity-45";
@@ -35,10 +40,13 @@ export function FeasibilityTester({
   open,
   onOpenChange,
   collectionName,
+  workspaceId,
   workspaceName,
   request,
   userProxy,
+  existingFeasibilityCodeSignature,
   onArtifacts,
+  onCodeArtifacts,
 }: FeasibilityTesterProps) {
   const [result, setResult] = useState<FeasibilityTestStatus | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
@@ -52,6 +60,64 @@ export function FeasibilityTester({
   const [contentMarker, setContentMarker] = useState("");
   const [debuggingMode, setDebuggingMode] = useState(false);
   const artifactTestIdRef = useRef("");
+  const codeGenerationKeyRef = useRef("");
+
+  const requestSignature = useMemo(() => {
+    if (!workspaceId || !request?.url || request.error) return "";
+    return JSON.stringify({
+      workspaceId,
+      workspaceName,
+      request: {
+        url: request.url,
+        method: request.method,
+        headers: request.headers,
+        body: request.data ?? null,
+      },
+    });
+  }, [request, workspaceId, workspaceName]);
+
+  const buildPayload = (): StartFeasibilityTestRequest | null => {
+    if (!request?.url || request.error) return null;
+    return {
+      collection_name: collectionName,
+      workspace_name: workspaceName,
+      request: {
+        url: request.url,
+        method: request.method,
+        headers: request.headers,
+        body: request.data,
+        timeout_seconds: 10,
+        content_marker: contentMarker.trim() || null,
+      },
+      user_proxy: userProxy,
+      test_user_proxy: testUserProxy && userProxy.enabled && !!userProxy.url.trim(),
+      production_like: productionLike,
+      polite_delay_enabled: productionLike && politeDelay,
+      polite_delay_min_ms: delayMinMs,
+      polite_delay_max_ms: delayMaxMs,
+      normal_request_retries: productionLike ? 2 : 0,
+      debugging_mode: debuggingMode,
+    };
+  };
+
+  useEffect(() => {
+    if (!open || !workspaceId || !requestSignature) return;
+    if (existingFeasibilityCodeSignature === requestSignature) return;
+    if (codeGenerationKeyRef.current === requestSignature) return;
+    const payload = buildPayload();
+    if (!payload) return;
+    codeGenerationKeyRef.current = requestSignature;
+    void generateFeasibilityCodeArtifacts(payload)
+      .then(({ artifacts }) => {
+        onCodeArtifacts(workspaceId, artifacts, requestSignature);
+        toast.success("Feasibility tester code added to the selected request");
+      })
+      .catch((error) => {
+        codeGenerationKeyRef.current = "";
+        toast.error(`Feasibility code generation failed: ${extractApiErrorMessage(error)}`);
+      });
+  // Code generation is intentionally keyed to the selected request, not test option tweaks.
+  }, [existingFeasibilityCodeSignature, onCodeArtifacts, open, requestSignature, workspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!testId || !isRunning) return;
@@ -66,7 +132,7 @@ export function FeasibilityTester({
           setIsRunning(false);
           if (next.status === "completed" && artifactTestIdRef.current !== next.test_id) {
             artifactTestIdRef.current = next.test_id;
-            onArtifacts(next.artifacts);
+            onArtifacts(workspaceId, next.artifacts);
             toast.success("Feasibility report files added to the selected request");
           }
           if (next.status === "failed") toast.error(next.error || "Feasibility test failed");
@@ -83,7 +149,7 @@ export function FeasibilityTester({
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [isRunning, onArtifacts, testId]);
+  }, [isRunning, onArtifacts, testId, workspaceId]);
 
   const handleRun = async () => {
     if (isRunning) return;
@@ -94,26 +160,9 @@ export function FeasibilityTester({
     try {
       setResult(null);
       setLogs([`[${new Date().toLocaleTimeString()}] Preparing feasibility test for ${workspaceName}`]);
-      const started = await startFeasibilityTest({
-        collection_name: collectionName,
-        workspace_name: workspaceName,
-        request: {
-          url: request.url,
-          method: request.method,
-          headers: request.headers,
-          body: request.data,
-          timeout_seconds: 10,
-          content_marker: contentMarker.trim() || null,
-        },
-        user_proxy: userProxy,
-        test_user_proxy: testUserProxy && userProxy.enabled && !!userProxy.url.trim(),
-        production_like: productionLike,
-        polite_delay_enabled: productionLike && politeDelay,
-        polite_delay_min_ms: delayMinMs,
-        polite_delay_max_ms: delayMaxMs,
-        normal_request_retries: productionLike ? 2 : 0,
-        debugging_mode: debuggingMode,
-      });
+      const payload = buildPayload();
+      if (!payload) return;
+      const started = await startFeasibilityTest(payload);
       setTestId(started.test_id);
       setIsRunning(true);
     } catch (error) {

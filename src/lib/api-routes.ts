@@ -12,6 +12,7 @@ export const apiRoutes = {
   runWorkspace: "/run-workspace",
   runParser: "/api/v1/run-parser",
   feasibilityTests: "/api/v1/feasibility-tests",
+  feasibilityCodeArtifacts: "/api/v1/feasibility-tests/code-artifacts",
   feasibilityTest: (id: string) => `/api/v1/feasibility-tests/${encodeURIComponent(id)}`,
   cancelFeasibilityTest: (id: string) => `/api/v1/feasibility-tests/${encodeURIComponent(id)}/cancel`,
   history: "/api/v1/history",
