@@ -1,6 +1,6 @@
 import { Component, type ErrorInfo, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { Check, Copy, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, AlertCircle, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil, Moon, Sun, Play, Loader2, WrapText } from "lucide-react";
+import { Check, Copy, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, AlertCircle, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil, Moon, Sun, Play, Loader2, WrapText, Wrench, UserCircle, Sparkles } from "lucide-react";
 import JSZip from "jszip";
 import { toast } from "sonner";
 import favicon from "/favicon-32x32.png";
@@ -15,6 +15,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -234,6 +236,11 @@ const DEFAULT_PROXY_CONFIG: ProxyConfig = { enabled: false, url: "" };
 const toolbarButtonClass = "inline-flex h-7 items-center justify-center gap-1.5 rounded-sm border px-2.5 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45";
 const quietToolbarButtonClass = `${toolbarButtonClass} border-border bg-background/40 text-muted-foreground hover:border-border-strong hover:bg-surface-elevated hover:text-foreground`;
 const primaryToolbarButtonClass = `${toolbarButtonClass} border-primary/60 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary`;
+const topbarButtonClass = "inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-sm border border-border bg-background/45 px-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:border-border-strong hover:bg-surface-elevated hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45";
+const topbarPrimaryButtonClass = "inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-sm border border-primary/70 bg-primary/15 px-3 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/25 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45";
+const topbarRunButtonClass = "inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-sm border border-primary/80 bg-primary px-3.5 text-[11px] font-semibold text-primary-foreground shadow-sm shadow-primary/10 transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45";
+const modernMenuContentClass = "min-w-48 border-border bg-background/95 p-1 text-foreground shadow-xl shadow-black/20 backdrop-blur";
+const modernMenuItemClass = "gap-2 rounded-sm px-2 py-1.5 text-[12px] text-muted-foreground focus:bg-surface-elevated focus:text-foreground";
 const panelTabClass = "relative border-r border-border px-3 py-2 text-[12px] font-mono transition-colors";
 const fileTabClass = "group relative flex cursor-pointer items-center gap-1.5 border-r border-border px-3 py-2 text-[11px] font-mono transition-colors";
 
@@ -523,6 +530,7 @@ export default function Index() {
   const [issueFiles, setIssueFiles] = useState<File[]>([]);
   const [isSubmittingIssue, setIsSubmittingIssue] = useState(false);
   const [submittedIssueId, setSubmittedIssueId] = useState("");
+  const [pendingParserReplacePath, setPendingParserReplacePath] = useState<string | null>(null);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>("");
   const [activeWorkspaceFile, setActiveWorkspaceFile] = useState<WorkspaceFile>("request.py");
   const [dirtyCodeTabs, setDirtyCodeTabs] = useState<Record<string, boolean>>({});
@@ -568,6 +576,7 @@ export default function Index() {
   const [isDraggingDivider, setIsDraggingDivider] = useState(false);
   const [hasLoadedRemoteWorkspace, setHasLoadedRemoteWorkspace] = useState(false);
   const [workspaceSaveState, setWorkspaceSaveState] = useState<WorkspaceSaveState>("idle");
+  const [lastWorkspaceSavedAt, setLastWorkspaceSavedAt] = useState<Date | null>(null);
 
   const { user, accessToken, refreshAccessToken, logout } = useAuth();
   const location = useLocation();
@@ -753,6 +762,7 @@ export default function Index() {
         clearPendingWorkspace(current.version);
         if (!queuedWorkspaceSaveRef.current) {
           setWorkspaceSaveState("saved");
+          setLastWorkspaceSavedAt(new Date());
           if (current.manual) {
             setStatusKind("success");
             setStatusMsg("Saved");
@@ -914,6 +924,24 @@ export default function Index() {
   const activeMetaJson = activeWorkspaceArtifact?.metaJson;
   const activeLogsTxt = activeWorkspaceArtifact?.logsTxt ?? "";
   const activeFeasibilityRequest = activeWorkspaceIdx >= 0 ? blocks[activeWorkspaceIdx]?.parsed ?? null : null;
+  const activeRequestMethod = activeFeasibilityRequest?.method?.toUpperCase() || "REQ";
+  const activeRequestDomain = activeFeasibilityRequest?.domain || "-";
+  const parserStatusLabel = activeWorkspaceArtifact?.parserCode && activeWorkspaceArtifact.parserCode !== buildParserStub(activeWorkspaceDisplayName)
+    ? "Parser"
+    : "None";
+  const saveStatusLabel = workspaceSaveState === "saving"
+    ? "Saving..."
+    : workspaceSaveState === "session-expired"
+      ? "Session expired"
+      : workspaceSaveState === "error"
+        ? "Could not save"
+        : workspaceSaveState === "saved"
+          ? lastWorkspaceSavedAt
+            ? `Last saved ${formatRelativeSeconds(lastWorkspaceSavedAt)}`
+            : "Saved"
+          : user
+            ? "Not saved"
+            : "Login to save";
   const visibleResponseTabs = useMemo(
     () => openResponseTabs.filter((tab) => tab.collectionId === activeCollection.id),
     [openResponseTabs, activeCollection.id]
@@ -1912,7 +1940,7 @@ export default function Index() {
   const activePanelContent = getActivePanelContent();
   const hasActivePanelContent = activePanelContent.length > 0;
   const currentFileActions = (
-    <div className="ml-auto flex items-center gap-1">
+    <div className="flex items-center gap-1">
       {activePanelTab === "code" && (
         <button
           onClick={() => setCodeWordWrap((prev) => !prev)}
@@ -2093,7 +2121,7 @@ export default function Index() {
     setActiveWorkspaceFile("parser.py");
   };
 
-  const addPathToParser = (path: string) => {
+  const addPathToParser = (path: string, options: { replaceCustomParser?: boolean } = {}) => {
     const targetCollection = isParserRoute ? parserCollection : activeCollection;
     const targetNames = targetCollection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(targetCollection.snippets);
     const workspaceId = isParserRoute ? parserWorkspaceId : activeResponseTab?.workspaceId || activeWorkspaceId;
@@ -2134,7 +2162,8 @@ export default function Index() {
       }
 
       const isGeneratedParser = artifact.parserGenerated || artifact.parserCode === buildParserStub(workspaceName);
-      if (!isGeneratedParser && !window.confirm("Replace custom parser.py with generated parser code?")) {
+      if (!isGeneratedParser && !options.replaceCustomParser) {
+        setPendingParserReplacePath(path);
         return prev;
       }
 
@@ -2886,6 +2915,15 @@ export default function Index() {
     } finally {
       setIsSubmittingIssue(false);
     }
+  };
+
+  const openRaiseIssueDialog = () => {
+    if (!user) {
+      toast.error("Please login to raise an issue");
+      return;
+    }
+    setSubmittedIssueId("");
+    setRaiseIssueOpen(true);
   };
 
   const handleDownloadAll = async () => {
@@ -3998,136 +4036,243 @@ export default function Index() {
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
       {/* TOP BAR */}
-      <header className="flex h-12 items-center justify-between border-b border-border bg-surface/70 px-4">
-        <div className="flex items-center gap-0">
+      <header className="flex h-12 items-center gap-3 border-b border-border bg-surface/85 px-3 backdrop-blur">
+        <div className="flex min-w-0 shrink-0 items-center gap-2">
           <button
             onClick={() => setSidebarOpen((s) => !s)}
-            className="mr-1 flex h-6 w-6 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-surface-elevated hover:text-foreground"
+            className="flex h-8 w-8 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-surface-elevated hover:text-foreground"
             title={sidebarOpen ? "Hide collection" : "Show collection"}
             aria-label="Toggle collection"
           >
             <PanelLeft className="h-3.5 w-3.5" strokeWidth={1.75} />
           </button>
-          <img src={favicon} alt="logo" className="mr-1 h-6 w-6" />
-          <h1 className="m-0 p-0 text-[15px] font-semibold leading-none tracking-tight">
+          <img src={favicon} alt="logo" className="h-6 w-6" />
+          <h1 className="m-0 hidden p-0 text-[15px] font-semibold leading-none tracking-tight sm:block">
             <span className="text-primary">curl</span>
             <span className="text-muted-foreground">2</span>
             <span className="text-foreground">py</span>
           </h1>
-          
         </div>
 
-        <div className="flex items-center gap-2">
-
-          <button
-            onClick={() => setTheme((value) => value === "dark" ? "light" : "dark")}
-            className={quietToolbarButtonClass}
-            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-          >
-            {theme === "dark" ? <Sun className="h-3 w-3" strokeWidth={2} /> : <Moon className="h-3 w-3" strokeWidth={2} />}
-            {theme === "dark" ? "Light" : "Dark"}
-          </button>
-
-          <button
-            onClick={() => setMergeMode((s) => !s)}
-            className={cn(
-              toolbarButtonClass,
-              mergeMode
-                ? "border-primary/60 bg-primary/10 text-primary hover:bg-primary/15"
-                : "border-border bg-background/40 text-muted-foreground hover:border-border-strong hover:bg-surface-elevated hover:text-foreground"
-            )}
-            title="Combine all requests into a single script + parser stub"
-          >
-            <FileCode className="h-3 w-3" strokeWidth={2} />
-            Merge Scripts
-          </button>
-
-          {/* <button
-            onClick={() => setOptionsOpen((s) => !s)}
-            className={cn(
-              "flex items-center gap-1.5 rounded-sm border border-border bg-transparent px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground",
-              optionsOpen && "border-border-strong text-foreground"
-            )}
-            aria-expanded={optionsOpen}
-          > */}
-            {/* <span>{client}{isAsync ? " - async" : ""}</span>
-            <ChevronDown
-              className={cn("h-3 w-3 transition-transform", optionsOpen && "rotate-180")}
-              strokeWidth={2}
-            />
-          </button> */}
-
-          
-
-          <button
-            onClick={handleDownloadAll}
-            disabled={visibleTabs.length === 0}
-            className={quietToolbarButtonClass}
-            title="Download all files as ZIP"
-          >
-            <Download className="h-3 w-3" strokeWidth={2} />
-            Download All
-          </button>
-
-          <button
-            onClick={() => void handleSyncBackend({ force: true })}
-            disabled={isSyncingBackend || snippets.length === 0}
-            className={cn(
-              toolbarButtonClass,
-              snippets.length > 0 && !isSyncingBackend
-                ? "border-primary/60 bg-primary/10 text-primary hover:bg-primary/15"
-                : "border-border bg-background/40 text-muted-foreground hover:border-border-strong hover:bg-surface-elevated hover:text-foreground"
-            )}
-            title="Regenerate Python locally"
-          >
-            <Upload className="h-3 w-3" strokeWidth={2} />
-            {isSyncingBackend ? "Converting..." : "Generate"}
-          </button>
-
-          <button
-            onClick={() => {
-              if (!user) {
-                toast.error("Please login to raise an issue");
-                return;
-              }
-              setSubmittedIssueId("");
-              setRaiseIssueOpen(true);
-            }}
-            aria-disabled={!user}
-            className={cn(quietToolbarButtonClass, !user && "opacity-50")}
-            title={user ? "Raise an issue" : "Login to raise an issue"}
-          >
-            Raise Issue
-          </button>
-
-          <div className="mx-1 h-4 w-px bg-border" aria-hidden />
-
-          {user ? (
-            <div className="flex items-center gap-2">
-              <span className="hidden max-w-[140px] truncate text-[11px] text-muted-foreground sm:inline">
-                {user.username}
-              </span>
-              <button
-                onClick={handleLogout}
-                className={quietToolbarButtonClass}
-                title="Sign out"
-              >
-                <LogOut className="h-3 w-3" strokeWidth={2} />
-                Logout
+        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button className={topbarButtonClass} title="Requests">
+                <span className="text-foreground">{snippets.length}</span>
+                <span className="hidden sm:inline">Snippet{snippets.length === 1 ? "" : "s"}</span>
+                <ChevronDown className="h-3 w-3" strokeWidth={2} />
               </button>
-            </div>
-          ) : (
-            <Link
-              to="/login"
-              className={primaryToolbarButtonClass}
-              title="Login or sign up to save your collections"
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className={modernMenuContentClass}>
+              <DropdownMenuLabel className="px-2 py-1 text-[11px] uppercase tracking-wide text-muted-foreground">Requests</DropdownMenuLabel>
+              {snippets.map((snippet, index) => (
+                <DropdownMenuItem
+                  key={snippet.id}
+                  className={modernMenuItemClass}
+                  onClick={() => {
+                    setActiveWorkspaceId(snippet.id);
+                    setActiveWorkspaceFile("request.py");
+                    setActiveTabId(`req-${snippet.id}`);
+                    setExpandedWorkspaceIds((prev) => new Set(prev).add(snippet.id));
+                  }}
+                >
+                  <span className="truncate">{effectiveNames[index] || snippet.name || `request_${index + 1}`}</span>
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator className="bg-border" />
+              <DropdownMenuItem className={modernMenuItemClass} onClick={handleAddSnippet}>
+                <Plus className="h-3.5 w-3.5" strokeWidth={2} />
+                Add Request
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <div className="hidden min-w-0 items-center gap-2 rounded-sm border border-border bg-background/25 px-2.5 py-1.5 font-mono text-[11px] text-muted-foreground lg:flex">
+            <span className="font-semibold text-primary">{activeRequestMethod}</span>
+            <span className="text-border-strong">|</span>
+            <span className="truncate text-foreground">{activeRequestDomain}</span>
+            <span className="text-border-strong">|</span>
+            <span>{parserStatusLabel}</span>
+            <span className="text-border-strong">|</span>
+            <span className="truncate text-primary">{activeWorkspaceDisplayName}</span>
+          </div>
+
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className={topbarButtonClass} title={activeWorkspaceId ? `Open parser for ${activeWorkspaceDisplayName}` : "Open parser"}>
+                  <FileCode className="h-3.5 w-3.5" strokeWidth={2} />
+                  Parser
+                  <ChevronDown className="h-3 w-3" strokeWidth={2} />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className={modernMenuContentClass}>
+                <DropdownMenuItem className={modernMenuItemClass} onClick={() => openParserPage("json")}>
+                  JSON Parser
+                </DropdownMenuItem>
+                <DropdownMenuItem className={modernMenuItemClass} onClick={openHtmlParser}>
+                  HTML Parser
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <button
+              onClick={() => void handleSyncBackend({ force: true })}
+              disabled={isSyncingBackend || snippets.length === 0}
+              className={topbarPrimaryButtonClass}
+              title="Regenerate Python locally"
             >
-              <LogIn className="h-3 w-3" strokeWidth={2} />
-              Login
-            </Link>
-          )}
+              {isSyncingBackend ? <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} /> : <Upload className="h-3.5 w-3.5" strokeWidth={2} />}
+              <span className="hidden sm:inline">{isSyncingBackend ? "Converting..." : "Generate"}</span>
+            </button>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className={topbarButtonClass} title="Feasibility tools">
+                  <Sparkles className="h-3.5 w-3.5" strokeWidth={2} />
+                  <span className="hidden md:inline">Feasibility</span>
+                  <ChevronDown className="h-3 w-3" strokeWidth={2} />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className={modernMenuContentClass}>
+                <DropdownMenuItem
+                  className={modernMenuItemClass}
+                  disabled={!activeWorkspaceId || !activeFeasibilityRequest?.url}
+                  onClick={() => void handleGenerateLocalFeasibilityCode()}
+                >
+                  Generate Local Code
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <div className={cn(
+              "hidden max-w-[150px] truncate rounded-sm border px-2 py-1.5 font-mono text-[11px] md:block",
+              workspaceSaveState === "error" || workspaceSaveState === "session-expired"
+                ? "border-destructive/40 bg-destructive/5 text-destructive"
+                : workspaceSaveState === "saving"
+                  ? "border-border bg-background/25 text-muted-foreground"
+                  : "border-border bg-background/25 text-success"
+            )}>
+              {saveStatusLabel}
+            </div>
+
+            <button
+              onClick={handleManualWorkspaceSave}
+              disabled={!user || workspaceSaveState === "saving"}
+              className={topbarButtonClass}
+              title={user ? "Save workspace now" : "Login to save workspace"}
+            >
+              {workspaceSaveState === "saving" ? <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} /> : <Save className="h-3.5 w-3.5" strokeWidth={2} />}
+              <span className="hidden md:inline">Save</span>
+            </button>
+
+            <button
+              onClick={() => void handleRunActiveWorkspace()}
+              disabled={!activeWorkspaceId || isRunning}
+              className={topbarRunButtonClass}
+              title={activeWorkspaceId ? `Run ${activeWorkspaceDisplayName}` : "Select a workspace to run"}
+            >
+              {isRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} /> : <Play className="h-3.5 w-3.5" strokeWidth={2} />}
+              {isRunning ? "Running..." : "Run"}
+            </button>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className={topbarButtonClass} title="Tools">
+                  <Wrench className="h-3.5 w-3.5" strokeWidth={2} />
+                  <span className="hidden xl:inline">Tools</span>
+                  <ChevronDown className="h-3 w-3" strokeWidth={2} />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className={modernMenuContentClass}>
+                <DropdownMenuItem className={modernMenuItemClass} onClick={() => setMergeMode((s) => !s)}>
+                  <FileCode className="h-3.5 w-3.5" strokeWidth={2} />
+                  {mergeMode ? "Disable Merge Scripts" : "Merge Scripts"}
+                </DropdownMenuItem>
+                <DropdownMenuItem className={modernMenuItemClass} disabled={visibleTabs.length === 0} onClick={handleDownloadAll}>
+                  <Download className="h-3.5 w-3.5" strokeWidth={2} />
+                  Download All
+                </DropdownMenuItem>
+                <DropdownMenuItem className={modernMenuItemClass} onClick={openRaiseIssueDialog}>
+                  <AlertCircle className="h-3.5 w-3.5" strokeWidth={2} />
+                  Raise Issue
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {user ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className={topbarButtonClass} title="User menu">
+                    <UserCircle className="h-3.5 w-3.5" strokeWidth={2} />
+                    <span className="hidden max-w-[120px] truncate sm:inline">{user.username}</span>
+                    <ChevronDown className="h-3 w-3" strokeWidth={2} />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className={modernMenuContentClass}>
+                  <DropdownMenuLabel className="px-2 py-1.5 text-[12px]">
+                    <div className="truncate text-foreground">{user.username}</div>
+                    <div className="truncate text-[11px] font-normal text-muted-foreground">{user.email}</div>
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator className="bg-border" />
+                  <DropdownMenuItem className={modernMenuItemClass} disabled>
+                    Profile
+                  </DropdownMenuItem>
+                  <DropdownMenuItem className={modernMenuItemClass} onClick={() => setTheme((value) => value === "dark" ? "light" : "dark")}>
+                    {theme === "dark" ? <Sun className="h-3.5 w-3.5" strokeWidth={2} /> : <Moon className="h-3.5 w-3.5" strokeWidth={2} />}
+                    {theme === "dark" ? "Light Theme" : "Dark Theme"}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem className={modernMenuItemClass} onClick={openRaiseIssueDialog}>
+                    <AlertCircle className="h-3.5 w-3.5" strokeWidth={2} />
+                    Raise Issue
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator className="bg-border" />
+                  <DropdownMenuItem className={cn(modernMenuItemClass, "text-destructive focus:text-destructive")} onClick={handleLogout}>
+                    <LogOut className="h-3.5 w-3.5" strokeWidth={2} />
+                    Logout
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <Link to="/login" className={topbarPrimaryButtonClass} title="Login or sign up to save your collections">
+                <LogIn className="h-3.5 w-3.5" strokeWidth={2} />
+                Login
+              </Link>
+            )}
+          </div>
         </div>
       </header>
+
+      <Dialog open={!!pendingParserReplacePath} onOpenChange={(open) => !open && setPendingParserReplacePath(null)}>
+        <DialogContent className="max-w-sm border-border bg-background font-mono text-foreground">
+          <DialogHeader>
+            <DialogTitle className="text-[15px]">Replace parser.py?</DialogTitle>
+          </DialogHeader>
+          <div className="text-[12px] leading-5 text-muted-foreground">
+            This request has custom parser code. Adding this path will replace it with generated parser code.
+          </div>
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setPendingParserReplacePath(null)}
+              className={quietToolbarButtonClass}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const path = pendingParserReplacePath;
+                setPendingParserReplacePath(null);
+                if (path) addPathToParser(path, { replaceCustomParser: true });
+              }}
+              className={primaryToolbarButtonClass}
+            >
+              Replace
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={raiseIssueOpen} onOpenChange={setRaiseIssueOpen}>
         <DialogContent className="max-w-md border-border bg-background font-mono text-foreground">
@@ -4858,7 +5003,7 @@ export default function Index() {
           <section ref={outputRef} className="flex min-h-0 min-w-0 flex-col">
            
 
-            <div className="flex items-center justify-between border-b border-border bg-surface">
+            <div className="flex items-center border-b border-border bg-surface">
               <div className="flex min-w-0 flex-1 items-center gap-0 overflow-x-auto scrollbar-thin">
                 {(["code", "response"] as WorkspacePanelTab[]).map((tab) => (
                   <button
@@ -4874,75 +5019,6 @@ export default function Index() {
                     {tab.charAt(0).toUpperCase() + tab.slice(1)}
                   </button>
                 ))}
-              </div>
-              <div className="flex items-center gap-2 pr-3">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      className={quietToolbarButtonClass}
-                      title={activeWorkspaceId ? `Open parser for ${activeWorkspaceDisplayName}` : "Open parser"}
-                    >
-                      <FileCode className="h-4 w-4" strokeWidth={2} />
-                      Parser
-                      <ChevronDown className="h-3 w-3" strokeWidth={2} />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="border-border bg-background text-foreground">
-                    <DropdownMenuItem className="text-[11px]" onClick={() => openParserPage("json")}>
-                      JSON Parser
-                    </DropdownMenuItem>
-                    <DropdownMenuItem className="text-[11px]" onClick={openHtmlParser}>
-                      HTML Parser
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-                <button
-                  onClick={() => void handleGenerateLocalFeasibilityCode()}
-                  disabled={!activeWorkspaceId || !activeFeasibilityRequest?.url}
-                  className={quietToolbarButtonClass}
-                  title={activeWorkspaceId ? `Generate local feasibility tester for ${activeWorkspaceDisplayName}` : "Select a workspace"}
-                >
-                  Generate Local Feasibility Code
-                </button>
-                <button
-                  onClick={handleManualWorkspaceSave}
-                  disabled={!user || workspaceSaveState === "saving"}
-                  className={quietToolbarButtonClass}
-                  title={user ? "Save workspace now" : "Login to save workspace"}
-                >
-                  {workspaceSaveState === "saving" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
-                  ) : (
-                    <Save className="h-4 w-4" strokeWidth={2} />
-                  )}
-                  {workspaceSaveState === "saving"
-                    ? "Saving..."
-                    : workspaceSaveState === "saved"
-                      ? "Saved"
-                      : workspaceSaveState === "session-expired"
-                        ? "Session expired"
-                        : workspaceSaveState === "error"
-                          ? "Could not save"
-                          : "Save"}
-                </button>
-                <button
-                  onClick={() => void handleRunActiveWorkspace()}
-                  disabled={!activeWorkspaceId || isRunning}
-                  className={cn(
-                    toolbarButtonClass,
-                    activeWorkspaceId
-                      ? "border-primary/60 bg-primary/10 text-primary hover:bg-primary/15"
-                      : "border-border bg-background/40 text-muted-foreground hover:border-border-strong hover:bg-surface-elevated hover:text-foreground"
-                  )}
-                  title={activeWorkspaceId ? `Run ${activeWorkspaceDisplayName}` : "Select a workspace to run"}
-                >
-                  {isRunning ? (
-                    <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
-                  ) : (
-                    <Play className="h-4 w-4" strokeWidth={2} />
-                  )}
-                  {isRunning ? "Running..." : "Run"}
-                </button>
               </div>
             </div>
 
@@ -5009,7 +5085,7 @@ export default function Index() {
 
                 {activeTab && (
                   <div className="flex min-h-0 flex-1 flex-col">
-                    <MetaRow tab={activeTab} blocks={blocks} names={effectiveNames} actions={currentFileActions} dirty={isActiveCodeDirty} />
+                    <MetaRow tab={activeTab} blocks={blocks} names={effectiveNames} actions={currentFileActions} dirty={isActiveCodeDirty} saveStatus={saveStatusLabel} />
 
                     <div className="relative min-h-0 flex-1 overflow-auto">
                       {activeWorkspaceFile !== "parser.py" && activeWorkspaceFile !== "db.py" && activeTab.hasError && activeTab.kind === "request" ? (
@@ -7923,26 +7999,36 @@ function AutoTextarea({
   );
 }
 
-function MetaRow({ tab, blocks, names, actions, dirty = false }: { tab: OutputTab; blocks: SnippetBlock[]; names: string[]; actions?: ReactNode; dirty?: boolean }) {
+function formatRelativeSeconds(date: Date) {
+  const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+  if (seconds < 5) return "just now";
+  if (seconds < 60) return `${seconds} sec ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours} hr ago`;
+}
+
+function MetaRow({ tab, blocks, names, actions, dirty = false, saveStatus }: { tab: OutputTab; blocks: SnippetBlock[]; names: string[]; actions?: ReactNode; dirty?: boolean; saveStatus?: string }) {
   if (tab.kind === "merged") {
     const valid = blocks.filter((b) => b.raw.trim() && !b.parsed.error).length;
     return (
-      <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-1.5 font-mono text-[12px]">
-        <span className="font-semibold text-primary">MULTI</span>
-        <span className="text-syntax-comment">|</span>
-        <span className="text-foreground">{valid} snippet{valid === 1 ? "" : "s"}</span>
-        <span className="text-syntax-comment">|</span>
-        <span className="text-muted-foreground">Combined Script{dirty ? " *" : ""}</span>
+      <div className="flex min-h-9 items-center gap-2 border-b border-border bg-background px-4 py-1.5 font-mono text-[12px]">
+        <span className="rounded-sm border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">MULTI</span>
+        <span className="text-muted-foreground">{valid} snippet{valid === 1 ? "" : "s"}</span>
+        <span className="text-border-strong">|</span>
+        <span className="text-foreground">Combined Script{dirty ? " *" : ""}</span>
+        {saveStatus && <span className="ml-auto text-[11px] text-muted-foreground">{saveStatus}</span>}
         {actions}
       </div>
     );
   }
   if (tab.kind === "parser") {
     return (
-      <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-1.5 font-mono text-[12px]">
-        <span className="font-semibold text-syntax-function">PARSER</span>
-        <span className="text-syntax-comment">|</span>
+      <div className="flex min-h-9 items-center gap-2 border-b border-border bg-background px-4 py-1.5 font-mono text-[12px]">
+        <span className="rounded-sm border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">PARSER</span>
         <span className="text-muted-foreground">Auto-generated{dirty ? " *" : ""}</span>
+        {saveStatus && <span className="ml-auto text-[11px] text-muted-foreground">{saveStatus}</span>}
         {actions}
       </div>
     );
@@ -7951,10 +8037,10 @@ function MetaRow({ tab, blocks, names, actions, dirty = false }: { tab: OutputTa
   const parsed = blocks[idx]?.parsed;
   if (!parsed || parsed.error) {
     return (
-      <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-1.5 font-mono text-[12px]">
-        <span className="font-semibold text-destructive">REQUEST</span>
-        <span className="text-syntax-comment">|</span>
+      <div className="flex min-h-9 items-center gap-2 border-b border-border bg-background px-4 py-1.5 font-mono text-[12px]">
+        <span className="rounded-sm border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold text-destructive">REQUEST</span>
         <span className="text-primary">{names[idx] ?? tab.filename}{dirty ? " *" : ""}</span>
+        {saveStatus && <span className="ml-auto text-[11px] text-muted-foreground">{saveStatus}</span>}
         {actions}
       </div>
     );
@@ -7970,14 +8056,14 @@ function MetaRow({ tab, blocks, names, actions, dirty = false }: { tab: OutputTa
     OPTIONS: "text-muted-foreground",
   };
   return (
-    <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-1.5 font-mono text-[12px]">
-      <span className={cn("font-semibold", methodColor[m] || "text-foreground")}>{m}</span>
-      <span className="text-syntax-comment">|</span>
-      <span className="text-foreground">{parsed.domain}</span>
-      <span className="text-syntax-comment">|</span>
-      <span className="text-muted-foreground">{parsed.dataType}</span>
-      <span className="text-syntax-comment">|</span>
-      <span className="text-primary">{names[idx]}{dirty ? " *" : ""}</span>
+    <div className="flex min-h-9 items-center gap-2 border-b border-border bg-background px-4 py-1.5 font-mono text-[12px]">
+      <span className={cn("rounded-sm border border-border bg-surface px-1.5 py-0.5 text-[10px] font-semibold", methodColor[m] || "text-foreground")}>{m}</span>
+      <span className="truncate text-foreground">{parsed.domain}</span>
+      <span className="text-border-strong">|</span>
+      <span className="text-muted-foreground">{parsed.dataType || "None"}</span>
+      <span className="text-border-strong">|</span>
+      <span className="truncate text-primary">{names[idx]}{dirty ? " *" : ""}</span>
+      {saveStatus && <span className="ml-auto whitespace-nowrap text-[11px] text-muted-foreground">{saveStatus}</span>}
       {actions}
     </div>
   );

@@ -1,7 +1,15 @@
 import Editor, { type BeforeMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
+import { useState } from "react";
 
 import { cn } from "@/lib/utils";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface CodeEditorProps {
   value: string;
@@ -126,8 +134,22 @@ function cursorIsInsideQuotes(line: string, column: number): boolean {
   return single || double;
 }
 
-const VARIABLE_TYPES = new Set(["string", "int", "float", "bool"]);
+const VARIABLE_TYPE_OPTIONS = ["string", "int", "float", "bool"] as const;
+const VARIABLE_TYPES = new Set<string>(VARIABLE_TYPE_OPTIONS);
 const PIPELINE_DEFAULTS_PREFIX = "# curl2py-pipeline-defaults: ";
+type VariableType = typeof VARIABLE_TYPE_OPTIONS[number];
+
+type PendingVariableDialog = {
+  mode: "parser" | "manual";
+  editor: Monaco.editor.IStandaloneCodeEditor;
+  monaco: Parameters<BeforeMount>[0];
+  model: Monaco.editor.ITextModel;
+  position: Monaco.Position;
+  range: Monaco.Range | Monaco.Selection | null;
+  selectedText: string;
+  requestName?: string;
+  key?: string;
+};
 
 function sanitizePythonName(value: string): string {
   let next = value.trim().replace(/[^A-Za-z0-9_]+/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "").toLowerCase();
@@ -277,6 +299,90 @@ function updatePipelineDefaultsComment(code: string, requestName: string, key: s
 }
 
 export function CodeEditor({ value, filename, onChange, wordWrap = false, readOnly = false, className, parserInsertGroups = [] }: CodeEditorProps) {
+  const [pendingDialog, setPendingDialog] = useState<PendingVariableDialog | null>(null);
+  const [variableName, setVariableName] = useState("");
+  const [variableType, setVariableType] = useState<VariableType>("string");
+  const [dialogError, setDialogError] = useState("");
+
+  const openParserVariableDialog = (dialog: PendingVariableDialog) => {
+    setPendingDialog(dialog);
+    setVariableName("");
+    setVariableType("string");
+    setDialogError("");
+  };
+
+  const openManualVariableDialog = (dialog: PendingVariableDialog) => {
+    setPendingDialog(dialog);
+    setVariableName(sanitizePythonName(dialog.selectedText.replace(/^['"]|['"]$/g, "")));
+    setVariableType("string");
+    setDialogError("");
+  };
+
+  const closeVariableDialog = () => {
+    setPendingDialog(null);
+    setDialogError("");
+  };
+
+  const submitVariableDialog = () => {
+    if (!pendingDialog) return;
+    const expectedType = variableType;
+    if (!VARIABLE_TYPES.has(expectedType)) {
+      setDialogError("Type must be one of: string, int, float, bool");
+      return;
+    }
+
+    const { editor, monaco, model, position, range, selectedText } = pendingDialog;
+    if (pendingDialog.mode === "parser") {
+      const requestName = pendingDialog.requestName;
+      const key = pendingDialog.key;
+      if (!requestName || !key) return;
+      const placeholder = `{{${requestName}.${key}|${expectedType}}}`;
+      const line = model.getLineContent(position.lineNumber);
+      const text = range && selectedText
+        ? ((selectedText.startsWith('"') && selectedText.endsWith('"')) || (selectedText.startsWith("'") && selectedText.endsWith("'")) ? `"${placeholder}"` : placeholder)
+        : cursorIsInsideQuotes(line, position.column) ? placeholder : `"${placeholder}"`;
+      const editRange = range ?? new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column);
+      editor.executeEdits("insert-parser-output", [{ range: editRange, text, forceMoveMarkers: true }]);
+      if (range && selectedText) {
+        try {
+          const defaultValue = coerceDefaultValue(parsePythonLiteral(selectedText), expectedType);
+          const nextValue = updatePipelineDefaultsComment(model.getValue(), requestName, key, defaultValue);
+          model.setValue(nextValue);
+          onChange(nextValue);
+        } catch (error) {
+          setDialogError(error instanceof Error ? error.message : "Default value conversion failed");
+          return;
+        }
+      }
+      editor.focus();
+      closeVariableDialog();
+      return;
+    }
+
+    const nextVariableName = sanitizePythonName(variableName);
+    if (!nextVariableName) {
+      setDialogError("Variable name is required");
+      return;
+    }
+    let defaultLiteral: string;
+    try {
+      defaultLiteral = pythonLiteral(coerceDefaultValue(parsePythonLiteral(selectedText), expectedType));
+    } catch (error) {
+      setDialogError(error instanceof Error ? error.message : "Default value conversion failed");
+      return;
+    }
+    if (!range) return;
+    const currentCode = model.getValue();
+    const offset = model.getOffsetAt(range.getStartPosition());
+    const length = model.getValueLengthInRange(range);
+    const replacedCode = `${currentCode.slice(0, offset)}${nextVariableName}${currentCode.slice(offset + length)}`;
+    const nextValue = addFunctionArgument(replacedCode, nextVariableName, defaultLiteral);
+    model.setValue(nextValue);
+    onChange(nextValue);
+    editor.focus();
+    closeVariableDialog();
+  };
+
   return (
     <div className={cn("min-h-0 h-full", className)}>
       <Editor
@@ -302,29 +408,17 @@ export function CodeEditor({ value, filename, onChange, wordWrap = false, readOn
                   const selection = ed.getSelection();
                   const range = selection && !selection.isEmpty() ? selection : findValueRange(model, position, monaco);
                   const selectedText = range ? model.getValueInRange(range).trim() : "";
-                  const expectedType = window.prompt("Expected variable type: string, int, float, bool", "string")?.trim().toLowerCase() || "string";
-                  if (!VARIABLE_TYPES.has(expectedType)) {
-                    window.alert("Expected type must be one of: string, int, float, bool");
-                    return;
-                  }
-                  const placeholder = `{{${group.requestName}.${key}|${expectedType}}}`;
-                  const line = model.getLineContent(position.lineNumber);
-                  const text = range && selectedText
-                    ? ((selectedText.startsWith('"') && selectedText.endsWith('"')) || (selectedText.startsWith("'") && selectedText.endsWith("'")) ? `"${placeholder}"` : placeholder)
-                    : cursorIsInsideQuotes(line, position.column) ? placeholder : `"${placeholder}"`;
-                  const editRange = range ?? new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column);
-                  ed.executeEdits("insert-parser-output", [{ range: editRange, text, forceMoveMarkers: true }]);
-                  if (range && selectedText) {
-                    try {
-                      const defaultValue = coerceDefaultValue(parsePythonLiteral(selectedText), expectedType);
-                      const nextValue = updatePipelineDefaultsComment(model.getValue(), group.requestName, key, defaultValue);
-                      model.setValue(nextValue);
-                      onChange(nextValue);
-                    } catch (error) {
-                      window.alert(error instanceof Error ? error.message : "Default value conversion failed");
-                    }
-                  }
-                  ed.focus();
+                  openParserVariableDialog({
+                    mode: "parser",
+                    editor: ed,
+                    monaco,
+                    model,
+                    position,
+                    range,
+                    selectedText,
+                    requestName: group.requestName,
+                    key,
+                  });
                 },
               });
             });
@@ -343,28 +437,15 @@ export function CodeEditor({ value, filename, onChange, wordWrap = false, readOn
               if (!range) return;
               const selectedText = model.getValueInRange(range).trim();
               if (!selectedText) return;
-              const variableName = sanitizePythonName(window.prompt("Variable name", "") || "");
-              if (!variableName) return;
-              const expectedType = window.prompt("Variable type: string, int, float, bool", "string")?.trim().toLowerCase() || "string";
-              if (!VARIABLE_TYPES.has(expectedType)) {
-                window.alert("Variable type must be one of: string, int, float, bool");
-                return;
-              }
-              let defaultLiteral: string;
-              try {
-                defaultLiteral = pythonLiteral(coerceDefaultValue(parsePythonLiteral(selectedText), expectedType));
-              } catch (error) {
-                window.alert(error instanceof Error ? error.message : "Default value conversion failed");
-                return;
-              }
-              const currentCode = model.getValue();
-              const offset = model.getOffsetAt(range.getStartPosition());
-              const length = model.getValueLengthInRange(range);
-              const replacedCode = `${currentCode.slice(0, offset)}${variableName}${currentCode.slice(offset + length)}`;
-              const nextValue = addFunctionArgument(replacedCode, variableName, defaultLiteral);
-              model.setValue(nextValue);
-              onChange(nextValue);
-              ed.focus();
+              openManualVariableDialog({
+                mode: "manual",
+                editor: ed,
+                monaco,
+                model,
+                position,
+                range,
+                selectedText,
+              });
             },
           });
         }}
@@ -398,6 +479,74 @@ export function CodeEditor({ value, filename, onChange, wordWrap = false, readOn
           wrappingIndent: "indent",
         }}
       />
+      <Dialog open={!!pendingDialog} onOpenChange={(open) => !open && closeVariableDialog()}>
+        <DialogContent className="max-w-sm border-border bg-background font-mono text-foreground">
+          <DialogHeader>
+            <DialogTitle className="text-[15px]">
+              {pendingDialog?.mode === "manual" ? "Make Variable" : "Insert Parser Value"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-[12px]">
+            {pendingDialog?.mode === "manual" ? (
+              <label className="block space-y-1">
+                <span className="text-muted-foreground">Variable Name</span>
+                <input
+                  value={variableName}
+                  onChange={(event) => setVariableName(event.target.value)}
+                  className="h-8 w-full rounded-sm border border-border bg-background px-2 text-foreground outline-none focus:border-border-strong"
+                  autoFocus
+                />
+              </label>
+            ) : (
+              <div className="rounded-sm border border-border bg-surface/50 px-2 py-1.5 text-muted-foreground">
+                {pendingDialog?.requestName}.{pendingDialog?.key}
+              </div>
+            )}
+            <label className="block space-y-1">
+              <span className="text-muted-foreground">Type</span>
+              <select
+                value={variableType}
+                onChange={(event) => setVariableType(event.target.value as VariableType)}
+                className="h-8 w-full rounded-sm border border-border bg-background px-2 text-foreground outline-none focus:border-border-strong"
+                autoFocus={pendingDialog?.mode === "parser"}
+              >
+                {VARIABLE_TYPE_OPTIONS.map((type) => (
+                  <option key={type} value={type}>{type}</option>
+                ))}
+              </select>
+            </label>
+            {pendingDialog?.selectedText ? (
+              <div className="space-y-1">
+                <span className="text-muted-foreground">Current Value</span>
+                <div className="max-h-20 overflow-auto rounded-sm border border-border bg-surface/50 px-2 py-1.5 text-foreground">
+                  {pendingDialog.selectedText}
+                </div>
+              </div>
+            ) : null}
+            {dialogError ? (
+              <div className="rounded-sm border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-destructive">
+                {dialogError}
+              </div>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={closeVariableDialog}
+              className="inline-flex h-8 items-center justify-center rounded-sm border border-border bg-background/40 px-3 text-[12px] text-muted-foreground transition-colors hover:bg-surface-elevated hover:text-foreground"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={submitVariableDialog}
+              className="inline-flex h-8 items-center justify-center rounded-sm border border-primary/60 bg-primary/10 px-3 text-[12px] font-medium text-primary transition-colors hover:bg-primary/15"
+            >
+              Apply
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
