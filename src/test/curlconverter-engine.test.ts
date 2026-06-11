@@ -65,6 +65,31 @@ describe("frontend curlconverter pipeline", () => {
     expect(code).toContain('"sec-fetch-site": "same-origin"');
   });
 
+  it("extracts cookie header into requests cookies for GET", () => {
+    const code = generate(`curl 'https://example.com/api?q=milk' -H 'accept: */*' -H 'cookie: _fbp=abc; gr_1_deviceId=device-1'`);
+    expect(code).toContain("cookies = {");
+    expect(code).toContain('"_fbp": "abc"');
+    expect(code).toContain('"gr_1_deviceId": "device-1"');
+    expect(code).toContain("        cookies=cookies,");
+    expect(code).toContain("        headers=headers,");
+    expect(code).toContain('"accept": "*/*"');
+    expect(code).not.toContain('"cookie":');
+    expect(code).not.toContain('"Cookie":');
+    expect(code).not.toContain("# cookie");
+  });
+
+  it("extracts cookie header into requests cookies for POST", () => {
+    const code = generate(`curl 'https://example.com/api' -X POST -H 'content-type: application/json' -H 'Cookie: session=abc; theme=dark' --data '{"ok":true}'`);
+    expect(code).toContain("response = requests.post(");
+    expect(code).toContain("cookies = {");
+    expect(code).toContain('"session": "abc"');
+    expect(code).toContain('"theme": "dark"');
+    expect(code).toContain("        cookies=cookies,");
+    expect(code).toContain("json=json_data");
+    expect(code).not.toContain('"Cookie":');
+    expect(code).not.toContain('"cookie":');
+  });
+
   it("throws a frontend conversion error for invalid cURL", () => {
     expect(() => convertCurlLocally("not a curl")).toThrow(CurlConverterError);
   });
@@ -87,7 +112,7 @@ describe("frontend curlconverter pipeline", () => {
     expect(code).not.toContain("{{request_1.");
     expect(code).not.toContain("{request_1.");
     expect(code).toContain("if pipeline_context is None:");
-    expect(code).toContain('raise ValueError("pipeline_context is required for request_2; standalone defaults are used only by do_requests()")');
+    expect(code).toContain("pipeline_context = DEFAULT_PIPELINE_CONTEXT");
     expect(code).toContain("request_2(pipeline_context=DEFAULT_PIPELINE_CONTEXT)");
     expect(code).toContain('"coordinates": [');
     expect(code).toContain("12.9716");
@@ -157,7 +182,7 @@ def do_requests():
     expect(repaired).toContain("DEFAULT_PIPELINE_CONTEXT = {");
     expect(repaired).toContain("def request_2(pipeline_context=None):");
     expect(repaired).toContain("if pipeline_context is None:");
-    expect(repaired).toContain('raise ValueError("pipeline_context is required for request_2; standalone defaults are used only by do_requests()")');
+    expect(repaired).toContain("pipeline_context = DEFAULT_PIPELINE_CONTEXT");
     expect(repaired).toContain('"searchTerm": get_pipeline_value("request_1", ".suggestion_word", pipeline_context)');
     expect(repaired).toContain("params = resolve_pipeline_placeholders(params, pipeline_context)");
     expect(repaired).toContain("request_2(pipeline_context=DEFAULT_PIPELINE_CONTEXT)");

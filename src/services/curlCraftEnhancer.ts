@@ -145,8 +145,37 @@ function cleanHeaders(headers: JSONOutput["headers"]): Record<string, string> {
   return Object.fromEntries(
     Object.entries(headers)
       .filter(([, value]) => value !== null && value !== undefined)
+      .filter(([key]) => key.toLowerCase() !== "cookie")
       .map(([key, value]) => [key, String(value)])
   );
+}
+
+function parseCookieHeader(value: unknown): Record<string, string> {
+  if (value === null || value === undefined) return {};
+  return String(value).split(";").reduce<Record<string, string>>((cookies, part) => {
+    const trimmed = part.trim();
+    if (!trimmed) return cookies;
+    const separator = trimmed.indexOf("=");
+    if (separator < 0) {
+      cookies[trimmed] = "";
+      return cookies;
+    }
+    const name = trimmed.slice(0, separator).trim();
+    if (!name) return cookies;
+    cookies[name] = trimmed.slice(separator + 1).trim();
+    return cookies;
+  }, {});
+}
+
+function extractCookies(headers: JSONOutput["headers"]): Record<string, string> {
+  if (!headers) return {};
+  const cookieValues = Object.entries(headers)
+    .filter(([key, value]) => key.toLowerCase() === "cookie" && value !== null && value !== undefined)
+    .map(([, value]) => value);
+  return cookieValues.reduce<Record<string, string>>((cookies, value) => ({
+    ...cookies,
+    ...parseCookieHeader(value),
+  }), {});
 }
 
 function splitUrlAndQueries(rawUrl: string, queries: JSONOutput["queries"]): { url: string; params: Record<string, unknown> } {
@@ -428,9 +457,9 @@ function addPipelineArgAndDefault(code: string): string {
     }
     const nextLine = lines[index + 1] ?? "";
     if (nextLine.includes("pipeline_context = pipeline_context or DEFAULT_PIPELINE_CONTEXT")) {
-      lines.splice(index + 1, 1, "    if pipeline_context is None:", `        raise ValueError("pipeline_context is required for ${match[1]}; standalone defaults are used only by do_requests()")`);
+      lines.splice(index + 1, 1, "    if pipeline_context is None:", "        pipeline_context = DEFAULT_PIPELINE_CONTEXT");
     } else if (!nextLine.includes("if pipeline_context is None:")) {
-      lines.splice(index + 1, 0, "    if pipeline_context is None:", `        raise ValueError("pipeline_context is required for ${match[1]}; standalone defaults are used only by do_requests()")`, "");
+      lines.splice(index + 1, 0, "    if pipeline_context is None:", "        pipeline_context = DEFAULT_PIPELINE_CONTEXT", "");
     }
     break;
   }
@@ -541,7 +570,9 @@ function buildRequestFunction({ functionName, request, proxy }: EnhanceOptions):
   const method = (request.method || "get").toLowerCase();
   const { url, params } = splitUrlAndQueries(request.url || request.raw_url, request.queries);
   const headers = cleanHeaders(request.headers);
+  const cookies = extractCookies(request.headers);
   const hasHeaders = Object.keys(headers).length > 0;
+  const hasCookies = Object.keys(cookies).length > 0;
   const hasParams = Object.keys(params).length > 0;
   const hasProxy = !!proxy?.enabled && !!proxy.url?.trim();
   const jsonBody = headersContain(request.headers, "application/json") && request.data && typeof request.data === "object"
@@ -554,7 +585,7 @@ function buildRequestFunction({ functionName, request, proxy }: EnhanceOptions):
   lines.push(hasPipeline ? `def ${functionName}(pipeline_context=None):` : `def ${functionName}():`);
   if (hasPipeline) {
     lines.push("    if pipeline_context is None:");
-    lines.push(`        raise ValueError("pipeline_context is required for ${functionName}; standalone defaults are used only by do_requests()")`);
+    lines.push("        pipeline_context = DEFAULT_PIPELINE_CONTEXT");
     lines.push("");
   }
   lines.push(`    url = ${pyPipelineString(url)}`);
@@ -566,6 +597,12 @@ function buildRequestFunction({ functionName, request, proxy }: EnhanceOptions):
   if (hasHeaders) {
     lines.push(`    headers = ${pyDict(headers, 8)}`);
     if (valueHasPipelinePlaceholder(headers)) resolveVars.push("headers");
+    lines.push("");
+  }
+
+  if (hasCookies) {
+    lines.push(`    cookies = ${pyDict(cookies, 8)}`);
+    if (valueHasPipelinePlaceholder(cookies)) resolveVars.push("cookies");
     lines.push("");
   }
 
@@ -621,6 +658,7 @@ function buildRequestFunction({ functionName, request, proxy }: EnhanceOptions):
   lines.push(`    response = requests.${method}(`);
   lines.push("        url,");
   if (hasParams) lines.push("        params=params,");
+  if (hasCookies) lines.push("        cookies=cookies,");
   if (hasHeaders) lines.push("        headers=headers,");
   if (jsonBody !== null) lines.push("        json=json_data,");
   else if (request.data !== undefined && request.data !== null) lines.push("        data=data,");
