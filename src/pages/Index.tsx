@@ -4718,7 +4718,7 @@ export default function Index() {
                               ...(collectionUsesPipeline && scriptUsesPipeline(requestCode) ? ["pipeline_utils.py"] : []),
                               responseFileName,
                               ...Object.entries(artifact?.responseOutputs ?? {})
-                                .filter(([file, output]) => file !== responseFileName && !isTransientResponseOutput(output, file))
+                                .filter(([file]) => file !== responseFileName)
                                 .map(([file]) => file),
                               ...(artifact?.dbCode ? ["db.py"] : []),
                             ];
