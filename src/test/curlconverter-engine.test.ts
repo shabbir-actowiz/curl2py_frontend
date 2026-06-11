@@ -123,15 +123,14 @@ describe("frontend curlconverter pipeline", () => {
       functionName: "request_2",
       request: request2,
     });
-    expect(code).toContain("def request_2(pipeline_context=None):");
+    expect(code).toContain("def request_2(pipeline_context=DEFAULT_PIPELINE_CONTEXT):");
     expect(code).toContain('get_pipeline_value("request_1", ".coordinates[0]", pipeline_context)');
     expect(code).toContain('get_pipeline_value("request_1", ".coordinates[1]", pipeline_context)');
     expect(code).toContain('get_pipeline_value("request_1", ".store_id", pipeline_context)');
     expect(code).toContain('get_pipeline_value("request_1", ".token", pipeline_context)');
     expect(code).not.toContain("{{request_1.");
     expect(code).not.toContain("{request_1.");
-    expect(code).toContain("if pipeline_context is None:");
-    expect(code).toContain("pipeline_context = DEFAULT_PIPELINE_CONTEXT");
+    expect(code).not.toContain("if pipeline_context is None:");
     expect(code).toContain("request_2(pipeline_context=DEFAULT_PIPELINE_CONTEXT)");
     expect(code).toContain('"coordinates": [');
     expect(code).toContain("12.9716");
@@ -199,13 +198,66 @@ def do_requests():
     const repaired = repairPythonPipelinePlaceholders(broken);
     expect(repaired).toContain("from pipeline_utils import get_pipeline_value, resolve_pipeline_placeholders");
     expect(repaired).toContain("DEFAULT_PIPELINE_CONTEXT = {");
-    expect(repaired).toContain("def request_2(pipeline_context=None):");
-    expect(repaired).toContain("if pipeline_context is None:");
-    expect(repaired).toContain("pipeline_context = DEFAULT_PIPELINE_CONTEXT");
+    expect(repaired).toContain("def request_2(pipeline_context=DEFAULT_PIPELINE_CONTEXT):");
+    expect(repaired).not.toContain("if pipeline_context is None:");
     expect(repaired).toContain('"searchTerm": get_pipeline_value("request_1", ".suggestion_word", pipeline_context)');
     expect(repaired).toContain("params = resolve_pipeline_placeholders(params, pipeline_context)");
     expect(repaired).toContain("request_2(pipeline_context=DEFAULT_PIPELINE_CONTEXT)");
     expect(repaired).not.toContain("{{request_1.suggestion_word}}");
+  });
+
+  it("repairs custom-named request files without adding pipeline args to framework helpers", () => {
+    const broken = `import gzip
+import logging
+import os
+import time
+from datetime import datetime
+from curl_cffi import requests
+
+# curl2py-pipeline-defaults: {"suggestion":{"place_id":"110001","tint":"77.072833"}}
+MAX_RETRIES = 3
+RETRY_DELAY_SECONDS = 2
+
+def get_run_folder():
+    return f"pagesaves_{datetime.now().strftime('%Y_%m_%d')}"
+
+def get_request_folder(request_name):
+    request_folder = os.path.join(get_run_folder(), request_name)
+    os.makedirs(request_folder, exist_ok=True)
+    return request_folder
+
+def execute_request(request_name, method, url, **request_kwargs):
+    return requests.request(method, url, **request_kwargs)
+
+def sug_2():
+    url = "https://blinkit.com/location/autoSuggest"
+    params = {
+        "query": "{{suggestion.place_id|string}}",
+        "lng": "{{suggestion.tint|string}}",
+    }
+    params = resolve_pipeline_placeholders(params, pipeline_context)
+    response = execute_request(
+        request_name="sug_2",
+        method="GET",
+        url=url,
+        params=params,
+        impersonate="chrome",
+        timeout=30,
+    )
+    return response
+
+def do_requests():
+    pipeline_context = {}
+    sug_2()
+`;
+
+    const repaired = repairPythonPipelinePlaceholders(broken);
+    expect(repaired).toContain("def get_run_folder():");
+    expect(repaired).not.toContain("def get_run_folder(pipeline_context");
+    expect(repaired).toContain("def sug_2(pipeline_context=DEFAULT_PIPELINE_CONTEXT):");
+    expect(repaired).not.toContain("if pipeline_context is None:");
+    expect(repaired).toContain("sug_2(pipeline_context=DEFAULT_PIPELINE_CONTEXT)");
+    expect(repaired).not.toContain("{{suggestion.");
   });
 
   it("preserves selected pipeline value types and merges standalone defaults", () => {

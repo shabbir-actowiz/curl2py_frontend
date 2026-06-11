@@ -446,23 +446,67 @@ function replacePlaceholderLiterals(code: string): string {
   });
 }
 
+const GENERATED_FRAMEWORK_FUNCTIONS = new Set([
+  "get_run_folder",
+  "get_request_folder",
+  "setup_request_logger",
+  "response_bytes",
+  "save_response",
+  "log_status",
+  "execute_request",
+  "do_requests",
+]);
+
+function getTopLevelFunctions(lines: string[]): Array<{ name: string; args: string; start: number; end: number }> {
+  const functions: Array<{ name: string; args: string; start: number; end: number }> = [];
+  const pattern = /^def\s+([A-Za-z_][A-Za-z0-9_]*)\(([^)]*)\):\s*$/;
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = lines[index].match(pattern);
+    if (!match) continue;
+    const nextIndex = lines.findIndex((line, cursor) => cursor > index && pattern.test(line));
+    functions.push({
+      name: match[1],
+      args: match[2],
+      start: index,
+      end: nextIndex === -1 ? lines.length - 1 : nextIndex - 1,
+    });
+  }
+  return functions;
+}
+
+function functionNeedsPipelineContext(lines: string[], fn: { name: string; start: number; end: number }): boolean {
+  if (GENERATED_FRAMEWORK_FUNCTIONS.has(fn.name) || fn.name.endsWith("_parser")) return false;
+  const body = lines.slice(fn.start + 1, fn.end + 1).join("\n");
+  return body.includes("get_pipeline_value(")
+    || body.includes("resolve_pipeline_placeholders(")
+    || PIPELINE_PLACEHOLDER_PATTERN.test(body);
+}
+
 function addPipelineArgAndDefault(code: string): string {
   const lines = code.split("\n");
-  for (let index = 0; index < lines.length; index += 1) {
-    const match = lines[index].match(/^def\s+(request_\d+|[A-Za-z_][A-Za-z0-9_]*)\(([^)]*)\):\s*$/);
-    if (!match) continue;
-    if (!match[2].includes("pipeline_context")) {
-      const args = match[2].trim();
-      lines[index] = `def ${match[1]}(${args ? `${args}, ` : ""}pipeline_context=None):`;
+  const hasDefaultPipelineContext = code.includes("DEFAULT_PIPELINE_CONTEXT");
+  const pipelineDefaultArg = hasDefaultPipelineContext ? "DEFAULT_PIPELINE_CONTEXT" : "None";
+  getTopLevelFunctions(lines).reverse().forEach((fn) => {
+    if (!functionNeedsPipelineContext(lines, fn)) return;
+    if (!fn.args.includes("pipeline_context")) {
+      const args = fn.args.trim();
+      lines[fn.start] = `def ${fn.name}(${args ? `${args}, ` : ""}pipeline_context=${pipelineDefaultArg}):`;
+    } else {
+      lines[fn.start] = lines[fn.start].replace(/pipeline_context\s*=\s*(?:None|DEFAULT_PIPELINE_CONTEXT)/, `pipeline_context=${pipelineDefaultArg}`);
     }
-    const nextLine = lines[index + 1] ?? "";
+    const nextLine = lines[fn.start + 1] ?? "";
     if (nextLine.includes("pipeline_context = pipeline_context or DEFAULT_PIPELINE_CONTEXT")) {
-      lines.splice(index + 1, 1, "    if pipeline_context is None:", "        pipeline_context = DEFAULT_PIPELINE_CONTEXT");
-    } else if (!nextLine.includes("if pipeline_context is None:")) {
-      lines.splice(index + 1, 0, "    if pipeline_context is None:", "        pipeline_context = DEFAULT_PIPELINE_CONTEXT", "");
+      if (hasDefaultPipelineContext) {
+        lines.splice(fn.start + 1, 1);
+      } else {
+        lines.splice(fn.start + 1, 1, "    if pipeline_context is None:", "        pipeline_context = DEFAULT_PIPELINE_CONTEXT");
+      }
+    } else if (hasDefaultPipelineContext && nextLine.includes("if pipeline_context is None:") && (lines[fn.start + 2] ?? "").includes("pipeline_context = DEFAULT_PIPELINE_CONTEXT")) {
+      lines.splice(fn.start + 1, 3);
+    } else if (!hasDefaultPipelineContext && !nextLine.includes("if pipeline_context is None:")) {
+      lines.splice(fn.start + 1, 0, "    if pipeline_context is None:", "        pipeline_context = DEFAULT_PIPELINE_CONTEXT", "");
     }
-    break;
-  }
+  });
   return lines.join("\n");
 }
 
@@ -488,7 +532,16 @@ function insertResolverAfterAssignment(code: string, variableName: string): stri
 }
 
 function passContextInDoRequests(code: string): string {
-  return code.replace(/^(\s*)request_(\d+)\(\)$/gm, "$1request_$2(pipeline_context=DEFAULT_PIPELINE_CONTEXT)");
+  const lines = code.split("\n");
+  const pipelineFunctions = getTopLevelFunctions(lines)
+    .filter((fn) => functionNeedsPipelineContext(lines, fn))
+    .map((fn) => fn.name);
+  pipelineFunctions.forEach((name) => {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const callPattern = new RegExp(`^(\\s*)${escaped}\\(\\)\\s*$`, "gm");
+    code = code.replace(callPattern, `$1${name}(pipeline_context=DEFAULT_PIPELINE_CONTEXT)`);
+  });
+  return code;
 }
 
 export function repairPythonPipelinePlaceholders(code: string): string {
@@ -582,12 +635,7 @@ function buildRequestFunction({ functionName, request, proxy }: EnhanceOptions):
   const hasPipeline = requestUsesPipeline(request);
   const resolveVars: string[] = [];
 
-  lines.push(hasPipeline ? `def ${functionName}(pipeline_context=None):` : `def ${functionName}():`);
-  if (hasPipeline) {
-    lines.push("    if pipeline_context is None:");
-    lines.push("        pipeline_context = DEFAULT_PIPELINE_CONTEXT");
-    lines.push("");
-  }
+  lines.push(hasPipeline ? `def ${functionName}(pipeline_context=DEFAULT_PIPELINE_CONTEXT):` : `def ${functionName}():`);
   lines.push(`    url = ${pyPipelineString(url)}`);
   if (valueHasPipelinePlaceholder(url)) {
     lines.push("    url = resolve_pipeline_placeholders(url, pipeline_context)");
