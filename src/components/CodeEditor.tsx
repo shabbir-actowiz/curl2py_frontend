@@ -126,6 +126,96 @@ function cursorIsInsideQuotes(line: string, column: number): boolean {
   return single || double;
 }
 
+const VARIABLE_TYPES = new Set(["string", "int", "float", "bool"]);
+
+function sanitizePythonName(value: string): string {
+  let next = value.trim().replace(/[^A-Za-z0-9_]+/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "").toLowerCase();
+  if (!next) next = "value";
+  if (!/^[A-Za-z_]/.test(next)) next = `value_${next}`;
+  return next;
+}
+
+function parsePythonLiteral(raw: string): unknown {
+  const trimmed = raw.trim();
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    try {
+      return JSON.parse(trimmed.startsWith("'") ? `"${trimmed.slice(1, -1).replace(/"/g, '\\"')}"` : trimmed);
+    } catch {
+      return trimmed.slice(1, -1);
+    }
+  }
+  if (trimmed === "True") return true;
+  if (trimmed === "False") return false;
+  if (/^-?\d+$/.test(trimmed)) return Number.parseInt(trimmed, 10);
+  if (/^-?(?:\d+\.\d*|\d*\.\d+)(?:e[+-]?\d+)?$/i.test(trimmed)) return Number.parseFloat(trimmed);
+  return trimmed;
+}
+
+function coerceDefaultValue(value: unknown, type: string): unknown {
+  if (type === "string") return String(value);
+  if (type === "int") {
+    const converted = typeof value === "number" ? value : Number.parseInt(String(value), 10);
+    if (!Number.isInteger(converted)) throw new Error("Default value cannot be converted to int");
+    return converted;
+  }
+  if (type === "float") {
+    const converted = typeof value === "number" ? value : Number.parseFloat(String(value));
+    if (!Number.isFinite(converted)) throw new Error("Default value cannot be converted to float");
+    return converted;
+  }
+  if (type === "bool") {
+    if (typeof value === "boolean") return value;
+    const normalized = String(value).trim().toLowerCase();
+    if (["true", "1", "yes", "y", "on"].includes(normalized)) return true;
+    if (["false", "0", "no", "n", "off"].includes(normalized)) return false;
+    throw new Error("Default value cannot be converted to bool");
+  }
+  return value;
+}
+
+function pythonLiteral(value: unknown): string {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (value === true) return "True";
+  if (value === false) return "False";
+  if (value === null || value === undefined) return "None";
+  return String(value);
+}
+
+function findValueRange(model: Monaco.editor.ITextModel, position: Monaco.Position, monaco: Parameters<BeforeMount>[0]): Monaco.Range | null {
+  const line = model.getLineContent(position.lineNumber);
+  const columnIndex = position.column - 1;
+  const quoted = /(['"])(?:\\.|(?!\1).)*\1/g;
+  for (const match of line.matchAll(quoted)) {
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+    if (columnIndex >= start && columnIndex <= end) {
+      return new monaco.Range(position.lineNumber, start + 1, position.lineNumber, end + 1);
+    }
+  }
+  const scalar = /(?:\bTrue\b|\bFalse\b|-?\d+(?:\.\d+)?(?:e[+-]?\d+)?|[A-Za-z_][A-Za-z0-9_]*)/gi;
+  for (const match of line.matchAll(scalar)) {
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+    if (columnIndex >= start && columnIndex <= end) {
+      return new monaco.Range(position.lineNumber, start + 1, position.lineNumber, end + 1);
+    }
+  }
+  return null;
+}
+
+function addFunctionArgument(code: string, variableName: string, defaultLiteral: string): string {
+  const lines = code.split("\n");
+  const index = lines.findIndex((line) => /^def\s+[A-Za-z_][A-Za-z0-9_]*\([^)]*\):\s*$/.test(line));
+  if (index < 0) return code;
+  lines[index] = lines[index].replace(/\(([^)]*)\)/, (_match, args) => {
+    const existing = String(args).trim();
+    if (new RegExp(`(^|,\\s*)${variableName}(\\s*=|\\s*,|$)`).test(existing)) return `(${existing})`;
+    const arg = `${variableName}=${defaultLiteral}`;
+    return `(${existing ? `${arg}, ${existing}` : arg})`;
+  });
+  return lines.join("\n");
+}
+
 export function CodeEditor({ value, filename, onChange, wordWrap = false, readOnly = false, className, parserInsertGroups = [] }: CodeEditorProps) {
   return (
     <div className={cn("min-h-0 h-full", className)}>
@@ -149,7 +239,12 @@ export function CodeEditor({ value, filename, onChange, wordWrap = false, readOn
                   const model = ed.getModel();
                   const position = ed.getPosition();
                   if (!model || !position) return;
-                  const placeholder = `{{${group.requestName}.${key}}}`;
+                  const expectedType = window.prompt("Expected variable type: string, int, float, bool", "string")?.trim().toLowerCase() || "string";
+                  if (!VARIABLE_TYPES.has(expectedType)) {
+                    window.alert("Expected type must be one of: string, int, float, bool");
+                    return;
+                  }
+                  const placeholder = `{{${group.requestName}.${key}|${expectedType}}}`;
                   const line = model.getLineContent(position.lineNumber);
                   const text = cursorIsInsideQuotes(line, position.column) ? placeholder : `"${placeholder}"`;
                   ed.executeEdits("insert-parser-output", [
@@ -163,6 +258,44 @@ export function CodeEditor({ value, filename, onChange, wordWrap = false, readOn
                 },
               });
             });
+          });
+          editor.addAction({
+            id: "make-request-value-variable",
+            label: "Make variable",
+            contextMenuGroupId: "navigation/manual-variable",
+            contextMenuOrder: 0,
+            run: (ed) => {
+              const model = ed.getModel();
+              const position = ed.getPosition();
+              if (!model || !position) return;
+              const selection = ed.getSelection();
+              const range = selection && !selection.isEmpty() ? selection : findValueRange(model, position, monaco);
+              if (!range) return;
+              const selectedText = model.getValueInRange(range).trim();
+              if (!selectedText) return;
+              const variableName = sanitizePythonName(window.prompt("Variable name", "") || "");
+              if (!variableName) return;
+              const expectedType = window.prompt("Variable type: string, int, float, bool", "string")?.trim().toLowerCase() || "string";
+              if (!VARIABLE_TYPES.has(expectedType)) {
+                window.alert("Variable type must be one of: string, int, float, bool");
+                return;
+              }
+              let defaultLiteral: string;
+              try {
+                defaultLiteral = pythonLiteral(coerceDefaultValue(parsePythonLiteral(selectedText), expectedType));
+              } catch (error) {
+                window.alert(error instanceof Error ? error.message : "Default value conversion failed");
+                return;
+              }
+              const currentCode = model.getValue();
+              const offset = model.getOffsetAt(range.getStartPosition());
+              const length = model.getValueLengthInRange(range);
+              const replacedCode = `${currentCode.slice(0, offset)}${variableName}${currentCode.slice(offset + length)}`;
+              const nextValue = addFunctionArgument(replacedCode, variableName, defaultLiteral);
+              model.setValue(nextValue);
+              onChange(nextValue);
+              ed.focus();
+            },
           });
         }}
         onChange={(next) => onChange(next ?? "")}

@@ -87,7 +87,8 @@ describe("frontend curlconverter pipeline", () => {
     expect(code).not.toContain("{{request_1.");
     expect(code).not.toContain("{request_1.");
     expect(code).toContain("if pipeline_context is None:");
-    expect(code).toContain("pipeline_context = DEFAULT_PIPELINE_CONTEXT");
+    expect(code).toContain('raise ValueError("pipeline_context is required for request_2; standalone defaults are used only by do_requests()")');
+    expect(code).toContain("request_2(pipeline_context=DEFAULT_PIPELINE_CONTEXT)");
     expect(code).toContain('"coordinates": [');
     expect(code).toContain("12.9716");
     expect(code).toContain('"store_id": "12345"');
@@ -156,11 +157,31 @@ def do_requests():
     expect(repaired).toContain("DEFAULT_PIPELINE_CONTEXT = {");
     expect(repaired).toContain("def request_2(pipeline_context=None):");
     expect(repaired).toContain("if pipeline_context is None:");
-    expect(repaired).toContain("pipeline_context = DEFAULT_PIPELINE_CONTEXT");
+    expect(repaired).toContain('raise ValueError("pipeline_context is required for request_2; standalone defaults are used only by do_requests()")');
     expect(repaired).toContain('"searchTerm": get_pipeline_value("request_1", ".suggestion_word", pipeline_context)');
     expect(repaired).toContain("params = resolve_pipeline_placeholders(params, pipeline_context)");
-    expect(repaired).toContain("request_2(pipeline_context=pipeline_context)");
+    expect(repaired).toContain("request_2(pipeline_context=DEFAULT_PIPELINE_CONTEXT)");
     expect(repaired).not.toContain("{{request_1.suggestion_word}}");
+  });
+
+  it("preserves selected pipeline value types and merges standalone defaults", () => {
+    const request2 = convertCurlLocally(
+      "curl 'https://example.com/stores?lat={{request_1.lat|float}}&lng={{request_1.lng|float}}&pincode={{request_1.pincode|string}}&product={{request_1.product_id|int}}'"
+    ).request;
+
+    const code = enhanceCurlConverterPython("", {
+      functionName: "request_2",
+      request: request2,
+    });
+
+    expect(code).toContain('get_pipeline_value("request_1", ".lat", pipeline_context, "float")');
+    expect(code).toContain('get_pipeline_value("request_1", ".lng", pipeline_context, "float")');
+    expect(code).toContain('get_pipeline_value("request_1", ".pincode", pipeline_context, "string")');
+    expect(code).toContain('get_pipeline_value("request_1", ".product_id", pipeline_context, "int")');
+    expect(code).toContain('"lat": 12.9716');
+    expect(code).toContain('"lng": 77.5946');
+    expect(code).toContain('"pincode": "110001"');
+    expect(code).toContain('"product_id": 12345');
   });
 
   it("passes pipeline_context in merged script when edited request code depends on pipeline", () => {

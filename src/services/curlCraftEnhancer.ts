@@ -14,13 +14,14 @@ interface BatchEnhanceOptions {
   parserFunctionNames?: string[];
 }
 
-const PIPELINE_PLACEHOLDER_PATTERN = /\{\{?\s*[A-Za-z_][A-Za-z0-9_]*(?:\.(?:[A-Za-z_][A-Za-z0-9_]*|\d+)|\[\d+\])+\s*\}\}?/;
-const PIPELINE_REFERENCE_PATTERN = /\{\{?\s*([A-Za-z_][A-Za-z0-9_]*)((?:\.(?:[A-Za-z_][A-Za-z0-9_]*|\d+)|\[\d+\])+)\s*\}\}?/g;
+const PIPELINE_PLACEHOLDER_PATTERN = /\{\{?\s*[A-Za-z_][A-Za-z0-9_]*(?:\.(?:[A-Za-z_][A-Za-z0-9_]*|\d+)|\[\d+\])+(?:\|(?:string|int|float|bool))?\s*\}\}?/;
+const PIPELINE_REFERENCE_PATTERN = /\{\{?\s*([A-Za-z_][A-Za-z0-9_]*)((?:\.(?:[A-Za-z_][A-Za-z0-9_]*|\d+)|\[\d+\])+)(?:\|(string|int|float|bool))?\s*\}\}?/g;
+const PIPELINE_FULL_REFERENCE_PATTERN = /^\{\{?\s*([A-Za-z_][A-Za-z0-9_]*)((?:\.(?:[A-Za-z_][A-Za-z0-9_]*|\d+)|\[\d+\])+)(?:\|(string|int|float|bool))?\s*\}\}?$/;
 const PIPELINE_PATH_TOKEN_PATTERN = /\.([A-Za-z_][A-Za-z0-9_]*|\d+)|\[(\d+)\]/g;
 
 export const PIPELINE_UTILS_CODE = `import re
 
-_PATTERN = re.compile(r"\\{\\{?\\s*([A-Za-z_][A-Za-z0-9_]*)((?:\\.(?:[A-Za-z_][A-Za-z0-9_]*|\\d+)|\\[\\d+\\])+)\\s*\\}\\}?")
+_PATTERN = re.compile(r"\\{\\{?\\s*([A-Za-z_][A-Za-z0-9_]*)((?:\\.(?:[A-Za-z_][A-Za-z0-9_]*|\\d+)|\\[\\d+\\])+)(?:\\|(string|int|float|bool))?\\s*\\}\\}?")
 _PATH_TOKEN_PATTERN = re.compile(r"\\.([A-Za-z_][A-Za-z0-9_]*|\\d+)|\\[(\\d+)\\]")
 
 def _path_tokens(path):
@@ -51,8 +52,40 @@ def _lookup_pipeline_value(request_name, path, pipeline_context):
         raise ValueError(f"Missing pipeline value: {request_name}{path}")
     return value
 
-def get_pipeline_value(request_name, path, pipeline_context):
-    return _lookup_pipeline_value(request_name, path, pipeline_context)
+def convert_pipeline_value(value, expected_type, request_name=None, path=None):
+    if expected_type in (None, "any"):
+        return value
+    label = f"{request_name}{path}" if request_name and path else "pipeline value"
+    try:
+        if expected_type == "string":
+            return str(value)
+        if expected_type == "int":
+            if isinstance(value, bool):
+                raise ValueError("boolean is not a valid int")
+            return int(value)
+        if expected_type == "float":
+            if isinstance(value, bool):
+                raise ValueError("boolean is not a valid float")
+            return float(value)
+        if expected_type == "bool":
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                normalized = value.strip().lower()
+                if normalized in ("true", "1", "yes", "y", "on"):
+                    return True
+                if normalized in ("false", "0", "no", "n", "off"):
+                    return False
+            if isinstance(value, (int, float)) and value in (0, 1):
+                return bool(value)
+            raise ValueError("expected true/false, 1/0, yes/no, or on/off")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Cannot convert {label}={value!r} to {expected_type}: {exc}") from exc
+    raise ValueError(f"Unsupported pipeline type: {expected_type}")
+
+def get_pipeline_value(request_name, path, pipeline_context, expected_type=None):
+    value = _lookup_pipeline_value(request_name, path, pipeline_context)
+    return convert_pipeline_value(value, expected_type, request_name, path)
 
 def resolve_pipeline_placeholders(value, pipeline_context):
     if isinstance(value, dict):
@@ -66,10 +99,10 @@ def resolve_pipeline_placeholders(value, pipeline_context):
 
     full = _PATTERN.fullmatch(value)
     if full:
-        return _lookup_pipeline_value(full.group(1), full.group(2), pipeline_context)
+        return get_pipeline_value(full.group(1), full.group(2), pipeline_context, full.group(3))
 
     def replace(match):
-        resolved = _lookup_pipeline_value(match.group(1), match.group(2), pipeline_context)
+        resolved = get_pipeline_value(match.group(1), match.group(2), pipeline_context, match.group(3))
         return str(resolved)
 
     return _PATTERN.sub(replace, value)
@@ -144,20 +177,19 @@ function splitUrlAndQueries(rawUrl: string, queries: JSONOutput["queries"]): { u
   return { url, params };
 }
 
-function pipelineAccessExpression(requestName: string, path: string): string {
-  return `get_pipeline_value(${pyString(requestName)}, ${pyString(path)}, pipeline_context)`;
+function pipelineAccessExpression(requestName: string, path: string, expectedType?: string): string {
+  return `get_pipeline_value(${pyString(requestName)}, ${pyString(path)}, pipeline_context${expectedType ? `, ${pyString(expectedType)}` : ""})`;
 }
 
 function pyPipelineString(value: string): string {
-  const fullPattern = new RegExp(`^${PIPELINE_REFERENCE_PATTERN.source}$`);
-  const full = fullPattern.exec(value);
-  if (full) return pipelineAccessExpression(full[1], full[2]);
+  const full = PIPELINE_FULL_REFERENCE_PATTERN.exec(value);
+  if (full) return pipelineAccessExpression(full[1], full[2], full[3]);
 
   const parts: string[] = [];
   let pos = 0;
   for (const match of value.matchAll(PIPELINE_REFERENCE_PATTERN)) {
     if (match.index > pos) parts.push(pyString(value.slice(pos, match.index)));
-    parts.push(`str(${pipelineAccessExpression(match[1], match[2])})`);
+    parts.push(`str(${pipelineAccessExpression(match[1], match[2], match[3])})`);
     pos = match.index + match[0].length;
   }
   if (pos < value.length) parts.push(pyString(value.slice(pos)));
@@ -201,8 +233,8 @@ function requestUsesPipeline(request: JSONOutput): boolean {
   ].some(valueHasPipelinePlaceholder);
 }
 
-function pipelineReferences(value: unknown): Array<{ requestName: string; path: string }> {
-  const refs: Array<{ requestName: string; path: string }> = [];
+function pipelineReferences(value: unknown): Array<{ requestName: string; path: string; expectedType?: string }> {
+  const refs: Array<{ requestName: string; path: string; expectedType?: string }> = [];
   const seen = new Set<string>();
 
   const visit = (item: unknown) => {
@@ -210,10 +242,11 @@ function pipelineReferences(value: unknown): Array<{ requestName: string; path: 
       for (const match of item.matchAll(PIPELINE_REFERENCE_PATTERN)) {
         const requestName = match[1];
         const path = match[2];
-        const key = `${requestName}:${path}`;
+        const expectedType = match[3];
+        const key = `${requestName}:${path}:${expectedType || ""}`;
         if (!seen.has(key)) {
           seen.add(key);
-          refs.push({ requestName, path });
+          refs.push({ requestName, path, expectedType });
         }
       }
     } else if (Array.isArray(item)) {
@@ -239,7 +272,11 @@ function pipelinePathTokens(path: string): Array<string | number> {
   return pos === path.length ? tokens : [];
 }
 
-function mockPipelineValue(key: string): unknown {
+function mockPipelineValue(key: string, expectedType?: string): unknown {
+  if (expectedType === "string") return key.toLowerCase().includes("pincode") || key.toLowerCase().includes("pin") ? "110001" : `mock_${key}`;
+  if (expectedType === "int") return 12345;
+  if (expectedType === "float") return key.toLowerCase().includes("lng") || key.toLowerCase().includes("lon") ? 77.5946 : 12.9716;
+  if (expectedType === "bool") return true;
   const lowered = key.toLowerCase();
   if (lowered.includes("coordinate") || ["coords", "location", "latlng", "lnglat"].includes(lowered)) return [12.9716, 77.5946];
   if (["lat", "latitude"].includes(lowered)) return 12.9716;
@@ -259,7 +296,7 @@ function assertNoUnresolvedPipelinePlaceholders(code: string): void {
 
 function buildDefaultContextFromCode(code: string): Record<string, unknown> {
   const context: Record<string, unknown> = {};
-  pipelineReferences(code).forEach(({ requestName, path }) => assignDefaultContextPath(context, requestName, path));
+  pipelineReferences(code).forEach(({ requestName, path, expectedType }) => assignDefaultContextPath(context, requestName, path, expectedType));
   return context;
 }
 
@@ -282,8 +319,8 @@ function insertDefaultContext(code: string, context: Record<string, unknown>): s
 }
 
 function replacePlaceholderLiterals(code: string): string {
-  return code.replace(/(["'])\{\{?\s*([A-Za-z_][A-Za-z0-9_]*)((?:\.(?:[A-Za-z_][A-Za-z0-9_]*|\d+)|\[\d+\])+)\s*\}\}?\1/g, (_match, _quote, requestName, path) => {
-    return pipelineAccessExpression(requestName, path);
+  return code.replace(/(["'])\{\{?\s*([A-Za-z_][A-Za-z0-9_]*)((?:\.(?:[A-Za-z_][A-Za-z0-9_]*|\d+)|\[\d+\])+)(?:\|(string|int|float|bool))?\s*\}\}?\1/g, (_match, _quote, requestName, path, expectedType) => {
+    return pipelineAccessExpression(requestName, path, expectedType);
   });
 }
 
@@ -298,9 +335,9 @@ function addPipelineArgAndDefault(code: string): string {
     }
     const nextLine = lines[index + 1] ?? "";
     if (nextLine.includes("pipeline_context = pipeline_context or DEFAULT_PIPELINE_CONTEXT")) {
-      lines.splice(index + 1, 1, "    if pipeline_context is None:", "        pipeline_context = DEFAULT_PIPELINE_CONTEXT");
+      lines.splice(index + 1, 1, "    if pipeline_context is None:", `        raise ValueError("pipeline_context is required for ${match[1]}; standalone defaults are used only by do_requests()")`);
     } else if (!nextLine.includes("if pipeline_context is None:")) {
-      lines.splice(index + 1, 0, "    if pipeline_context is None:", "        pipeline_context = DEFAULT_PIPELINE_CONTEXT", "");
+      lines.splice(index + 1, 0, "    if pipeline_context is None:", `        raise ValueError("pipeline_context is required for ${match[1]}; standalone defaults are used only by do_requests()")`, "");
     }
     break;
   }
@@ -329,7 +366,7 @@ function insertResolverAfterAssignment(code: string, variableName: string): stri
 }
 
 function passContextInDoRequests(code: string): string {
-  return code.replace(/^(\s*)request_(\d+)\(\)$/gm, "$1request_$2(pipeline_context=pipeline_context)");
+  return code.replace(/^(\s*)request_(\d+)\(\)$/gm, "$1request_$2(pipeline_context=DEFAULT_PIPELINE_CONTEXT)");
 }
 
 export function repairPythonPipelinePlaceholders(code: string): string {
@@ -348,13 +385,13 @@ export function repairPythonPipelinePlaceholders(code: string): string {
   return next;
 }
 
-function mockPipelineIndexedValue(key: string, index: number): unknown {
-  const value = mockPipelineValue(key);
+function mockPipelineIndexedValue(key: string, index: number, expectedType?: string): unknown {
+  const value = mockPipelineValue(key, expectedType);
   if (Array.isArray(value) && value.length > 0) return index < value.length ? value[index] : value[value.length - 1];
   return value;
 }
 
-function assignDefaultContextPath(root: Record<string, unknown>, requestName: string, path: string): void {
+function assignDefaultContextPath(root: Record<string, unknown>, requestName: string, path: string, expectedType?: string): void {
   const tokens = pipelinePathTokens(path);
   if (tokens.length === 0) return;
   let current: unknown = root[requestName] ?? {};
@@ -368,7 +405,7 @@ function assignDefaultContextPath(root: Record<string, unknown>, requestName: st
       if (!current || typeof current !== "object" || Array.isArray(current)) return;
       const obj = current as Record<string, unknown>;
       if (last) {
-        if (!(token in obj)) obj[token] = mockPipelineValue(token);
+        if (!(token in obj)) obj[token] = mockPipelineValue(token, expectedType);
         return;
       }
       if (!(token in obj)) obj[token] = typeof nextToken === "number" ? [] : {};
@@ -379,10 +416,10 @@ function assignDefaultContextPath(root: Record<string, unknown>, requestName: st
     if (!Array.isArray(current)) return;
     while (current.length <= token) {
       const key = String(tokens[index - 1] ?? "value");
-      current.push(typeof nextToken === "string" ? {} : mockPipelineIndexedValue(key, current.length));
+      current.push(typeof nextToken === "string" ? {} : mockPipelineIndexedValue(key, current.length, expectedType));
     }
     if (last) {
-      if (current[token] && typeof current[token] === "object") current[token] = mockPipelineIndexedValue(String(tokens[index - 1] ?? "value"), token);
+      if (current[token] && typeof current[token] === "object") current[token] = mockPipelineIndexedValue(String(tokens[index - 1] ?? "value"), token, expectedType);
       return;
     }
     current = current[token];
@@ -400,7 +437,7 @@ function buildDefaultPipelineContext(requests: BatchEnhanceOptions["requests"]):
       request.files,
       request.auth,
     ].forEach((value) => {
-      pipelineReferences(value).forEach(({ requestName, path }) => assignDefaultContextPath(context, requestName, path));
+      pipelineReferences(value).forEach(({ requestName, path, expectedType }) => assignDefaultContextPath(context, requestName, path, expectedType));
     });
   });
   return context;
@@ -424,7 +461,7 @@ function buildRequestFunction({ functionName, request, proxy }: EnhanceOptions):
   lines.push(hasPipeline ? `def ${functionName}(pipeline_context=None):` : `def ${functionName}():`);
   if (hasPipeline) {
     lines.push("    if pipeline_context is None:");
-    lines.push("        pipeline_context = DEFAULT_PIPELINE_CONTEXT");
+    lines.push(`        raise ValueError("pipeline_context is required for ${functionName}; standalone defaults are used only by do_requests()")`);
     lines.push("");
   }
   lines.push(`    url = ${pyPipelineString(url)}`);
@@ -546,7 +583,7 @@ export function buildCurlCraftScript({ requests, proxy, targetFunctionName }: Ba
   if (hasPipeline) code.push("from pipeline_utils import get_pipeline_value, resolve_pipeline_placeholders");
   code.push("");
   if (hasPipeline) {
-    code.push(`DEFAULT_PIPELINE_CONTEXT = ${formatPythonValue(buildDefaultPipelineContext(renderedRequests), 4)}`);
+    code.push(`DEFAULT_PIPELINE_CONTEXT = ${formatPythonValue(buildDefaultPipelineContext(requests), 4)}`);
     code.push("");
   }
 
@@ -560,7 +597,7 @@ export function buildCurlCraftScript({ requests, proxy, targetFunctionName }: Ba
   code.push("def do_requests():");
   code.push("    pipeline_context = {}");
   renderedRequests.forEach((entry) => {
-    const args = requestUsesPipeline(entry.request) ? "pipeline_context=pipeline_context" : "";
+    const args = requestUsesPipeline(entry.request) ? "pipeline_context=DEFAULT_PIPELINE_CONTEXT" : "";
     code.push(`    ${entry.functionName}(${args})`);
   });
   code.push("");
