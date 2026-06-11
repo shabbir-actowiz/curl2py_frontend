@@ -226,9 +226,21 @@ function findValueRange(model: Monaco.editor.ITextModel, position: Monaco.Positi
   return null;
 }
 
-function addFunctionArgument(code: string, variableName: string, defaultLiteral: string): string {
+function addFunctionArgument(code: string, variableName: string, defaultLiteral: string, targetLineNumber?: number): string {
   const lines = code.split("\n");
-  const index = lines.findIndex((line) => /^def\s+[A-Za-z_][A-Za-z0-9_]*\([^)]*\):\s*$/.test(line));
+  const functionPattern = /^def\s+[A-Za-z_][A-Za-z0-9_]*\([^)]*\):\s*$/;
+  let index = -1;
+  if (targetLineNumber !== undefined) {
+    for (let lineIndex = Math.min(targetLineNumber - 1, lines.length - 1); lineIndex >= 0; lineIndex -= 1) {
+      if (functionPattern.test(lines[lineIndex])) {
+        index = lineIndex;
+        break;
+      }
+    }
+  }
+  if (index < 0) {
+    index = lines.findIndex((line) => functionPattern.test(line));
+  }
   if (index < 0) return code;
   lines[index] = lines[index].replace(/\(([^)]*)\)/, (_match, args) => {
     const existing = String(args).trim();
@@ -376,7 +388,7 @@ export function CodeEditor({ value, filename, onChange, wordWrap = false, readOn
     const offset = model.getOffsetAt(range.getStartPosition());
     const length = model.getValueLengthInRange(range);
     const replacedCode = `${currentCode.slice(0, offset)}${nextVariableName}${currentCode.slice(offset + length)}`;
-    const nextValue = addFunctionArgument(replacedCode, nextVariableName, defaultLiteral);
+    const nextValue = addFunctionArgument(replacedCode, nextVariableName, defaultLiteral, range.getStartPosition().lineNumber);
     model.setValue(nextValue);
     onChange(nextValue);
     editor.focus();

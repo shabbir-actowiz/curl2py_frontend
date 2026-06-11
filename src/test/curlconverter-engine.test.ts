@@ -98,6 +98,17 @@ describe("frontend curlconverter pipeline", () => {
     expect(code).not.toContain('"cookie":');
   });
 
+  it("uses the current request name for generated function, execution metadata, logs, and response files", () => {
+    const code = generate("curl 'https://example.com/api?q=milk'", "suggestion");
+    expect(code).toContain("def suggestion():");
+    expect(code).toContain('request_name="suggestion"');
+    expect(code).toContain('request_folder = os.path.join(get_run_folder(), request_name)');
+    expect(code).toContain('log_file = os.path.join(request_folder, f"{request_name}.log")');
+    expect(code).toContain('filename = f"{request_name}_response.gz.html"');
+    expect(code).toContain('filename = f"{request_name}_response_status_{status_code}.gz.html"');
+    expect(code).not.toContain('request_name="request_1"');
+  });
+
   it("throws a frontend conversion error for invalid cURL", () => {
     expect(() => convertCurlLocally("not a curl")).toThrow(CurlConverterError);
   });

@@ -435,6 +435,17 @@ function stableHash(value: unknown): string {
   return Math.abs(hash).toString(36);
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function generatedCodeMatchesRequestName(code: string, requestName: string): boolean {
+  const escaped = escapeRegExp(requestName);
+  const hasFunctionName = new RegExp(`def\\s+${escaped}\\s*\\(`).test(code);
+  const hasExecutionName = new RegExp(`request_name\\s*=\\s*["']${escaped}["']`).test(code);
+  return hasFunctionName && hasExecutionName;
+}
+
 function scriptJsonStorageKey(sourceKey: string) {
   return `${SCRIPT_JSON_STORAGE_PREFIX}${sourceKey}`;
 }
@@ -3220,7 +3231,7 @@ export default function Index() {
         .map(({ block, index, converted, functionName }) => {
           const tabId = `req-${block.id}`;
           const existingCode = backendOutputs[block.id];
-          const preserveEditedCode = !!dirtyCodeTabs[tabId] && !!existingCode;
+          const preserveEditedCode = !!dirtyCodeTabs[tabId] && !!existingCode && generatedCodeMatchesRequestName(existingCode, functionName);
           return {
             id: block.id,
             code: preserveEditedCode ? repairPythonPipelinePlaceholders(existingCode) : repairPythonPipelinePlaceholders(enhanceCurlConverterPython(converted.pythonCode, {
