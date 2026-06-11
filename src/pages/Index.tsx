@@ -888,7 +888,7 @@ export default function Index() {
       tabs.push({
         id: "merged",
         kind: "merged",
-        filename: "generated_script.py",
+        filename: "main.py",
         code: backendMergedOutput ?? BACKEND_PLACEHOLDER,
       });
     }
@@ -3011,7 +3011,7 @@ export default function Index() {
       })
       .filter((file): file is { filename: string; code: string } => !!file);
     const mergedFile = mergeMode && backendMergedOutput
-      ? [{ filename: "generated_script.py", code: backendMergedOutput }]
+      ? [{ filename: "main.py", code: backendMergedOutput }]
       : [];
     const filesToDownload = [...requestFiles, ...mergedFile];
     if (filesToDownload.length === 0) return;
@@ -4747,7 +4747,7 @@ export default function Index() {
                               )}
                             >
                               <FileCode className="h-3 w-3 shrink-0" strokeWidth={2} />
-                              <span className="truncate text-[10px]">generated_script.py</span>
+                              <span className="truncate text-[10px]">main.py</span>
                             </button>
                           )}
                         </div>
