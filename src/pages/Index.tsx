@@ -7604,7 +7604,7 @@ export function JsonTreeNode({
   const highlightClass = isPermanentlySelected
     ? "rounded-sm bg-emerald-500/15 outline outline-1 outline-emerald-500/70 outline-offset-1"
     : isTemporarySelected
-      ? "rounded-sm bg-sky-500/10 outline outline-1 outline-sky-400/70 outline-offset-1"
+      ? "rounded-sm outline outline-1 outline-sky-400/80 outline-offset-1"
       : "";
 
   if (!isObject) {
@@ -7908,7 +7908,7 @@ function HtmlTreeNode({
           isAdded
             ? "rounded-sm bg-emerald-500/15 text-foreground outline outline-1 outline-emerald-500/70 outline-offset-1"
             : isSelected
-              ? "rounded-sm bg-sky-500/10 text-sky-300 outline outline-1 outline-sky-400/70 outline-offset-1"
+              ? "rounded-sm text-sky-300 outline outline-1 outline-sky-400/80 outline-offset-1"
               : "text-muted-foreground"
         )}
       >
