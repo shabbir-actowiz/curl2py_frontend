@@ -2203,6 +2203,35 @@ export default function Index() {
     setActiveWorkspaceFile("parser.py");
   };
 
+  const removePathFromParser = (path: string) => {
+    const targetCollection = isParserRoute ? parserCollection : activeCollection;
+    const targetNames = targetCollection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(targetCollection.snippets);
+    const workspaceId = isParserRoute ? parserWorkspaceId : activeResponseTab?.workspaceId || activeWorkspaceId;
+    const requestKey = isParserRoute ? activeParserRequestKey : workspaceId ? `${targetCollection.id}:${workspaceId}` : "";
+    if (!path || !workspaceId || !requestKey) return;
+    const workspaceIndex = targetCollection.snippets.findIndex((snippet) => snippet.id === workspaceId);
+    const hasManualJsonSource = !!manualParserJsonByWorkspace[workspaceId] || (workspaceId === parserWorkspaceId && !!parserResponseJson);
+    if (workspaceIndex === -1 && !hasManualJsonSource) return;
+    const workspaceName = workspaceIndex >= 0
+      ? targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`
+      : parserWorkspaceName || "manual_json";
+
+    setParserSelectionsByRequest((prev) => {
+      const currentSelections = prev[requestKey] ?? (isScriptJsonRoute ? [] : targetCollection.workspaceArtifacts?.[workspaceId]?.parserSelections ?? []);
+      const nextSelections = currentSelections.filter((selection) => selection.path !== path);
+      if (nextSelections.length === currentSelections.length) {
+        toast.info("Path was not added");
+        return prev;
+      }
+      if (!isScriptJsonRoute) writeParserSelectionsToArtifact(targetCollection.id, workspaceId, workspaceName, nextSelections);
+      toast.success(`Removed path: ${path}`);
+      return {
+        ...prev,
+        [requestKey]: nextSelections,
+      };
+    });
+  };
+
   const addHtmlPathToParser = (selection: ParserSelection) => {
     try {
       const targetCollection = isParserRoute ? parserCollection : activeCollection;
@@ -2261,6 +2290,38 @@ export default function Index() {
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not add selector");
     }
+  };
+
+  const removeHtmlPathFromParser = (selection: ParserSelection) => {
+    const targetCollection = isParserRoute ? parserCollection : activeCollection;
+    const targetNames = targetCollection.id === activeCollection.id ? effectiveNames : resolveEffectiveNames(targetCollection.snippets);
+    const workspaceId = isParserRoute ? parserWorkspaceId : activeResponseTab?.workspaceId || activeWorkspaceId;
+    const requestKey = workspaceId ? `${targetCollection.id}:${workspaceId}` : "";
+    const selector = selection.selector || selection.path || selection.xpath || selection.css || "";
+    if (!selector || !workspaceId || !requestKey) return;
+    const workspaceIndex = targetCollection.snippets.findIndex((snippet) => snippet.id === workspaceId);
+    if (workspaceIndex === -1) return;
+    const workspaceName = targetNames[workspaceIndex] ?? targetCollection.snippets[workspaceIndex].name ?? `request_${workspaceIndex + 1}`;
+    const selectionKey = getHtmlSelectorMappingKey({
+      ...selection,
+      selector,
+      path: selection.path || selector,
+    });
+
+    setHtmlParserSelectionsByRequest((prev) => {
+      const currentSelections = prev[requestKey] ?? targetCollection.workspaceArtifacts?.[workspaceId]?.htmlParserSelections ?? [];
+      const nextSelections = currentSelections.filter((item) => getHtmlSelectorMappingKey(item) !== selectionKey);
+      if (nextSelections.length === currentSelections.length) {
+        toast.info("Path was not added");
+        return prev;
+      }
+      writeHtmlParserSelectionsToArtifact(targetCollection.id, workspaceId, workspaceName, nextSelections);
+      toast.success("Path removed");
+      return {
+        ...prev,
+        [requestKey]: nextSelections,
+      };
+    });
   };
 
   const updateParserSelectionsForWorkspace = (
@@ -3623,6 +3684,7 @@ export default function Index() {
                   selectedPath={selectedParserPath}
                   addedPaths={addedParserPaths}
                   onAddToParser={addSelectedPathToParser}
+                  onRemoveFromParser={removePathFromParser}
                   onSelectedPathChange={handleParserPathSelect}
                   quickAddMode={quickAddMode}
                 />
@@ -3817,6 +3879,7 @@ export default function Index() {
                   html={parserResponseHtml}
                   addedPaths={addedHtmlPaths}
                   onAddToParser={addHtmlPathToParser}
+                  onRemoveFromParser={removeHtmlPathFromParser}
                   onOpenScriptJson={(source) => {
                     if (!parserWorkspaceId) return;
                     const key = `${parserCollection.id}:${parserWorkspaceId}:script-json:${source.scriptId}`;
@@ -5174,6 +5237,7 @@ export default function Index() {
                       selectedPath={selectedParserPath}
                       addedPaths={addedParserPaths}
                       onAddToParser={addPathToParser}
+                      onRemoveFromParser={removePathFromParser}
                       onSelectedPathChange={handleParserPathSelect}
                     />
                   ) : (
@@ -7298,6 +7362,7 @@ function ResponseBodyViewer({
   selectedPath,
   addedPaths,
   onAddToParser,
+  onRemoveFromParser,
   onSelectedPathChange,
   quickAddMode,
 }: {
@@ -7307,6 +7372,7 @@ function ResponseBodyViewer({
   selectedPath?: string | null;
   addedPaths?: Set<string>;
   onAddToParser?: (path: string) => void;
+  onRemoveFromParser?: (path: string) => void;
   onSelectedPathChange?: (path: string | null, value?: unknown) => void;
   quickAddMode?: boolean;
 }) {
@@ -7331,6 +7397,7 @@ function ResponseBodyViewer({
         selectedPath={selectedPath}
         addedPaths={addedPaths}
         onAddToParser={onAddToParser}
+        onRemoveFromParser={onRemoveFromParser}
         onSelectedPathChange={onSelectedPathChange}
         quickAddMode={quickAddMode}
       />
@@ -7349,6 +7416,7 @@ function JsonResponseViewer({
   selectedPath,
   addedPaths,
   onAddToParser,
+  onRemoveFromParser,
   onSelectedPathChange,
   quickAddMode,
 }: {
@@ -7356,6 +7424,7 @@ function JsonResponseViewer({
   selectedPath?: string | null;
   addedPaths?: Set<string>;
   onAddToParser?: (path: string) => void;
+  onRemoveFromParser?: (path: string) => void;
   onSelectedPathChange?: (path: string | null, value?: unknown) => void;
   quickAddMode?: boolean;
 }) {
@@ -7456,12 +7525,18 @@ function JsonResponseViewer({
           >
             Copy Value
           </button>
-          {onAddToParser && (
+          {(onAddToParser || onRemoveFromParser) && (
             <button
-              onClick={() => onAddToParser(selected.path)}
+              onClick={() => {
+                if (addedPaths?.has(selected.path)) {
+                  onRemoveFromParser?.(selected.path);
+                  return;
+                }
+                onAddToParser?.(selected.path);
+              }}
               className="text-primary hover:text-foreground"
             >
-              Add to Paths
+              {addedPaths?.has(selected.path) ? "Remove Path" : "Add to Path"}
             </button>
           )}
         </div>
@@ -7526,10 +7601,10 @@ export function JsonTreeNode({
   const pathString = formatJsonPath(path);
   const isTemporarySelected = selectedPath === pathString;
   const isPermanentlySelected = addedPaths?.has(pathString) ?? false;
-  const highlightClass = isTemporarySelected
-    ? "rounded-sm bg-emerald-500/10 outline outline-1 outline-emerald-500/45 outline-offset-1"
-    : isPermanentlySelected
-      ? "rounded-sm bg-emerald-500/15 outline outline-1 outline-emerald-500/70 outline-offset-1"
+  const highlightClass = isPermanentlySelected
+    ? "rounded-sm bg-emerald-500/15 outline outline-1 outline-emerald-500/70 outline-offset-1"
+    : isTemporarySelected
+      ? "rounded-sm bg-sky-500/10 outline outline-1 outline-sky-400/70 outline-offset-1"
       : "";
 
   if (!isObject) {
@@ -7623,11 +7698,13 @@ function HtmlResponseViewer({
   html,
   addedPaths,
   onAddToParser,
+  onRemoveFromParser,
   onOpenScriptJson,
 }: {
   html: string;
   addedPaths?: Set<string>;
   onAddToParser?: (selection: ParserSelection) => void;
+  onRemoveFromParser?: (selection: ParserSelection) => void;
   onOpenScriptJson?: (source: ScriptJsonSource) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -7637,6 +7714,33 @@ function HtmlResponseViewer({
   const documentNode = useMemo(() => new DOMParser().parseFromString(visibleHtml, "text/html"), [visibleHtml]);
   const [selectedElement, setSelectedElement] = useState<HtmlElementSelection | null>(null);
   const root = documentNode.documentElement;
+  const selectedElementAddedSelector = selectedElement && addedPaths?.has(selectedElement.xpath)
+    ? selectedElement.xpath
+    : selectedElement && addedPaths?.has(selectedElement.cssSelector)
+      ? selectedElement.cssSelector
+      : null;
+  const selectedElementActionSelector = selectedElement
+    ? selectedElementAddedSelector || selectedElement.xpath
+    : "";
+  const selectedElementActionSelectorType = selectedElementActionSelector === selectedElement?.cssSelector ? "css" : "xpath";
+  const selectedElementParserSelection = selectedElement ? {
+    path: selectedElementActionSelector,
+    selector: selectedElementActionSelector,
+    xpath: selectedElement.xpath,
+    css: selectedElement.cssSelector,
+    selectorType: selectedElementActionSelectorType,
+    outputKey: getOutputKeyFromHtmlSelector(selectedElement.cssSelector || selectedElement.xpath),
+    extractMode: "text" as const,
+    valueMode: "text" as const,
+    parentSelector: selectedElement.parentXpath,
+    parentSelectorType: selectedElement.parentXpath ? "xpath" as const : undefined,
+    parentXpath: selectedElement.parentXpath,
+    parentCss: selectedElement.parentCss,
+    relativeSelector: selectedElement.relativeXpath,
+    relativeXpath: selectedElement.relativeXpath,
+    relativeCss: selectedElement.relativeCss,
+  } satisfies ParserSelection : null;
+  const selectedElementIsAdded = !!selectedElementAddedSelector;
   useEffect(() => {
     setSelectedElement(null);
     setShowFullHtml(!initialPreview.isPreview);
@@ -7680,34 +7784,22 @@ function HtmlResponseViewer({
           >
             Copy Text
           </button>
-          {onAddToParser && (
+          {(onAddToParser || onRemoveFromParser) && selectedElementParserSelection && (
             <button
               onClick={() => {
                 try {
-                  onAddToParser({
-                    path: selectedElement.xpath,
-                    selector: selectedElement.xpath,
-                    xpath: selectedElement.xpath,
-                    css: selectedElement.cssSelector,
-                    selectorType: "xpath",
-                    outputKey: getOutputKeyFromHtmlSelector(selectedElement.cssSelector || selectedElement.xpath),
-                    extractMode: "text",
-                    valueMode: "text",
-                    parentSelector: selectedElement.parentXpath,
-                    parentSelectorType: selectedElement.parentXpath ? "xpath" : undefined,
-                    parentXpath: selectedElement.parentXpath,
-                    parentCss: selectedElement.parentCss,
-                    relativeSelector: selectedElement.relativeXpath,
-                    relativeXpath: selectedElement.relativeXpath,
-                    relativeCss: selectedElement.relativeCss,
-                  });
+                  if (selectedElementIsAdded) {
+                    onRemoveFromParser?.(selectedElementParserSelection);
+                    return;
+                  }
+                  onAddToParser?.(selectedElementParserSelection);
                 } catch (error) {
                   toast.error(error instanceof Error ? error.message : "Could not add selector");
                 }
               }}
               className="text-primary hover:text-foreground"
             >
-              Add to Paths
+              {selectedElementIsAdded ? "Remove Path" : "Add to Path"}
             </button>
           )}
           {onOpenScriptJson && selectedElement.scriptJson?.ok && (
@@ -7813,10 +7905,10 @@ function HtmlTreeNode({
         }}
         className={cn(
           "block text-left font-mono text-[12px] leading-[1.6] hover:text-foreground",
-          isSelected
-            ? "rounded-sm bg-emerald-500/10 text-primary outline outline-1 outline-emerald-500/45 outline-offset-1"
-            : isAdded
-              ? "rounded-sm bg-emerald-500/15 text-foreground outline outline-1 outline-emerald-500/70 outline-offset-1"
+          isAdded
+            ? "rounded-sm bg-emerald-500/15 text-foreground outline outline-1 outline-emerald-500/70 outline-offset-1"
+            : isSelected
+              ? "rounded-sm bg-sky-500/10 text-sky-300 outline outline-1 outline-sky-400/70 outline-offset-1"
               : "text-muted-foreground"
         )}
       >
