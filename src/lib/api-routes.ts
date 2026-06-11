@@ -8,7 +8,6 @@ export const apiRoutes = {
   refresh: "/api/v1/auth/refresh",
   me: "/api/v1/auth/me",
   workspace: "/api/v1/workspace",
-  convert: "/api/v1/convert",
   runWorkspace: "/run-workspace",
   runParser: "/api/v1/run-parser",
   feasibilityTests: "/api/v1/feasibility-tests",

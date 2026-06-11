@@ -54,38 +54,6 @@ export interface ResetPasswordRequest {
   password: string;
 }
 
-export interface CurlRequest {
-  curl: string;
-  function_name?: string | null;
-  snippet_id?: string | null;
-  name?: string | null;
-}
-
-export interface ConvertRequest {
-  collection_id?: string;
-  collection_name?: string;
-  library?: string;
-  curl?: string | CurlRequest | null;
-  commands?: Array<string | CurlRequest> | null;
-  function_name_prefix?: string | null;
-  proxy?: ProxyConfig | null;
-  idempotency_key?: string | null;
-  persist?: boolean | null;
-}
-
-export interface ConversionResponse {
-  success: boolean;
-  python_code?: string | null;
-  parser_code?: string | null;
-  function_name?: string | null;
-  request_script?: string | null;
-  parser_script?: string | null;
-  function_names: string[];
-  error?: string | null;
-  error_type?: string | null;
-  meta?: Record<string, unknown> | null;
-}
-
 export interface RunWorkspaceRequest {
   collection_name?: string;
   workspace_name: string;
@@ -501,13 +469,6 @@ export async function saveUserWorkspace(payload: UserWorkspaceState, accessToken
     method: "PUT",
     body: JSON.stringify(payload),
   }, accessToken);
-}
-
-export async function convertWithBackend(payload: ConvertRequest, accessToken?: string, signal?: AbortSignal): Promise<ConversionResponse> {
-  return request<ConversionResponse>(apiRoutes.convert, {
-    method: "POST",
-    body: JSON.stringify(payload),
-  }, accessToken, signal);
 }
 
 export async function runWorkspaceWithBackend(payload: RunWorkspaceRequest): Promise<RunWorkspaceResponse> {
