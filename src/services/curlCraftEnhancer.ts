@@ -917,26 +917,52 @@ export function buildCurlCraftScript({ requests, proxy, targetFunctionName }: Ba
 
 export function buildMergedScript({ requests, parserFunctionNames = [] }: BatchEnhanceOptions): string {
   const parserSet = new Set(parserFunctionNames);
+  const hasParsers = requests.some((entry) => parserSet.has(`${entry.functionName}_parser`));
   const code: string[] = [];
 
+  if (hasParsers) {
+    code.push("import gzip");
+    code.push("import json");
+    code.push("import os");
+    code.push("");
+  }
   requests.forEach((entry) => code.push(`from ${entry.functionName} import ${entry.functionName}`));
   requests.forEach((entry) => {
     const parserName = `${entry.functionName}_parser`;
     if (parserSet.has(parserName)) code.push(`from ${entry.functionName}_parser import ${parserName}`);
   });
   code.push("");
+  if (hasParsers) {
+    code.push("def save_parsed_output(request_name, parsed_data):");
+    code.push('    parsed_folder = "parsed"');
+    code.push("    os.makedirs(parsed_folder, exist_ok=True)");
+    code.push('    parsed_file = os.path.join(parsed_folder, f"{request_name}_parsed.html.gz")');
+    code.push('    payload = json.dumps(parsed_data, indent=2, ensure_ascii=False, default=str).encode("utf-8")');
+    code.push('    with gzip.open(parsed_file, "wb") as file:');
+    code.push("        file.write(payload)");
+    code.push("    return parsed_file");
+    code.push("");
+  }
   code.push("def main():");
   code.push("    pipeline_context = {}");
+  if (hasParsers) code.push("    parsed_outputs = {}");
   code.push("");
   requests.forEach((entry) => {
     const parserName = `${entry.functionName}_parser`;
     const args = requestUsesPipeline(entry.request) || (entry.code ? scriptNeedsPipelineContext(entry.code) : false) ? "pipeline_context=pipeline_context" : "";
     code.push(`    response_${entry.functionName} = ${entry.functionName}(${args})`);
     if (parserSet.has(parserName)) {
-      code.push(`    pipeline_context[${pyString(entry.functionName)}] = ${parserName}(response_${entry.functionName})`);
+      code.push(`    parsed_${entry.functionName} = ${parserName}(response_${entry.functionName})`);
+      code.push(`    save_parsed_output(${pyString(entry.functionName)}, parsed_${entry.functionName})`);
+      code.push(`    pipeline_context[${pyString(entry.functionName)}] = parsed_${entry.functionName}`);
+      code.push(`    parsed_outputs[${pyString(entry.functionName)}] = parsed_${entry.functionName}`);
     }
     code.push("");
   });
+  if (hasParsers) {
+    code.push("    return parsed_outputs");
+    code.push("");
+  }
   code.push('if __name__ == "__main__":');
   code.push("    main()");
   return code.join("\n");

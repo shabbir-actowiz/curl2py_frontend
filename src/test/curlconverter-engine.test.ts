@@ -148,7 +148,12 @@ describe("frontend curlconverter pipeline", () => {
     expect(merged).toContain("response_request_1 = request_1()");
     expect(merged).not.toContain("response_request_1 = request_1(pipeline_context=pipeline_context)");
     expect(merged).toContain("response_request_2 = request_2(pipeline_context=pipeline_context)");
-    expect(merged).toContain('pipeline_context["request_1"] = request_1_parser(response_request_1)');
+    expect(merged).toContain("parsed_request_1 = request_1_parser(response_request_1)");
+    expect(merged).toContain('pipeline_context["request_1"] = parsed_request_1');
+    expect(merged).not.toContain("request_2_parser(response_request_2)");
+    expect(merged).toContain('save_parsed_output("request_1", parsed_request_1)');
+    expect(merged).toContain('parsed_outputs["request_1"] = parsed_request_1');
+    expect(merged).toContain("return parsed_outputs");
   });
 
   it("does not leave query placeholders in standalone request files", () => {
@@ -367,9 +372,45 @@ def request_2(pipeline_context=None):
       parserFunctionNames: ["request_1_parser"],
     });
 
-    expect(merged).toContain('pipeline_context["request_1"] = request_1_parser(response_request_1)');
+    expect(merged).toContain("parsed_request_1 = request_1_parser(response_request_1)");
+    expect(merged).toContain('pipeline_context["request_1"] = parsed_request_1');
     expect(merged).toContain("response_request_1 = request_1()");
     expect(merged).not.toContain("response_request_1 = request_1(pipeline_context=pipeline_context)");
     expect(merged).toContain("response_request_2 = request_2(pipeline_context=pipeline_context)");
+  });
+
+  it("does not call an unselected parser for the final merged request", () => {
+    const request1 = convertCurlLocally("curl 'https://example.com/bootstrap'").request;
+    const request2 = convertCurlLocally("curl 'https://example.com/home'").request;
+
+    const merged = buildMergedScript({
+      requests: [
+        { functionName: "suggestion", request: request1 },
+        { functionName: "home_page", request: request2 },
+      ],
+      parserFunctionNames: ["suggestion_parser"],
+    });
+
+    expect(merged).toContain("from suggestion_parser import suggestion_parser");
+    expect(merged).not.toContain("from home_page_parser import home_page_parser");
+    expect(merged).toContain("response_home_page = home_page()");
+    expect(merged).not.toContain("home_page_parser(response_home_page)");
+    expect(merged).not.toContain('pipeline_context["home_page"]');
+    expect(merged).toContain('save_parsed_output("suggestion", parsed_suggestion)');
+    expect(merged).toContain("return parsed_outputs");
+  });
+
+  it("keeps merged script lean when no parsers are selected", () => {
+    const request1 = convertCurlLocally("curl 'https://example.com/bootstrap'").request;
+
+    const merged = buildMergedScript({
+      requests: [{ functionName: "home_page", request: request1 }],
+      parserFunctionNames: [],
+    });
+
+    expect(merged).not.toContain("save_parsed_output");
+    expect(merged).not.toContain("parsed_outputs");
+    expect(merged).not.toContain("_parser(response_");
+    expect(merged).not.toContain("return parsed_outputs");
   });
 });
