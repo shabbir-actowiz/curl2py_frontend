@@ -2,81 +2,79 @@
 @tailwind components;
 @tailwind utilities;
 
-/* curl2py design system - warm dark, terminal green, monospace everywhere */
+/* curl2py design system - minimal dark workspace with terminal green accents */
 
 @layer base {
   :root {
-    /* Warm dark base - deep charcoal with subtle olive/brown tint */
-    --background: 80 6% 9%;
-    --foreground: 60 12% 86%;
+    --background: 220 14% 8%;
+    --foreground: 220 14% 88%;
 
-    --surface: 80 6% 11%;
-    --surface-elevated: 80 6% 13%;
+    --surface: 220 13% 10%;
+    --surface-elevated: 220 12% 14%;
 
-    --card: 80 6% 11%;
-    --card-foreground: 60 12% 86%;
+    --card: 220 13% 11%;
+    --card-foreground: 220 14% 88%;
 
-    --popover: 80 6% 11%;
-    --popover-foreground: 60 12% 86%;
+    --popover: 220 13% 10%;
+    --popover-foreground: 220 14% 88%;
 
-    /* Muted terminal green */
-    --primary: 95 32% 55%;
-    --primary-foreground: 80 10% 8%;
+    --primary: 96 69% 62%;
+    --primary-foreground: 220 18% 8%;
 
-    --secondary: 80 5% 16%;
-    --secondary-foreground: 60 10% 80%;
+    --secondary: 220 10% 16%;
+    --secondary-foreground: 220 12% 80%;
 
-    --muted: 80 5% 14%;
-    --muted-foreground: 60 6% 55%;
+    --muted: 220 10% 15%;
+    --muted-foreground: 220 8% 62%;
 
-    --accent: 95 20% 22%;
-    --accent-foreground: 95 32% 70%;
+    --accent: 96 42% 22%;
+    --accent-foreground: 96 69% 70%;
 
     --destructive: 4 55% 58%;
     --destructive-foreground: 60 12% 92%;
 
-    --success: 95 38% 55%;
+    --success: 96 69% 62%;
 
-    --border: 80 5% 18%;
-    --border-strong: 80 5% 24%;
-    --input: 80 5% 16%;
-    --ring: 95 32% 45%;
+    --border: 220 11% 19%;
+    --border-strong: 220 10% 28%;
+    --input: 220 10% 15%;
+    --ring: 96 69% 54%;
 
     --radius: 0.25rem;
 
     /* Syntax highlighting tokens */
-    --syntax-keyword: 95 32% 60%;
+    --syntax-keyword: 300 38% 68%;
     --syntax-string: 35 45% 65%;
     --syntax-number: 25 50% 65%;
     --syntax-comment: 80 6% 40%;
-    --syntax-function: 200 25% 65%;
+    --syntax-function: 195 62% 70%;
     --syntax-variable: 60 12% 82%;
     --syntax-punct: 60 8% 60%;
   }
 
   .dark {
-    --background: 80 6% 9%;
-    --foreground: 60 12% 86%;
-    --surface: 80 6% 11%;
-    --surface-elevated: 80 6% 13%;
-    --card: 80 6% 11%;
-    --card-foreground: 60 12% 86%;
-    --popover: 80 6% 11%;
-    --popover-foreground: 60 12% 86%;
-    --primary: 95 32% 55%;
-    --primary-foreground: 80 10% 8%;
-    --secondary: 80 5% 16%;
-    --secondary-foreground: 60 10% 80%;
-    --muted: 80 5% 14%;
-    --muted-foreground: 60 6% 55%;
-    --accent: 95 20% 22%;
-    --accent-foreground: 95 32% 70%;
+    --background: 220 14% 8%;
+    --foreground: 220 14% 88%;
+    --surface: 220 13% 10%;
+    --surface-elevated: 220 12% 14%;
+    --card: 220 13% 11%;
+    --card-foreground: 220 14% 88%;
+    --popover: 220 13% 10%;
+    --popover-foreground: 220 14% 88%;
+    --primary: 96 69% 62%;
+    --primary-foreground: 220 18% 8%;
+    --secondary: 220 10% 16%;
+    --secondary-foreground: 220 12% 80%;
+    --muted: 220 10% 15%;
+    --muted-foreground: 220 8% 62%;
+    --accent: 96 42% 22%;
+    --accent-foreground: 96 69% 70%;
     --destructive: 4 55% 58%;
     --destructive-foreground: 60 12% 92%;
-    --border: 80 5% 18%;
-    --border-strong: 80 5% 24%;
-    --input: 80 5% 16%;
-    --ring: 95 32% 45%;
+    --border: 220 11% 19%;
+    --border-strong: 220 10% 28%;
+    --input: 220 10% 15%;
+    --ring: 96 69% 54%;
   }
 
   .light {
@@ -126,7 +124,7 @@
     @apply bg-background text-foreground;
     font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, monospace;
     font-feature-settings: 'liga' 1, 'calt' 1;
-    letter-spacing: 0.005em;
+    letter-spacing: 0;
     -webkit-font-smoothing: antialiased;
   }
 

@@ -4087,16 +4087,7 @@ export default function Index() {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <div className="hidden min-w-0 items-center gap-2 rounded-sm border border-border bg-background/25 px-2.5 py-1.5 font-mono text-[11px] text-muted-foreground lg:flex">
-            <span className="font-semibold text-primary">{activeRequestMethod}</span>
-            <span className="text-border-strong">|</span>
-            <span className="truncate text-foreground">{activeRequestDomain}</span>
-            <span className="text-border-strong">|</span>
-            <span>{parserStatusLabel}</span>
-            <span className="text-border-strong">|</span>
-            <span className="truncate text-primary">{activeWorkspaceDisplayName}</span>
-          </div>
-
+         
           <div className="ml-auto flex shrink-0 items-center gap-2">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
