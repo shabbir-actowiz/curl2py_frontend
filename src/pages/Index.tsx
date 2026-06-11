@@ -4136,7 +4136,7 @@ export default function Index() {
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <div className={cn(
+            {/* <div className={cn(
               "hidden max-w-[150px] truncate rounded-sm border px-2 py-1.5 font-mono text-[11px] md:block",
               workspaceSaveState === "error" || workspaceSaveState === "session-expired"
                 ? "border-destructive/40 bg-destructive/5 text-destructive"
@@ -4145,7 +4145,7 @@ export default function Index() {
                   : "border-border bg-background/25 text-success"
             )}>
               {saveStatusLabel}
-            </div>
+            </div> */}
 
             <button
               onClick={handleManualWorkspaceSave}
