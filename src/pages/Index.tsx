@@ -520,7 +520,6 @@ export default function Index() {
   const [selectedHtmlScriptJsonId, setSelectedHtmlScriptJsonId] = useState("");
   const [issueType, setIssueType] = useState("Workspace");
   const [issueDescription, setIssueDescription] = useState("");
-  const [issueEmail, setIssueEmail] = useState("");
   const [issueFiles, setIssueFiles] = useState<File[]>([]);
   const [isSubmittingIssue, setIsSubmittingIssue] = useState(false);
   const [submittedIssueId, setSubmittedIssueId] = useState("");
@@ -2844,24 +2843,42 @@ export default function Index() {
 
   const handleSubmitIssue = async (event: FormEvent) => {
     event.preventDefault();
-    if (!issueDescription.trim()) {
-      toast.error("Issue description is required");
+    if (!user || !accessToken) {
+      toast.error("Please login to raise an issue");
       return;
     }
-    if (!issueEmail.trim()) {
-      toast.error("Your email is required");
+    if (!user.email?.trim()) {
+      toast.error("Your account email is missing");
+      return;
+    }
+    if (!issueDescription.trim()) {
+      toast.error("Issue description is required");
       return;
     }
 
     const formData = new FormData();
     formData.append("issue_type", issueType.trim() || "Other");
     formData.append("description", issueDescription.trim());
-    formData.append("email", issueEmail.trim());
     issueFiles.forEach((file) => formData.append("files", file));
 
     try {
       setIsSubmittingIssue(true);
-      const response = await createIssue(formData);
+      let token = accessTokenRef.current || accessToken;
+      let response;
+      try {
+        response = await createIssue(formData, token);
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 401) {
+          throw error;
+        }
+        const refreshedToken = await refreshAccessToken();
+        if (!refreshedToken) {
+          toast.error("Session expired, please login again");
+          return;
+        }
+        token = refreshedToken;
+        response = await createIssue(formData, token);
+      }
       setSubmittedIssueId(response.issue_id);
       toast.success("Issue submitted");
     } catch (error) {
@@ -4069,11 +4086,16 @@ export default function Index() {
 
           <button
             onClick={() => {
+              if (!user) {
+                toast.error("Please login to raise an issue");
+                return;
+              }
               setSubmittedIssueId("");
               setRaiseIssueOpen(true);
             }}
-            className={quietToolbarButtonClass}
-            title="Raise an issue"
+            aria-disabled={!user}
+            className={cn(quietToolbarButtonClass, !user && "opacity-50")}
+            title={user ? "Raise an issue" : "Login to raise an issue"}
           >
             Raise Issue
           </button>
@@ -4169,14 +4191,10 @@ export default function Index() {
                 />
               </label>
               <label className="block space-y-1">
-                <span className="text-muted-foreground">Your Email</span>
-                <input
-                  type="email"
-                  value={issueEmail}
-                  onChange={(event) => setIssueEmail(event.target.value)}
-                  required
-                  className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none focus:border-border-strong"
-                />
+                <span className="text-muted-foreground">Account Email</span>
+                <div className="h-8 w-full rounded-sm border border-border bg-surface-elevated px-2 py-2 font-mono text-[12px] text-muted-foreground">
+                  {user?.email || "Login required"}
+                </div>
               </label>
               <label className="block space-y-1">
                 <span className="text-muted-foreground">Upload Files</span>

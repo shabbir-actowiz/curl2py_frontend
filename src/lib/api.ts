@@ -612,18 +612,18 @@ export async function downloadIssueFile(issueId: string, fileIndex: number, file
   URL.revokeObjectURL(objectUrl);
 }
 
-export async function createIssue(formData: FormData): Promise<CreateIssueResponse> {
+export async function createIssue(formData: FormData, accessToken: string): Promise<CreateIssueResponse> {
   try {
     return await request<CreateIssueResponse>(apiRoutes.createIssue, {
       method: "POST",
       body: formData,
-    });
+    }, accessToken);
   } catch (error) {
     if (error instanceof ApiError && error.status === 404) {
       return request<CreateIssueResponse>(apiRoutes.createIssueFallback, {
         method: "POST",
         body: formData,
-      }).catch((fallbackError) => {
+      }, accessToken).catch((fallbackError) => {
         if (fallbackError instanceof ApiError && fallbackError.status === 404) {
           throw new ApiError(
             404,
