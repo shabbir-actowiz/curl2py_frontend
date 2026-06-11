@@ -33,6 +33,7 @@ type AuthContextValue = {
   loginGoogle: (credential: string, options?: LoginOptions) => Promise<UserResponse>;
   register: (payload: UserCreate, options?: LoginOptions) => Promise<UserResponse>;
   refreshSession: () => Promise<UserResponse | null>;
+  refreshAccessToken: () => Promise<string | null>;
   logout: () => void;
 };
 
@@ -195,7 +196,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     );
   };
 
-  const refreshSession = async () => {
+  const refreshAccessToken = async () => {
     if (!session) {
       return null;
     }
@@ -212,10 +213,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       setSession(nextSession);
       persistStoredSession(nextSession);
-      return user;
+      return refreshed.access_token;
     } catch {
       clearStoredSession();
       setSession(null);
+      return null;
+    }
+  };
+
+  const refreshSession = async () => {
+    const nextAccessToken = await refreshAccessToken();
+    if (!nextAccessToken) return null;
+    try {
+      return await getCurrentUser(nextAccessToken);
+    } catch {
       return null;
     }
   };
@@ -235,8 +246,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loginGoogle,
     register,
     refreshSession,
+    refreshAccessToken,
     logout,
-  }), [session, isLoading, login, loginGoogle, register, refreshSession, logout]);
+  }), [session, isLoading, login, loginGoogle, register, refreshSession, refreshAccessToken, logout]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

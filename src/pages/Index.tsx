@@ -25,6 +25,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  ApiError,
   createIssue,
   deleteConversionCollection,
   deleteConversionSnippet,
@@ -36,6 +37,7 @@ import {
   runWorkspaceWithBackend,
   saveUserWorkspace,
   type FeasibilityArtifact,
+  type UserWorkspaceState,
 } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
 import { convertCurlLocally, CurlConverterError } from "@/services/curlConverterEngine";
@@ -75,6 +77,12 @@ type WorkspaceFile = string;
 type ParserBuilderMode = "json" | "html";
 type ParserPageTab = "source" | "paths" | "parser" | "output" | "jsonSource" | "dbCode";
 type ParserOutputView = "json" | "table";
+type WorkspaceSaveState = "idle" | "saving" | "saved" | "error" | "session-expired";
+type PendingWorkspacePayload = {
+  userId: string;
+  savedAt: string;
+  payload: WorkspacePayload;
+};
 
 interface ParserSelection {
   id?: string;
@@ -211,7 +219,10 @@ interface ResponseTab {
   label: string;
 }
 
+type WorkspacePayload = UserWorkspaceState;
+
 const SESSION_KEY = "curl2py:session:v2";
+const PENDING_WORKSPACE_KEY = "curl2py:workspace:pending:v1";
 const THEME_KEY = "curl2py:theme:v1";
 const SCRIPT_JSON_STORAGE_PREFIX = "curl2py:script-json:";
 const MANUAL_PARSER_WORKSPACE_ID = "__manual_parser_workspace__";
@@ -557,8 +568,9 @@ export default function Index() {
   const [dividerPos, setDividerPos] = useState(50);
   const [isDraggingDivider, setIsDraggingDivider] = useState(false);
   const [hasLoadedRemoteWorkspace, setHasLoadedRemoteWorkspace] = useState(false);
+  const [workspaceSaveState, setWorkspaceSaveState] = useState<WorkspaceSaveState>("idle");
 
-  const { user, accessToken, logout } = useAuth();
+  const { user, accessToken, refreshAccessToken, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const parserRouteParams = useParams<{ collectionId?: string; snippetId?: string; scriptId?: string }>();
@@ -572,6 +584,10 @@ export default function Index() {
   const inFlightSyncKeyRef = useRef<string | null>(null);
   const lastSuccessfulSyncKeyRef = useRef<string | null>(null);
   const lastSyncedSnippetHashesRef = useRef<Record<string, string>>({});
+  const accessTokenRef = useRef<string | null>(accessToken);
+  const saveInFlightRef = useRef(false);
+  const pendingWorkspaceVersionRef = useRef(0);
+  const queuedWorkspaceSaveRef = useRef<{ payload: WorkspacePayload; manual: boolean; version: number } | null>(null);
 
   const activeCollection = collections[activeCollectionId] ?? Object.values(collections)[0] ?? createCollection("tmp", "tmp", [], true);
   const snippets = activeCollection.snippets;
@@ -627,6 +643,134 @@ export default function Index() {
   const setBackendParserOutput = (value: string | null) => {
     updateActiveCollection((collection) => ({ ...collection, backendParserOutput: value }));
   };
+
+  useEffect(() => {
+    accessTokenRef.current = accessToken;
+  }, [accessToken]);
+
+  const buildWorkspacePayload = useCallback((): WorkspacePayload => ({
+    collections: sanitizeCollectionsForStorage(collections),
+    activeCollectionId,
+    theme,
+    openResponseTabs: openResponseTabs as unknown as Record<string, unknown>[],
+    activeResponseTabId,
+  }), [activeCollectionId, activeResponseTabId, collections, openResponseTabs, theme]);
+
+  const persistPendingWorkspace = useCallback((payload: WorkspacePayload) => {
+    if (!user?.id) return 0;
+    const version = pendingWorkspaceVersionRef.current + 1;
+    pendingWorkspaceVersionRef.current = version;
+    try {
+      const pending: PendingWorkspacePayload = {
+        userId: user.id,
+        savedAt: new Date().toISOString(),
+        payload,
+      };
+      window.localStorage.setItem(PENDING_WORKSPACE_KEY, JSON.stringify(pending));
+    } catch {
+      // Local persistence is best-effort; in-memory state still carries the edit.
+    }
+    return version;
+  }, [user?.id]);
+
+  const clearPendingWorkspace = useCallback((version: number) => {
+    if (version !== pendingWorkspaceVersionRef.current) return;
+    try {
+      window.localStorage.removeItem(PENDING_WORKSPACE_KEY);
+    } catch {
+      // Ignore localStorage cleanup errors.
+    }
+  }, []);
+
+  const saveWorkspacePayload = useCallback(async (payload: WorkspacePayload, options: { manual?: boolean } = {}) => {
+    if (!user) return;
+    const manual = !!options.manual;
+    const version = persistPendingWorkspace(payload);
+    if (!version) return;
+
+    if (saveInFlightRef.current) {
+      queuedWorkspaceSaveRef.current = { payload, manual, version };
+      if (manual) {
+        setWorkspaceSaveState("saving");
+        setStatusKind("info");
+        setStatusMsg("Saving...");
+      }
+      return;
+    }
+
+    saveInFlightRef.current = true;
+    queuedWorkspaceSaveRef.current = null;
+    let current: { payload: WorkspacePayload; manual: boolean; version: number } | null = { payload, manual, version };
+
+    while (current) {
+      setWorkspaceSaveState("saving");
+      if (current.manual) {
+        setStatusKind("info");
+        setStatusMsg("Saving...");
+      }
+
+      let didSave = false;
+      try {
+        const token = accessTokenRef.current;
+        if (!token) throw new ApiError(401, "Session expired", null);
+        await saveUserWorkspace(current.payload, token);
+        didSave = true;
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) {
+          const refreshedToken = await refreshAccessToken();
+          if (!refreshedToken) {
+            setWorkspaceSaveState("session-expired");
+            setStatusKind("error");
+            setStatusMsg("Session expired, please login again");
+            break;
+          }
+          accessTokenRef.current = refreshedToken;
+          try {
+            await saveUserWorkspace(current.payload, refreshedToken);
+            didSave = true;
+          } catch (retryError) {
+            if (retryError instanceof ApiError && retryError.status === 401) {
+              setWorkspaceSaveState("session-expired");
+              setStatusKind("error");
+              setStatusMsg("Session expired, please login again");
+            } else {
+              setWorkspaceSaveState("error");
+              setStatusKind("error");
+              setStatusMsg("Could not save workspace");
+              if (import.meta.env.DEV) console.debug("Workspace save retry failed", retryError);
+            }
+            break;
+          }
+        } else {
+          setWorkspaceSaveState("error");
+          setStatusKind("error");
+          setStatusMsg("Could not save workspace");
+          if (import.meta.env.DEV) console.debug("Workspace save failed", error);
+          break;
+        }
+      }
+
+      if (didSave) {
+        clearPendingWorkspace(current.version);
+        if (!queuedWorkspaceSaveRef.current) {
+          setWorkspaceSaveState("saved");
+          if (current.manual) {
+            setStatusKind("success");
+            setStatusMsg("Saved");
+          }
+        }
+      }
+
+      current = queuedWorkspaceSaveRef.current;
+      queuedWorkspaceSaveRef.current = null;
+    }
+
+    saveInFlightRef.current = false;
+  }, [clearPendingWorkspace, persistPendingWorkspace, refreshAccessToken, user]);
+
+  const handleManualWorkspaceSave = useCallback(() => {
+    void saveWorkspacePayload(buildWorkspacePayload(), { manual: true });
+  }, [buildWorkspacePayload, saveWorkspacePayload]);
 
   const setWorkspaceArtifacts = (updater: Record<string, WorkspaceArtifact> | ((prev: Record<string, WorkspaceArtifact>) => Record<string, WorkspaceArtifact>)) => {
     updateActiveCollection((collection) => {
@@ -1019,17 +1163,34 @@ export default function Index() {
     getUserWorkspace(accessToken)
       .then((workspace) => {
         if (!active) return;
-        if (workspace.collections && Object.keys(workspace.collections).length > 0) {
-          const loadedCollections = normalizeCollections(workspace.collections as Record<string, CollectionState>);
-          setCollections(loadedCollections);
-          if (workspace.activeCollectionId && loadedCollections[workspace.activeCollectionId]) {
-            setActiveCollectionId(workspace.activeCollectionId);
+        let workspaceToLoad = workspace;
+        try {
+          const rawPending = window.localStorage.getItem(PENDING_WORKSPACE_KEY);
+          if (rawPending) {
+            const pending = JSON.parse(rawPending) as PendingWorkspacePayload;
+            const pendingTime = Date.parse(pending.savedAt);
+            const remoteTime = workspace.updatedAt ? Date.parse(workspace.updatedAt) : 0;
+            if (pending.userId === user.id && Number.isFinite(pendingTime) && pendingTime > remoteTime) {
+              workspaceToLoad = pending.payload;
+              setWorkspaceSaveState("error");
+              setStatusKind("error");
+              setStatusMsg("Unsaved workspace changes restored");
+            }
           }
-          setOpenResponseTabs((workspace.openResponseTabs as unknown as ResponseTab[]) || []);
-          setActiveResponseTabId(workspace.activeResponseTabId || null);
+        } catch {
+          // Ignore malformed pending snapshots and keep the remote workspace.
         }
-        if (workspace.theme === "light" || workspace.theme === "dark") {
-          setTheme(workspace.theme);
+        if (workspaceToLoad.collections && Object.keys(workspaceToLoad.collections).length > 0) {
+          const loadedCollections = normalizeCollections(workspaceToLoad.collections as Record<string, CollectionState>);
+          setCollections(loadedCollections);
+          if (workspaceToLoad.activeCollectionId && loadedCollections[workspaceToLoad.activeCollectionId]) {
+            setActiveCollectionId(workspaceToLoad.activeCollectionId);
+          }
+          setOpenResponseTabs((workspaceToLoad.openResponseTabs as unknown as ResponseTab[]) || []);
+          setActiveResponseTabId(workspaceToLoad.activeResponseTabId || null);
+        }
+        if (workspaceToLoad.theme === "light" || workspaceToLoad.theme === "dark") {
+          setTheme(workspaceToLoad.theme);
         }
         setHasLoadedRemoteWorkspace(true);
       })
@@ -1045,19 +1206,10 @@ export default function Index() {
   useEffect(() => {
     if (!user || !accessToken || !hasLoadedRemoteWorkspace) return;
     const timeout = window.setTimeout(() => {
-      void saveUserWorkspace({
-        collections: sanitizeCollectionsForStorage(collections),
-        activeCollectionId,
-        theme,
-        openResponseTabs: openResponseTabs as unknown as Record<string, unknown>[],
-        activeResponseTabId,
-      }, accessToken).catch(() => {
-        setStatusKind("error");
-        setStatusMsg("Could not save workspace");
-      });
+      void saveWorkspacePayload(buildWorkspacePayload());
     }, 800);
     return () => window.clearTimeout(timeout);
-  }, [user, accessToken, hasLoadedRemoteWorkspace, collections, activeCollectionId, theme, openResponseTabs, activeResponseTabId]);
+  }, [user, accessToken, hasLoadedRemoteWorkspace, buildWorkspacePayload, saveWorkspacePayload]);
 
   // Status bar uses "snippets ready"
   useEffect(() => {
@@ -4733,6 +4885,27 @@ export default function Index() {
                   title={activeWorkspaceId ? `Generate local feasibility tester for ${activeWorkspaceDisplayName}` : "Select a workspace"}
                 >
                   Generate Local Feasibility Code
+                </button>
+                <button
+                  onClick={handleManualWorkspaceSave}
+                  disabled={!user || workspaceSaveState === "saving"}
+                  className={quietToolbarButtonClass}
+                  title={user ? "Save workspace now" : "Login to save workspace"}
+                >
+                  {workspaceSaveState === "saving" ? (
+                    <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
+                  ) : (
+                    <Save className="h-4 w-4" strokeWidth={2} />
+                  )}
+                  {workspaceSaveState === "saving"
+                    ? "Saving..."
+                    : workspaceSaveState === "saved"
+                      ? "Saved"
+                      : workspaceSaveState === "session-expired"
+                        ? "Session expired"
+                        : workspaceSaveState === "error"
+                          ? "Could not save"
+                          : "Save"}
                 </button>
                 <button
                   onClick={() => void handleRunActiveWorkspace()}

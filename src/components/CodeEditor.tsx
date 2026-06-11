@@ -127,6 +127,7 @@ function cursorIsInsideQuotes(line: string, column: number): boolean {
 }
 
 const VARIABLE_TYPES = new Set(["string", "int", "float", "bool"]);
+const PIPELINE_DEFAULTS_PREFIX = "# curl2py-pipeline-defaults: ";
 
 function sanitizePythonName(value: string): string {
   let next = value.trim().replace(/[^A-Za-z0-9_]+/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "").toLowerCase();
@@ -216,6 +217,65 @@ function addFunctionArgument(code: string, variableName: string, defaultLiteral:
   return lines.join("\n");
 }
 
+function pipelinePathFromKey(key: string): string {
+  return key.startsWith("[") ? key : `.${key}`;
+}
+
+function setNestedDefault(root: Record<string, unknown>, requestName: string, path: string, value: unknown) {
+  const tokens = Array.from(path.matchAll(/\.([A-Za-z_][A-Za-z0-9_]*|\d+)|\[(\d+)\]/g)).map((match) => {
+    const raw = match[1] ?? match[2];
+    return /^\d+$/.test(raw) ? Number(raw) : raw;
+  });
+  if (tokens.length === 0) return;
+  let current: unknown = root[requestName] ?? {};
+  root[requestName] = current;
+  tokens.forEach((token, index) => {
+    const last = index === tokens.length - 1;
+    const nextToken = tokens[index + 1];
+    if (typeof token === "string") {
+      if (!current || typeof current !== "object" || Array.isArray(current)) return;
+      const obj = current as Record<string, unknown>;
+      if (last) {
+        obj[token] = value;
+        return;
+      }
+      if (!(token in obj)) obj[token] = typeof nextToken === "number" ? [] : {};
+      current = obj[token];
+      return;
+    }
+    if (!Array.isArray(current)) return;
+    while (current.length <= token) current.push(typeof nextToken === "number" ? [] : {});
+    if (last) {
+      current[token] = value;
+      return;
+    }
+    current = current[token];
+  });
+}
+
+function updatePipelineDefaultsComment(code: string, requestName: string, key: string, defaultValue: unknown): string {
+  const lines = code.split("\n");
+  const existingIndex = lines.findIndex((line) => line.startsWith(PIPELINE_DEFAULTS_PREFIX));
+  let defaults: Record<string, unknown> = {};
+  if (existingIndex >= 0) {
+    try {
+      defaults = JSON.parse(lines[existingIndex].slice(PIPELINE_DEFAULTS_PREFIX.length)) as Record<string, unknown>;
+    } catch {
+      defaults = {};
+    }
+  }
+  setNestedDefault(defaults, requestName, pipelinePathFromKey(key), defaultValue);
+  const comment = `${PIPELINE_DEFAULTS_PREFIX}${JSON.stringify(defaults)}`;
+  if (existingIndex >= 0) {
+    lines[existingIndex] = comment;
+    return lines.join("\n");
+  }
+  let insertAt = 0;
+  while (insertAt < lines.length && (/^(import |from )/.test(lines[insertAt]) || lines[insertAt].trim() === "")) insertAt += 1;
+  lines.splice(insertAt, 0, comment);
+  return lines.join("\n");
+}
+
 export function CodeEditor({ value, filename, onChange, wordWrap = false, readOnly = false, className, parserInsertGroups = [] }: CodeEditorProps) {
   return (
     <div className={cn("min-h-0 h-full", className)}>
@@ -239,6 +299,9 @@ export function CodeEditor({ value, filename, onChange, wordWrap = false, readOn
                   const model = ed.getModel();
                   const position = ed.getPosition();
                   if (!model || !position) return;
+                  const selection = ed.getSelection();
+                  const range = selection && !selection.isEmpty() ? selection : findValueRange(model, position, monaco);
+                  const selectedText = range ? model.getValueInRange(range).trim() : "";
                   const expectedType = window.prompt("Expected variable type: string, int, float, bool", "string")?.trim().toLowerCase() || "string";
                   if (!VARIABLE_TYPES.has(expectedType)) {
                     window.alert("Expected type must be one of: string, int, float, bool");
@@ -246,14 +309,21 @@ export function CodeEditor({ value, filename, onChange, wordWrap = false, readOn
                   }
                   const placeholder = `{{${group.requestName}.${key}|${expectedType}}}`;
                   const line = model.getLineContent(position.lineNumber);
-                  const text = cursorIsInsideQuotes(line, position.column) ? placeholder : `"${placeholder}"`;
-                  ed.executeEdits("insert-parser-output", [
-                    {
-                      range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column),
-                      text,
-                      forceMoveMarkers: true,
-                    },
-                  ]);
+                  const text = range && selectedText
+                    ? ((selectedText.startsWith('"') && selectedText.endsWith('"')) || (selectedText.startsWith("'") && selectedText.endsWith("'")) ? `"${placeholder}"` : placeholder)
+                    : cursorIsInsideQuotes(line, position.column) ? placeholder : `"${placeholder}"`;
+                  const editRange = range ?? new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column);
+                  ed.executeEdits("insert-parser-output", [{ range: editRange, text, forceMoveMarkers: true }]);
+                  if (range && selectedText) {
+                    try {
+                      const defaultValue = coerceDefaultValue(parsePythonLiteral(selectedText), expectedType);
+                      const nextValue = updatePipelineDefaultsComment(model.getValue(), group.requestName, key, defaultValue);
+                      model.setValue(nextValue);
+                      onChange(nextValue);
+                    } catch (error) {
+                      window.alert(error instanceof Error ? error.message : "Default value conversion failed");
+                    }
+                  }
                   ed.focus();
                 },
               });

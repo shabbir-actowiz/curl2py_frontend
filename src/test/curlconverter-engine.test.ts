@@ -184,6 +184,75 @@ def do_requests():
     expect(code).toContain('"product_id": 12345');
   });
 
+  it("merges real pipeline defaults from metadata for lat and lon together", () => {
+    const repaired = repairPythonPipelinePlaceholders(`import json
+from curl_cffi import requests
+# curl2py-pipeline-defaults: {"info":{"lat":"28.413333","lon":"77.072833"}}
+
+DEFAULT_PIPELINE_CONTEXT = {
+    "info": {
+        "lat": "mock_lat",
+    },
+}
+
+def request_2(pipeline_context=None):
+    params = {
+        "lat": get_pipeline_value("info", ".lat", pipeline_context, "string"),
+        "lng": "{{info.lon|string}}",
+    }
+    return params
+`);
+
+    expect(repaired).toContain('"lat": "28.413333"');
+    expect(repaired).toContain('"lon": "77.072833"');
+    expect(repaired).toContain('"lng": get_pipeline_value("info", ".lon", pipeline_context, "string")');
+    expect(repaired).not.toContain("mock_lat");
+    expect(repaired).not.toContain("mock_lon");
+  });
+
+  it("keeps 3+ real pipeline defaults with string int and float types", () => {
+    const repaired = repairPythonPipelinePlaceholders(`from curl_cffi import requests
+# curl2py-pipeline-defaults: {"info":{"lat":28.413333,"product_id":12345,"pincode":"110001"}}
+
+def request_2():
+    params = {
+        "lat": "{{info.lat|float}}",
+        "product": "{{info.product_id|int}}",
+        "pin": "{{info.pincode|string}}",
+    }
+    return params
+`);
+
+    expect(repaired).toContain('"lat": 28.413333');
+    expect(repaired).toContain('"product_id": 12345');
+    expect(repaired).toContain('"pincode": "110001"');
+    expect(repaired).toContain('get_pipeline_value("info", ".lat", pipeline_context, "float")');
+    expect(repaired).toContain('get_pipeline_value("info", ".product_id", pipeline_context, "int")');
+    expect(repaired).toContain('get_pipeline_value("info", ".pincode", pipeline_context, "string")');
+  });
+
+  it("preserves existing real defaults when rebuilding compiled pipeline context", () => {
+    const repaired = repairPythonPipelinePlaceholders(`from curl_cffi import requests
+
+DEFAULT_PIPELINE_CONTEXT = {
+    "info": {
+        "lat": "28.413333",
+    },
+}
+
+def request_2(pipeline_context=None):
+    params = {
+        "lat": get_pipeline_value("info", ".lat", pipeline_context, "string"),
+        "lng": "{{info.lon|string}}",
+    }
+    return params
+`);
+
+    expect(repaired).toContain('"lat": "28.413333"');
+    expect(repaired).toContain('"lon": "mock_lon"');
+    expect(repaired).not.toContain('"lat": "mock_lat"');
+  });
+
   it("passes pipeline_context in merged script when edited request code depends on pipeline", () => {
     const request1 = convertCurlLocally("curl 'https://example.com/bootstrap'").request;
     const request2 = convertCurlLocally("curl 'https://example.com/products?searchTerm=placeholder'").request;

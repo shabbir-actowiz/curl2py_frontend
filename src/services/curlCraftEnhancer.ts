@@ -17,6 +17,8 @@ interface BatchEnhanceOptions {
 const PIPELINE_PLACEHOLDER_PATTERN = /\{\{?\s*[A-Za-z_][A-Za-z0-9_]*(?:\.(?:[A-Za-z_][A-Za-z0-9_]*|\d+)|\[\d+\])+(?:\|(?:string|int|float|bool))?\s*\}\}?/;
 const PIPELINE_REFERENCE_PATTERN = /\{\{?\s*([A-Za-z_][A-Za-z0-9_]*)((?:\.(?:[A-Za-z_][A-Za-z0-9_]*|\d+)|\[\d+\])+)(?:\|(string|int|float|bool))?\s*\}\}?/g;
 const PIPELINE_FULL_REFERENCE_PATTERN = /^\{\{?\s*([A-Za-z_][A-Za-z0-9_]*)((?:\.(?:[A-Za-z_][A-Za-z0-9_]*|\d+)|\[\d+\])+)(?:\|(string|int|float|bool))?\s*\}\}?$/;
+const PIPELINE_CALL_PATTERN = /get_pipeline_value\(\s*("[^"]+")\s*,\s*("[^"]+")\s*,\s*pipeline_context(?:\s*,\s*("(?:string|int|float|bool)"))?\s*\)/g;
+const PIPELINE_DEFAULTS_PREFIX = "# curl2py-pipeline-defaults: ";
 const PIPELINE_PATH_TOKEN_PATTERN = /\.([A-Za-z_][A-Za-z0-9_]*|\d+)|\[(\d+)\]/g;
 
 export const PIPELINE_UTILS_CODE = `import re
@@ -249,6 +251,20 @@ function pipelineReferences(value: unknown): Array<{ requestName: string; path: 
           refs.push({ requestName, path, expectedType });
         }
       }
+      for (const match of item.matchAll(PIPELINE_CALL_PATTERN)) {
+        try {
+          const requestName = JSON.parse(match[1]) as string;
+          const path = JSON.parse(match[2]) as string;
+          const expectedType = match[3] ? JSON.parse(match[3]) as string : undefined;
+          const key = `${requestName}:${path}:${expectedType || ""}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            refs.push({ requestName, path, expectedType });
+          }
+        } catch {
+          // Ignore hand-edited calls that are not simple generated string literals.
+        }
+      }
     } else if (Array.isArray(item)) {
       item.forEach(visit);
     } else if (item && typeof item === "object") {
@@ -295,9 +311,58 @@ function assertNoUnresolvedPipelinePlaceholders(code: string): void {
 }
 
 function buildDefaultContextFromCode(code: string): Record<string, unknown> {
-  const context: Record<string, unknown> = {};
+  const context: Record<string, unknown> = extractExistingDefaultContext(code) ?? {};
   pipelineReferences(code).forEach(({ requestName, path, expectedType }) => assignDefaultContextPath(context, requestName, path, expectedType));
+  mergePipelineDefaultMetadata(context, code);
   return context;
+}
+
+function extractExistingDefaultContext(code: string): Record<string, unknown> | null {
+  const lines = code.split("\n");
+  const range = findDefaultContextRange(lines);
+  if (!range) return null;
+  const assignment = lines.slice(range.start, range.end + 1).join("\n");
+  const literal = assignment.replace(/^DEFAULT_PIPELINE_CONTEXT\s*=\s*/, "");
+  try {
+    const jsonish = literal
+      .replace(/,\s*([}\]])/g, "$1")
+      .replace(/\bTrue\b/g, "true")
+      .replace(/\bFalse\b/g, "false")
+      .replace(/\bNone\b/g, "null");
+    const parsed = JSON.parse(jsonish) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+function mergePlainObject(target: Record<string, unknown>, source: Record<string, unknown>): void {
+  Object.entries(source).forEach(([key, value]) => {
+    if (
+      value
+      && typeof value === "object"
+      && !Array.isArray(value)
+      && target[key]
+      && typeof target[key] === "object"
+      && !Array.isArray(target[key])
+    ) {
+      mergePlainObject(target[key] as Record<string, unknown>, value as Record<string, unknown>);
+      return;
+    }
+    target[key] = value;
+  });
+}
+
+function mergePipelineDefaultMetadata(context: Record<string, unknown>, code: string): void {
+  code.split("\n").forEach((line) => {
+    if (!line.startsWith(PIPELINE_DEFAULTS_PREFIX)) return;
+    try {
+      const defaults = JSON.parse(line.slice(PIPELINE_DEFAULTS_PREFIX.length)) as Record<string, unknown>;
+      mergePlainObject(context, defaults);
+    } catch {
+      // Ignore malformed metadata; placeholder references will still get safe fallbacks.
+    }
+  });
 }
 
 function insertLineAfterImports(code: string, line: string): string {
@@ -310,12 +375,40 @@ function insertLineAfterImports(code: string, line: string): string {
 }
 
 function insertDefaultContext(code: string, context: Record<string, unknown>): string {
-  if (code.includes("DEFAULT_PIPELINE_CONTEXT")) return code;
-  const lines = code.split("\n");
+  const lines = removeDefaultContext(code).split("\n");
   let insertAt = 0;
   while (insertAt < lines.length && (/^(import |from )/.test(lines[insertAt]) || lines[insertAt].trim() === "")) insertAt += 1;
   lines.splice(insertAt, 0, `DEFAULT_PIPELINE_CONTEXT = ${formatPythonValue(context, 4)}`, "");
   return lines.join("\n");
+}
+
+function removeDefaultContext(code: string): string {
+  const lines = code.split("\n");
+  const range = findDefaultContextRange(lines);
+  if (!range) return code;
+  const start = range.start;
+  const end = range.end;
+  lines.splice(start, end - start + 1);
+  while (start < lines.length && lines[start]?.trim() === "" && lines[start - 1]?.trim() === "") {
+    lines.splice(start, 1);
+  }
+  return lines.join("\n");
+}
+
+function findDefaultContextRange(lines: string[]): { start: number; end: number } | null {
+  const start = lines.findIndex((line) => /^DEFAULT_PIPELINE_CONTEXT\s*=/.test(line));
+  if (start < 0) return null;
+  let end = start;
+  let depth = 0;
+  for (let index = start; index < lines.length; index += 1) {
+    for (const char of lines[index]) {
+      if (char === "{" || char === "[") depth += 1;
+      if (char === "}" || char === "]") depth -= 1;
+    }
+    end = index;
+    if (depth <= 0 && (index > start || /[}\]]/.test(lines[index]) || !/[{\[]/.test(lines[index]))) break;
+  }
+  return { start, end };
 }
 
 function replacePlaceholderLiterals(code: string): string {
@@ -370,7 +463,7 @@ function passContextInDoRequests(code: string): string {
 }
 
 export function repairPythonPipelinePlaceholders(code: string): string {
-  if (!valueHasPipelinePlaceholder(code)) return code;
+  if (!valueHasPipelinePlaceholder(code) && !code.includes("get_pipeline_value(") && !code.includes(PIPELINE_DEFAULTS_PREFIX)) return code;
   const context = buildDefaultContextFromCode(code);
   let next = code;
   next = insertLineAfterImports(next, "from pipeline_utils import get_pipeline_value, resolve_pipeline_placeholders");
