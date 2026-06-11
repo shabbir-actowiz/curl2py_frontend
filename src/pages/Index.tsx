@@ -3041,24 +3041,50 @@ export default function Index() {
     setStatusMsg(`Downloaded ${filesToDownload.length} file${filesToDownload.length === 1 ? "" : "s"} as ZIP`);
   };
 
-  const handleFeasibilityCodeArtifacts = useCallback((workspaceId: string, artifacts: FeasibilityArtifact[], signature: string) => {
-    if (!workspaceId || artifacts.length === 0) return;
-    updateWorkspaceArtifact(workspaceId, (artifact) => ({
-      ...artifact,
-      feasibilityCodeSignature: signature,
-      responseOutputs: {
-        ...artifact.responseOutputs,
-        ...Object.fromEntries(artifacts.map((file) => [
-          file.filename,
-          {
-            content: file.content,
-            contentType: file.content_type,
-            extension: file.filename.split(".").pop() || "txt",
+  const handleFeasibilityCodeArtifacts = useCallback((
+    collectionId: string,
+    workspaceId: string,
+    workspaceName: string,
+    artifacts: FeasibilityArtifact[],
+    signature: string,
+  ) => {
+    if (!collectionId || !workspaceId || artifacts.length === 0) return;
+    setCollections((prev) => {
+      const collection = prev[collectionId];
+      if (!collection) return prev;
+      const currentArtifact = collection.workspaceArtifacts?.[workspaceId] ?? {
+        responseJson: null,
+        metaJson: null,
+        logsTxt: `Workspace ${workspaceName} ready`,
+        parserCode: buildParserStub(workspaceName),
+        parserGenerated: true,
+      };
+      return {
+        ...prev,
+        [collectionId]: {
+          ...collection,
+          workspaceArtifacts: {
+            ...collection.workspaceArtifacts,
+            [workspaceId]: {
+              ...currentArtifact,
+              feasibilityCodeSignature: signature,
+              responseOutputs: {
+                ...currentArtifact.responseOutputs,
+                ...Object.fromEntries(artifacts.map((file) => [
+                  file.filename,
+                  {
+                    content: file.content,
+                    contentType: file.content_type,
+                    extension: file.filename.split(".").pop() || "txt",
+                  },
+                ])),
+              },
+            },
           },
-        ])),
-      },
-    }));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+        },
+      };
+    });
+  }, []);
 
   const handleGenerateLocalFeasibilityCode = useCallback(async () => {
     if (!activeWorkspaceId || !activeFeasibilityRequest?.url || activeFeasibilityRequest.error) {
@@ -3066,32 +3092,41 @@ export default function Index() {
       return;
     }
 
+    const targetCollectionId = activeCollection.id;
+    const targetCollectionName = activeCollection.name;
+    const targetWorkspaceId = activeWorkspaceId;
+    const targetWorkspaceName = activeWorkspaceDisplayName;
+    const targetRequestCode = activeWorkspaceRequestCode;
+    const targetRequest = activeFeasibilityRequest;
+    const targetProxyConfig = proxyConfig;
+
     const signature = JSON.stringify({
-      workspaceId: activeWorkspaceId,
-      workspaceName: activeWorkspaceDisplayName,
-      requestCode: activeWorkspaceRequestCode,
+      collectionId: targetCollectionId,
+      workspaceId: targetWorkspaceId,
+      workspaceName: targetWorkspaceName,
+      requestCode: targetRequestCode,
       request: {
-        url: activeFeasibilityRequest.url,
-        method: activeFeasibilityRequest.method,
-        headers: activeFeasibilityRequest.headers,
-        body: activeFeasibilityRequest.data ?? null,
+        url: targetRequest.url,
+        method: targetRequest.method,
+        headers: targetRequest.headers,
+        body: targetRequest.data ?? null,
       },
     });
 
     try {
       const { artifacts } = await generateFeasibilityCodeArtifacts({
-        collection_name: activeCollection.name,
-        workspace_name: activeWorkspaceDisplayName,
-        request_code: activeWorkspaceRequestCode,
+        collection_name: targetCollectionName,
+        workspace_name: targetWorkspaceName,
+        request_code: targetRequestCode,
         request: {
-          url: activeFeasibilityRequest.url,
-          method: activeFeasibilityRequest.method,
-          headers: activeFeasibilityRequest.headers,
-          body: activeFeasibilityRequest.data,
+          url: targetRequest.url,
+          method: targetRequest.method,
+          headers: targetRequest.headers,
+          body: targetRequest.data,
           timeout_seconds: 10,
           content_marker: null,
         },
-        user_proxy: proxyConfig,
+        user_proxy: targetProxyConfig,
         test_user_proxy: false,
         production_like: true,
         polite_delay_enabled: true,
@@ -3100,7 +3135,7 @@ export default function Index() {
         normal_request_retries: 2,
         debugging_mode: false,
       });
-      handleFeasibilityCodeArtifacts(activeWorkspaceId, artifacts, signature);
+      handleFeasibilityCodeArtifacts(targetCollectionId, targetWorkspaceId, targetWorkspaceName, artifacts, signature);
       setStatusKind("success");
       setStatusMsg("Feasibility code generated. Run this file locally to test safely.");
       toast.success("Feasibility code generated. Run this file locally to test safely.");
@@ -3111,6 +3146,7 @@ export default function Index() {
       toast.error(`Feasibility code generation failed: ${message}`);
     }
   }, [
+    activeCollection.id,
     activeCollection.name,
     activeFeasibilityRequest,
     activeWorkspaceDisplayName,
