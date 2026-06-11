@@ -4184,10 +4184,10 @@ export default function Index() {
                   <Download className="h-3.5 w-3.5" strokeWidth={2} />
                   Download All
                 </DropdownMenuItem>
-                <DropdownMenuItem className={modernMenuItemClass} onClick={openRaiseIssueDialog}>
+                {/* <DropdownMenuItem className={modernMenuItemClass} onClick={openRaiseIssueDialog}>
                   <AlertCircle className="h-3.5 w-3.5" strokeWidth={2} />
                   Raise Issue
-                </DropdownMenuItem>
+                </DropdownMenuItem> */}
               </DropdownMenuContent>
             </DropdownMenu>
 
