@@ -16,7 +16,14 @@ describe("frontend curlconverter pipeline", () => {
     expect(code).toContain("from curl_cffi import requests");
     expect(code).toContain("def request_1():");
     expect(code).not.toContain("pipeline_utils");
-    expect(code).toContain("response = requests.get(");
+    expect(code).toContain("def execute_request(");
+    expect(code).toContain("response = execute_request(");
+    expect(code).toContain('method="GET"');
+    expect(code).toContain("requests.request(method, url, **request_kwargs)");
+    expect(code).toContain("MAX_RETRIES = 3");
+    expect(code).toContain("RETRY_DELAY_SECONDS = 2");
+    expect(code).toContain("gzip.open(response_file");
+    expect(code).toContain('f"{request_name}_response_status_{status_code}.gz.html"');
     expect(code).toContain('timeout=30');
   });
 
@@ -80,7 +87,8 @@ describe("frontend curlconverter pipeline", () => {
 
   it("extracts cookie header into requests cookies for POST", () => {
     const code = generate(`curl 'https://example.com/api' -X POST -H 'content-type: application/json' -H 'Cookie: session=abc; theme=dark' --data '{"ok":true}'`);
-    expect(code).toContain("response = requests.post(");
+    expect(code).toContain("response = execute_request(");
+    expect(code).toContain('method="POST"');
     expect(code).toContain("cookies = {");
     expect(code).toContain('"session": "abc"');
     expect(code).toContain('"theme": "dark"');

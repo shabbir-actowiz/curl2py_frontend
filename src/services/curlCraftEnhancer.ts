@@ -655,8 +655,10 @@ function buildRequestFunction({ functionName, request, proxy }: EnhanceOptions):
   });
   if (resolveVars.length > 0) lines.push("");
 
-  lines.push(`    response = requests.${method}(`);
-  lines.push("        url,");
+  lines.push("    response = execute_request(");
+  lines.push(`        request_name=${pyString(functionName)},`);
+  lines.push(`        method=${pyString(method.toUpperCase())},`);
+  lines.push("        url=url,");
   if (hasParams) lines.push("        params=params,");
   if (hasCookies) lines.push("        cookies=cookies,");
   if (hasHeaders) lines.push("        headers=headers,");
@@ -669,27 +671,149 @@ function buildRequestFunction({ functionName, request, proxy }: EnhanceOptions):
   lines.push("        timeout=30,");
   lines.push("    )");
   lines.push("");
-  lines.push("    response.raise_for_status()");
-  lines.push(`    save_response(response, ${pyString(functionName)})`);
   lines.push("    return response");
   return lines.join("\n");
 }
 
-function buildSaveResponseFunction(): string {
+function buildRequestFramework(): string {
   return [
-    "def save_response(response, request_name):",
-    '    content_type = response.headers.get("content-type", "").lower()',
-    '    response_folder = "pagesaves"',
-    "    os.makedirs(response_folder, exist_ok=True)",
+    "MAX_RETRIES = 3",
+    "RETRY_DELAY_SECONDS = 2",
     "",
-    '    if "application/json" in content_type:',
-    '        response_file = os.path.join(response_folder, f"{request_name}_response.json")',
-    '        with open(response_file, "w", encoding="utf-8") as f:',
-    "            json.dump(response.json(), f, indent=2, ensure_ascii=False)",
+    "class RequestLogFormatter(logging.Formatter):",
+    "    def format(self, record):",
+    '        if not hasattr(record, "request_name"):',
+    '            record.request_name = "-"',
+    "        return super().format(record)",
+    "",
+    "class RequestLoggerAdapter(logging.LoggerAdapter):",
+    "    def process(self, msg, kwargs):",
+    '        extra = kwargs.setdefault("extra", {})',
+    '        extra.setdefault("request_name", self.extra["request_name"])',
+    "        return msg, kwargs",
+    "",
+    "def get_run_folder():",
+    '    return f"pagesaves_{datetime.now().strftime(\'%Y_%m_%d\')}"',
+    "",
+    "def get_request_folder(request_name):",
+    "    request_folder = os.path.join(get_run_folder(), request_name)",
+    "    os.makedirs(request_folder, exist_ok=True)",
+    "    return request_folder",
+    "",
+    "def setup_request_logger(request_name):",
+    '    logger = logging.getLogger(f"curl2py.{request_name}")',
+    "    logger.setLevel(logging.INFO)",
+    "    logger.propagate = False",
+    "    request_folder = get_request_folder(request_name)",
+    '    log_file = os.path.join(request_folder, f"{request_name}.log")',
+    '    formatter = RequestLogFormatter("%(asctime)s | %(levelname)s | %(request_name)s | %(message)s")',
+    "    if not logger.handlers:",
+    "        console_handler = logging.StreamHandler()",
+    "        console_handler.setFormatter(formatter)",
+    "        logger.addHandler(console_handler)",
+    "        file_handler = logging.FileHandler(log_file, encoding=\"utf-8\")",
+    "        file_handler.setFormatter(formatter)",
+    "        logger.addHandler(file_handler)",
+    "    return RequestLoggerAdapter(logger, {\"request_name\": request_name})",
+    "",
+    "def response_bytes(response):",
+    '    content = getattr(response, "content", None)',
+    "    if content is not None:",
+    "        return content",
+    '    text = getattr(response, "text", "")',
+    '    return text.encode("utf-8")',
+    "",
+    "def save_response(response, request_name, logger=None):",
+    "    request_folder = get_request_folder(request_name)",
+    '    status_code = getattr(response, "status_code", "unknown")',
+    "    if status_code == 200:",
+    '        filename = f"{request_name}_response.gz.html"',
     "    else:",
-    '        response_file = os.path.join(response_folder, f"{request_name}_response.html")',
-    '        with open(response_file, "w", encoding="utf-8") as f:',
-    "            f.write(response.text)",
+    '        filename = f"{request_name}_response_status_{status_code}.gz.html"',
+    "    response_file = os.path.join(request_folder, filename)",
+    '    with gzip.open(response_file, "wb") as file:',
+    "        file.write(response_bytes(response))",
+    "    if logger:",
+    '        logger.info("Response saved: %s", response_file)',
+    "    return response_file",
+    "",
+    "def log_status(logger, status_code):",
+    "    if status_code == 200:",
+    '        logger.info("Status Code: %s", status_code)',
+    "    elif status_code in (429, 408, 409, 500, 502, 503, 504):",
+    '        logger.warning("Status Code: %s", status_code)',
+    "    else:",
+    '        logger.error("Status Code: %s", status_code)',
+    "",
+    "def execute_request(request_name, method, url, max_retries=MAX_RETRIES, retry_delay=RETRY_DELAY_SECONDS, **request_kwargs):",
+    "    logger = setup_request_logger(request_name)",
+    "    start_time = time.time()",
+    '    logger.info("Request started")',
+    '    logger.info("Method: %s", method)',
+    '    logger.info("URL: %s", url)',
+    '    logger.info("Start time: %s", datetime.fromtimestamp(start_time).isoformat())',
+    "    last_response = None",
+    "    last_response_path = None",
+    "    last_error = None",
+    "",
+    "    for attempt in range(1, max_retries + 1):",
+    '        logger.info("Attempt %s/%s", attempt, max_retries)',
+    "        try:",
+    "            response = requests.request(method, url, **request_kwargs)",
+    "            last_response = response",
+    "            status_code = response.status_code",
+    "            log_status(logger, status_code)",
+    "            response_path = save_response(response, request_name, logger)",
+    "            last_response_path = response_path",
+    "",
+    "            if status_code == 200:",
+    "                duration = time.time() - start_time",
+    '                logger.info("Final status code: %s", status_code)',
+    '                logger.info("Attempt count: %s", attempt)',
+    '                logger.info("End time: %s", datetime.now().isoformat())',
+    '                logger.info("Duration: %.2fs", duration)',
+    '                logger.info("Response save path: %s", response_path)',
+    '                logger.info("Request successful")',
+    "                return response",
+    "",
+    "            last_error = f\"Non-200 status code: {status_code}\"",
+    "            if attempt < max_retries:",
+    '                logger.warning("Retrying after %s seconds", retry_delay)',
+    "                time.sleep(retry_delay)",
+    "                continue",
+    "",
+    "        except Exception as exc:",
+    "            last_error = str(exc)",
+    "            logger.exception(",
+    '                "Request exception on attempt %s/%s for %s %s: %s",',
+    "                attempt,",
+    "                max_retries,",
+    "                method,",
+    "                url,",
+    "                exc,",
+    "            )",
+    "            if attempt < max_retries:",
+    '                logger.warning("Retrying after %s seconds", retry_delay)',
+    "                time.sleep(retry_delay)",
+    "                continue",
+    "",
+    "    duration = time.time() - start_time",
+    "    final_status = getattr(last_response, \"status_code\", None)",
+    "    response_path = last_response_path",
+    "    if last_response is not None and response_path is None:",
+    "        response_path = save_response(last_response, request_name, logger)",
+    '    logger.error("Request failed after %s attempts", max_retries)',
+    '    logger.error("Final status code: %s", final_status)',
+    '    logger.error("Failure reason: %s", last_error)',
+    '    logger.info("Attempt count: %s", max_retries)',
+    '    logger.info("End time: %s", datetime.now().isoformat())',
+    '    logger.info("Duration: %.2fs", duration)',
+    "    if response_path:",
+    '        logger.info("Response save path: %s", response_path)',
+    "    raise RuntimeError(",
+    '        f"Request {request_name} failed after {max_retries} attempts for {method} {url}. "',
+    '        f"Final status: {final_status}. Reason: {last_error}"',
+    "    )",
   ].join("\n");
 }
 
@@ -707,8 +831,11 @@ export function buildCurlCraftScript({ requests, proxy, targetFunctionName }: Ba
     : requests;
   const hasPipeline = renderedRequests.some((entry) => requestUsesPipeline(entry.request));
   const code: string[] = [
-    "import json",
+    "import gzip",
+    "import logging",
     "import os",
+    "import time",
+    "from datetime import datetime",
     "from curl_cffi import requests",
   ];
   if (hasPipeline) code.push("from pipeline_utils import get_pipeline_value, resolve_pipeline_placeholders");
@@ -718,13 +845,12 @@ export function buildCurlCraftScript({ requests, proxy, targetFunctionName }: Ba
     code.push("");
   }
 
+  code.push(buildRequestFramework());
+  code.push("");
   renderedRequests.forEach((entry) => {
     code.push(buildRequestFunction({ ...entry, proxy }));
     code.push("");
   });
-
-  code.push(buildSaveResponseFunction());
-  code.push("");
   code.push("def do_requests():");
   code.push("    pipeline_context = {}");
   renderedRequests.forEach((entry) => {
