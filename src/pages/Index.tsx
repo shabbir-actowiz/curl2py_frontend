@@ -188,7 +188,7 @@ interface WorkspaceArtifact {
   responseFileName?: string;
   responseContentType?: string;
   responseExtension?: string;
-  responseOutputs?: Record<string, { content: string; contentType: string; extension: string; metaJson?: string }>;
+  responseOutputs?: Record<string, { content: string; contentType: string; extension: string; metaJson?: string; transient?: boolean; kind?: "feasibility" }>;
   metaJson: string | null;
   logsTxt: string;
   parserCode: string;
@@ -487,6 +487,10 @@ function sanitizeCollectionsForStorage(collections: Record<string, CollectionSta
                 ...artifact,
                 responseJson: null,
                 logsTxt: "",
+                feasibilityCodeSignature: undefined,
+                responseOutputs: Object.fromEntries(
+                  Object.entries(artifact.responseOutputs || {}).filter(([file, output]) => !isTransientResponseOutput(output, file))
+                ),
               },
             ])
           ),
@@ -498,6 +502,14 @@ function sanitizeCollectionsForStorage(collections: Record<string, CollectionSta
 
 function defaultResponseFileName(workspaceName: string): string {
   return `${workspaceName}_response.json`;
+}
+
+function isTransientResponseOutput(output: { transient?: boolean; kind?: string } | undefined, filename = ""): boolean {
+  const normalizedFilename = filename.toLowerCase();
+  return !!output?.transient
+    || output?.kind === "feasibility"
+    || normalizedFilename === "feasibility_test.py"
+    || normalizedFilename.includes("_feasibility_");
 }
 
 export function preserveValidatedJsonSource(source: string): string {
@@ -1042,6 +1054,7 @@ export default function Index() {
       (artifact?.htmlParserSelections ?? []).forEach((selection) => keys.add(sanitizeOutputKey(selection.outputKey)));
       collectParserOutputKeys(run?.output).forEach((key) => keys.add(key));
       Object.entries(artifact?.responseOutputs ?? {})
+        .filter(([file, output]) => !isTransientResponseOutput(output, file))
         .filter(([file]) => file.endsWith("_parser_output.json"))
         .forEach(([, output]) => parseJsonKeys(output.content).forEach((key) => keys.add(key)));
       return { requestName, keys: Array.from(keys).filter(Boolean).sort() };
@@ -3076,6 +3089,8 @@ export default function Index() {
                     content: file.content,
                     contentType: file.content_type,
                     extension: file.filename.split(".").pop() || "txt",
+                    transient: true,
+                    kind: "feasibility",
                   },
                 ])),
               },
@@ -4702,7 +4717,9 @@ export default function Index() {
                               "parser.py",
                               ...(collectionUsesPipeline && scriptUsesPipeline(requestCode) ? ["pipeline_utils.py"] : []),
                               responseFileName,
-                              ...Object.keys(artifact?.responseOutputs ?? {}).filter((file) => file !== responseFileName),
+                              ...Object.entries(artifact?.responseOutputs ?? {})
+                                .filter(([file, output]) => file !== responseFileName && !isTransientResponseOutput(output, file))
+                                .map(([file]) => file),
                               ...(artifact?.dbCode ? ["db.py"] : []),
                             ];
                             return (
