@@ -23,7 +23,7 @@ describe("frontend curlconverter pipeline", () => {
     expect(code).toContain("MAX_RETRIES = 3");
     expect(code).toContain("RETRY_DELAY_SECONDS = 2");
     expect(code).toContain("gzip.open(response_file");
-    expect(code).toContain('f"{request_name}_response_status_{status_code}.gz.html"');
+    expect(code).toContain('f"{request_name}_response_status_{status_code}.html.gz"');
     expect(code).toContain('timeout=30');
   });
 
@@ -104,8 +104,8 @@ describe("frontend curlconverter pipeline", () => {
     expect(code).toContain('request_name="suggestion"');
     expect(code).toContain('request_folder = os.path.join(get_run_folder(), request_name)');
     expect(code).toContain('log_file = os.path.join(request_folder, f"{request_name}.log")');
-    expect(code).toContain('filename = f"{request_name}_response.gz.html"');
-    expect(code).toContain('filename = f"{request_name}_response_status_{status_code}.gz.html"');
+    expect(code).toContain('filename = f"{request_name}_response.html.gz"');
+    expect(code).toContain('filename = f"{request_name}_response_status_{status_code}.html.gz"');
     expect(code).not.toContain('request_name="request_1"');
   });
 
