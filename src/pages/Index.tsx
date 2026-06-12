@@ -79,6 +79,7 @@ type WorkspaceFile = string;
 type ParserBuilderMode = "json" | "html";
 type ParserPageTab = "source" | "paths" | "parser" | "output" | "jsonSource" | "dbCode";
 type ParserOutputView = "json" | "table";
+type DbDialect = "mysql" | "mongodb";
 type WorkspaceSaveState = "idle" | "saving" | "saved" | "error" | "session-expired";
 type PendingWorkspacePayload = {
   userId: string;
@@ -198,6 +199,7 @@ interface WorkspaceArtifact {
   parserGenerated?: boolean;
   dbSourceJson?: string;
   dbCode?: string;
+  dbDialect?: DbDialect;
   feasibilityCodeSignature?: string;
 }
 
@@ -581,6 +583,7 @@ export default function Index() {
   const [scriptJsonSourcesByRequest, setScriptJsonSourcesByRequest] = useState<Record<string, ScriptJsonSource>>({});
   const [parserCodeFile, setParserCodeFile] = useState<"parser" | "extractor">("parser");
   const [dbJsonByRequest, setDbJsonByRequest] = useState<Record<string, string>>({});
+  const [dbDialectByRequest, setDbDialectByRequest] = useState<Record<string, DbDialect>>({});
   const [dbJsonDraft, setDbJsonDraft] = useState("");
   const [isEditingDbJson, setIsEditingDbJson] = useState(false);
   const [theme, setTheme] = useState<ThemeMode>(() => {
@@ -1078,10 +1081,13 @@ export default function Index() {
     ? dbJsonByRequest[activeParserRequestKey] ?? parserArtifact?.dbSourceJson ?? ""
     : "";
   const dbJsonSourceContent = hasSavedDbJsonSource ? savedDbJsonSource : parserOutputContent || "";
+  const dbDialect: DbDialect = activeParserRequestKey
+    ? dbDialectByRequest[activeParserRequestKey] ?? parserArtifact?.dbDialect ?? "mysql"
+    : "mysql";
   const visibleDbJsonSource = isEditingDbJson ? dbJsonDraft : dbJsonSourceContent;
   const dbGeneration = useMemo(
-    () => generateMysqlDbCode(dbJsonSourceContent, parserWorkspaceName),
-    [dbJsonSourceContent, parserWorkspaceName]
+    () => generateDbCode(dbJsonSourceContent, parserWorkspaceName, dbDialect),
+    [dbDialect, dbJsonSourceContent, parserWorkspaceName]
   );
   const dbCode = dbGeneration.code;
   const dbSourceJson = dbJsonSourceContent;
@@ -2530,7 +2536,7 @@ export default function Index() {
       toast.error("Invalid JSON. Please check syntax.");
       return;
     }
-    const nextGeneration = generateMysqlDbCode(nextSource, parserWorkspaceName);
+    const nextGeneration = generateDbCode(nextSource, parserWorkspaceName, dbDialect);
 
     setDbJsonByRequest((prev) => ({
       ...prev,
@@ -2560,6 +2566,7 @@ export default function Index() {
             [workspaceId]: {
               ...currentArtifact,
               dbSourceJson: nextSource,
+              dbDialect,
               dbCode: nextGeneration.error ? currentArtifact.dbCode : nextGeneration.code,
             },
           },
@@ -2573,6 +2580,37 @@ export default function Index() {
     } else {
       toast.success("JSON Source saved");
     }
+  };
+
+  const handleDbDialectChange = (nextDialect: DbDialect) => {
+    const workspaceId = parserWorkspaceId || MANUAL_PARSER_WORKSPACE_ID;
+    const requestKey = activeParserRequestKey || `${parserCollection.id}:${workspaceId}`;
+    const nextGeneration = generateDbCode(dbJsonSourceContent, parserWorkspaceName, nextDialect);
+    setDbDialectByRequest((prev) => ({
+      ...prev,
+      [requestKey]: nextDialect,
+    }));
+    setCollections((prev) => {
+      const collection = prev[parserCollection.id];
+      if (!collection) return prev;
+      const artifacts = collection.workspaceArtifacts || {};
+      const currentArtifact = artifacts[workspaceId];
+      if (!currentArtifact) return prev;
+      return {
+        ...prev,
+        [parserCollection.id]: {
+          ...collection,
+          workspaceArtifacts: {
+            ...artifacts,
+            [workspaceId]: {
+              ...currentArtifact,
+              dbDialect: nextDialect,
+              dbCode: nextGeneration.error ? currentArtifact.dbCode : nextGeneration.code,
+            },
+          },
+        },
+      };
+    });
   };
 
   const saveDbCodeForWorkspace = () => {
@@ -2606,6 +2644,7 @@ export default function Index() {
             [workspaceId]: {
               ...currentArtifact,
               dbSourceJson,
+              dbDialect,
               dbCode,
             },
           },
@@ -3651,6 +3690,18 @@ export default function Index() {
             )}
             {parserPageTab === "dbCode" && (
               <>
+                <label className="flex h-7 items-center gap-1 rounded-sm border border-border bg-background px-2 font-mono text-[11px] text-muted-foreground">
+                  DB
+                  <select
+                    value={dbDialect}
+                    onChange={(event) => handleDbDialectChange(event.target.value as DbDialect)}
+                    className="h-5 rounded-sm border border-border bg-background px-1 text-[11px] text-foreground outline-none focus:border-border-strong"
+                    aria-label="Select database type"
+                  >
+                    <option value="mysql">MySQL</option>
+                    <option value="mongodb">MongoDB</option>
+                  </select>
+                </label>
                 <button
                   onClick={() => void copyText(dbCode, "Copied DB code")}
                   disabled={!dbCode || !!dbGeneration.error}
@@ -6294,6 +6345,122 @@ export function generateMysqlDbCode(source: string, contextName = "data"): Mysql
     code,
     error: null,
   };
+}
+
+export function generateMongoDbCode(source: string, contextName = "data"): MysqlDbGeneration {
+  const trimmed = source.trim();
+  if (!trimmed) {
+    return { sourceJson: "", code: "", error: "No JSON available for DB code generation." };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Invalid JSON";
+    return { sourceJson: trimmed, code: "", error: `Invalid JSON for DB code generation: ${message}` };
+  }
+
+  if (Array.isArray(parsed) && parsed.length === 0) {
+    return { sourceJson: trimmed, code: "", error: "Cannot infer schema from empty array." };
+  }
+
+  const { records, sourceArrayKey } = getMysqlRecordsAndSource(parsed);
+  if (records.length === 0) {
+    return { sourceJson: trimmed, code: "", error: "DB code generation needs a JSON object or an array of objects." };
+  }
+
+  const baseTableName = sourceArrayKey ? sanitizeOutputKey(sourceArrayKey) : inferBaseTableName(contextName, parsed);
+
+  const code = [
+    "from pymongo import MongoClient, errors",
+    "from datetime import datetime",
+    "import json",
+    "",
+    "# ============ DATABASE CONFIGURATION ============",
+    "MONGO_URI = 'mongodb://localhost:27017/'",
+    `DB_NAME = 'YOUR_DB_NAME'`,
+    `COLLECTION_NAME = f"${baseTableName}_{datetime.now().strftime('%Y_%m_%d')}"`,
+    "# ================================================",
+    "",
+    "",
+    "def get_collection():",
+    "    client = MongoClient(MONGO_URI)",
+    "    db = client[DB_NAME]",
+    "    return client, db[COLLECTION_NAME]",
+    "",
+    "",
+    "def create_database():",
+    "    client = MongoClient(MONGO_URI)",
+    "    try:",
+    "        db = client[DB_NAME]",
+    "        db.create_collection(COLLECTION_NAME) if COLLECTION_NAME not in db.list_collection_names() else None",
+    "        print(f\"Database '{DB_NAME}' and collection '{COLLECTION_NAME}' ready\")",
+    "        return True",
+    "    except errors.PyMongoError as e:",
+    "        print(f\"Error creating database/collection: {e}\")",
+    "        return False",
+    "    finally:",
+    "        client.close()",
+    "",
+    "",
+    "def normalize_document(json_dict):",
+    "    document = dict(json_dict)",
+    "    document['created_at'] = datetime.utcnow()",
+    "    return document",
+    "",
+    "",
+    "def insert_data(json_dict):",
+    "",
+    "    client, collection = get_collection()",
+    "",
+    "    try:",
+    "        result = collection.insert_one(normalize_document(json_dict))",
+    "        print(f\"Data inserted successfully with id: {result.inserted_id}\")",
+    "        return True",
+    "",
+    "    except errors.PyMongoError as e:",
+    "        print(f\"Error inserting data: {e}\")",
+    "        return None",
+    "",
+    "    finally:",
+    "        client.close()",
+    "",
+    "",
+    "def insert_multiple_data(json_list):",
+    "",
+    "    if not json_list:",
+    "        print(\"No data to insert\")",
+    "        return True",
+    "",
+    "    client, collection = get_collection()",
+    "",
+    "    try:",
+    "        documents = [normalize_document(json_dict) for json_dict in json_list]",
+    "        result = collection.insert_many(documents)",
+    "        print(f\"Successfully inserted {len(result.inserted_ids)} records\")",
+    "        return True",
+    "",
+    "    except errors.PyMongoError as e:",
+    "        print(f\"Error inserting multiple data: {e}\")",
+    "        return None",
+    "",
+    "    finally:",
+    "        client.close()",
+    "",
+  ].join("\n");
+
+  return {
+    sourceJson: trimmed,
+    code,
+    error: null,
+  };
+}
+
+export function generateDbCode(source: string, contextName = "data", dialect: DbDialect = "mysql"): MysqlDbGeneration {
+  return dialect === "mongodb"
+    ? generateMongoDbCode(source, contextName)
+    : generateMysqlDbCode(source, contextName);
 }
 
 function sanitizePythonName(value: string) {

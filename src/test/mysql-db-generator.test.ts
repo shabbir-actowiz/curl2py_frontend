@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateMysqlDbCode } from "@/pages/Index";
+import { generateDbCode, generateMongoDbCode, generateMysqlDbCode } from "@/pages/Index";
 
 const productJson = {
   pincode: "380015",
@@ -47,6 +47,14 @@ const productJson = {
 };
 
 describe("MySQL DB generator", () => {
+  it("uses MySQL as the default DB generator", () => {
+    const result = generateDbCode(JSON.stringify({ id: 1, name: "Milk" }), "products");
+
+    expect(result.error).toBeNull();
+    expect(result.code).toContain("import mysql.connector");
+    expect(result.code).toContain("TABLE_NAME = f\"products_");
+  });
+
   it("uses the main loop array and root metadata from parser object output", () => {
     const result = generateMysqlDbCode(JSON.stringify({
       num_found_exact: true,
@@ -357,5 +365,33 @@ describe("MySQL DB generator", () => {
 
     expect(result.code).not.toContain("content_title VARCHAR");
     expect(result.code).not.toContain("is_in_stock BOOLEAN");
+  });
+});
+
+describe("MongoDB DB generator", () => {
+  it("generates pymongo insert helpers in the same DB code flow", () => {
+    const result = generateMongoDbCode(JSON.stringify([
+      { product_id: "1", product_title: "Drink", variants: [{ name: "small" }] },
+      { product_id: "2", product_title: "Snack", in_stock: true },
+    ]), "products");
+
+    expect(result.error).toBeNull();
+    expect(result.code).toContain("from pymongo import MongoClient, errors");
+    expect(result.code).toContain("MONGO_URI = 'mongodb://localhost:27017/'");
+    expect(result.code).toContain("COLLECTION_NAME = f\"products_");
+    expect(result.code).toContain("def create_database():");
+    expect(result.code).toContain("def insert_data(json_dict):");
+    expect(result.code).toContain("def insert_multiple_data(json_list):");
+    expect(result.code).toContain("collection.insert_one(normalize_document(json_dict))");
+    expect(result.code).toContain("collection.insert_many(documents)");
+    expect(result.code).not.toContain("mysql.connector");
+  });
+
+  it("is selected through the generic DB generator when requested", () => {
+    const result = generateDbCode(JSON.stringify({ id: 1, active: true }), "users", "mongodb");
+
+    expect(result.error).toBeNull();
+    expect(result.code).toContain("from pymongo import MongoClient, errors");
+    expect(result.code).toContain("COLLECTION_NAME = f\"users_");
   });
 });
