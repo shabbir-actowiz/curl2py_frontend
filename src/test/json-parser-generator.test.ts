@@ -429,7 +429,7 @@ describe("JSON parser generator", () => {
       snippets: [{ image_url: "p1-a" }, { image_url: "p2-a" }],
     });
 
-    // 3. loop snippets + items = image_url array/list
+    // 3. loop snippets + items = one row per nested item
     const nestedCode = generateParserCode("test_request", [
       { path: "response.snippets[1].tracking.common_attributes.product_id", outputKey: "product_id", loopPaths: ["response.snippets"] },
       { path: "response.snippets[1].tracking.common_attributes.name", outputKey: "name", loopPaths: ["response.snippets"] },
@@ -438,8 +438,10 @@ describe("JSON parser generator", () => {
     ]);
     expect(runGeneratedParser(nestedCode, payload)).toEqual({
       items: [
-        { product_id: "p1", name: "One", price: 10, image_url: ["p1-a", "p1-b"] },
-        { product_id: "p2", name: "Two", price: 20, image_url: ["p2-a", "p2-b"] },
+        { product_id: "p1", name: "One", price: 10, image_url: "p1-a" },
+        { product_id: "p1", name: "One", price: 10, image_url: "p1-b" },
+        { product_id: "p2", name: "Two", price: 20, image_url: "p2-a" },
+        { product_id: "p2", name: "Two", price: 20, image_url: "p2-b" },
       ],
     });
   });
@@ -475,8 +477,136 @@ describe("JSON parser generator", () => {
     ]);
     expect(runGeneratedParser(code, payload)).toEqual({
       items: [
-        { product_id: "p1", image_url: ["p1-v1-a", "p1-v1-b"] }
+        { product_id: "p1", image_url: "p1-v1-a" },
+        { product_id: "p1", image_url: "p1-v1-b" }
       ]
+    });
+  });
+
+  it("builds row-wise output for menu items selected through nested loops", () => {
+    const payload = {
+      hasMenu: {
+        hasMenuSection: [
+          {
+            hasMenuItem: [
+              {
+                name: "name1",
+                description: "desc1",
+                offers: { price: "41.00", priceCurrency: "MXN" },
+              },
+              {
+                name: "name2",
+                description: "desc2",
+                offers: { price: "41.00", priceCurrency: "MXN" },
+              },
+            ],
+          },
+        ],
+      },
+    };
+    const loopPaths = ["hasMenu.hasMenuSection", "hasMenu.hasMenuSection[].hasMenuItem"];
+    const code = generateParserCode("test_request", [
+      { path: "hasMenu.hasMenuSection[0].hasMenuItem[0].name", outputKey: "name", loopPaths },
+      { path: "hasMenu.hasMenuSection[0].hasMenuItem[0].description", outputKey: "description", loopPaths },
+      { path: "hasMenu.hasMenuSection[0].hasMenuItem[0].offers.price", outputKey: "price", loopPaths },
+      { path: "hasMenu.hasMenuSection[0].hasMenuItem[0].offers.priceCurrency", outputKey: "price_currency", loopPaths },
+    ]);
+
+    expect(runGeneratedParser(code, payload)).toEqual({
+      has_menu_item: [
+        { name: "name1", description: "desc1", price: "41.00", price_currency: "MXN" },
+        { name: "name2", description: "desc2", price: "41.00", price_currency: "MXN" },
+      ],
+    });
+  });
+
+  it("supports four nested loops without creating field arrays", () => {
+    const payload = {
+      catalog: [
+        {
+          stores: [
+            {
+              sections: [
+                {
+                  products: [
+                    { sku: "a", price: 1 },
+                    { sku: "b", price: 2 },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const loopPaths = [
+      "catalog",
+      "catalog[].stores",
+      "catalog[].stores[].sections",
+      "catalog[].stores[].sections[].products",
+    ];
+    const code = generateParserCode("test_request", [
+      { path: "catalog[0].stores[0].sections[0].products[0].sku", outputKey: "sku", loopPaths },
+      { path: "catalog[0].stores[0].sections[0].products[0].price", outputKey: "price", loopPaths },
+    ]);
+
+    expect(runGeneratedParser(code, payload)).toEqual({
+      products: [
+        { sku: "a", price: 1 },
+        { sku: "b", price: 2 },
+      ],
+    });
+  });
+
+  it("preserves child arrays and null values inside nested loop rows", () => {
+    const payload = {
+      groups: [
+        {
+          items: [
+            { name: "A", images: ["a1", "a2"], missing: null },
+            { name: "B", images: [], missing: null },
+          ],
+        },
+      ],
+    };
+    const loopPaths = ["groups", "groups[].items"];
+    const code = generateParserCode("test_request", [
+      { path: "groups[0].items[0].name", outputKey: "name", loopPaths },
+      { path: "groups[0].items[0].images", outputKey: "images", loopPaths },
+      { path: "groups[0].items[0].missing", outputKey: "missing", loopPaths },
+    ]);
+
+    expect(runGeneratedParser(code, payload)).toEqual({
+      items: [
+        { name: "A", images: ["a1", "a2"], missing: null },
+        { name: "B", images: [], missing: null },
+      ],
+    });
+  });
+
+  it("deduplicates repeated fixed indexes for the same loop field unless the key is renamed", () => {
+    const payload = {
+      hasMenu: {
+        hasMenuSection: [
+          { hasMenuItem: [{ name: "section1-item1" }] },
+          { hasMenuItem: [{ name: "section2-item1" }] },
+          { hasMenuItem: [{ name: "section3-item1" }] },
+        ],
+      },
+    };
+    const loopPaths = ["hasMenu.hasMenuSection", "hasMenu.hasMenuSection[].hasMenuItem"];
+    const code = generateParserCode("test_request", [
+      { path: "hasMenu.hasMenuSection[0].hasMenuItem[0].name", outputKey: "name", loopPaths },
+      { path: "hasMenu.hasMenuSection[1].hasMenuItem[0].name", outputKey: "name", loopPaths },
+      { path: "hasMenu.hasMenuSection[2].hasMenuItem[0].name", outputKey: "renamed_name", loopPaths },
+    ]);
+
+    expect(runGeneratedParser(code, payload)).toEqual({
+      has_menu_item: [
+        { name: "section1-item1", renamed_name: "section1-item1" },
+        { name: "section2-item1", renamed_name: "section2-item1" },
+        { name: "section3-item1", renamed_name: "section3-item1" },
+      ],
     });
   });
 

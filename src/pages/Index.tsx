@@ -5971,11 +5971,11 @@ function getSelectedJsonLoopCandidates(
 }
 
 function isLoopPrefix(prefix: SelectedLoopCandidate[], value: SelectedLoopCandidate[]) {
-  return prefix.length <= value.length && prefix.every((loop, index) => loop.parentKey === value[index]?.parentKey);
+  return prefix.length <= value.length && prefix.every((loop, index) => loop.displayPath === value[index]?.displayPath);
 }
 
 function selectedLoopChainKey(loops: SelectedLoopCandidate[]) {
-  return loops.map((loop) => loop.parentKey).join("|");
+  return loops.map((loop) => loop.displayPath).join("|");
 }
 
 function relativePathAfterLoop(path: Array<string | number>, loop: SelectedLoopCandidate) {
@@ -6021,7 +6021,7 @@ function emitNestedJsonLoopPlan(
   lines.push(`${indent}    row = {`);
   plan.fields.forEach((field, index) => {
     const fieldLoop = field.loops[field.loops.length - 1];
-    const planFieldLoop = fieldLoop ? plan.loops.find((loop) => loop.parentKey === fieldLoop.parentKey) : undefined;
+    const planFieldLoop = fieldLoop ? plan.loops.find((loop) => loop.displayPath === fieldLoop.displayPath) : undefined;
     const fieldBase = planFieldLoop?.varName || itemVar;
     const relativePath = fieldLoop ? relativePathAfterLoop(field.path, fieldLoop) : field.path;
     const comma = index < plan.fields.length - 1 ? "," : "";
@@ -6614,6 +6614,7 @@ interface ParserLoopGroup {
 
 interface JsonLoopFieldPlan {
   outputKey: string;
+  requestedOutputKey: string;
   path: Array<string | number>;
   loops: SelectedLoopCandidate[];
 }
@@ -6829,7 +6830,7 @@ function emitGroupedNestedJsonLoopPlan(
       const comma = index < plan.fields.length - 1 ? "," : "";
       const fieldLoop = field.loops[field.loops.length - 1];
       const deepestLoop = plan.loops[plan.loops.length - 1];
-      const belongsToDeepest = fieldLoop && fieldLoop.parentKey === deepestLoop.parentKey;
+      const belongsToDeepest = fieldLoop && fieldLoop.displayPath === deepestLoop.displayPath;
 
       if (!belongsToDeepest) {
         const relativePath = fieldLoop ? relativePathAfterLoop(field.path, fieldLoop) : field.path;
@@ -6847,7 +6848,7 @@ function emitGroupedNestedJsonLoopPlan(
   } else {
     plan.fields.forEach((field) => {
       const fieldLoop = field.loops[field.loops.length - 1];
-      if (fieldLoop && fieldLoop.parentKey === loop.parentKey) {
+      if (fieldLoop && fieldLoop.displayPath === loop.displayPath) {
         const relativePath = relativePathAfterLoop(field.path, fieldLoop);
         const valVar = uniquePythonVar(sanitizePythonName(field.outputKey), usedVars);
         lines.push(`${innerIndent}${valVar} = ${getFromExpression(itemVar, relativePath)}`);
@@ -6897,20 +6898,23 @@ function uniqueGroupOutputKey(baseKey: string, usedKeys: Set<string>) {
 export function generateParserCode(workspaceName: string, selections: ParserSelection[], source: "response_json" | "script_json" = "response_json") {
   const functionName = `${sanitizePythonName(workspaceName || "request")}_parser`;
   const usedPaths = new Set<string>();
-  const deduped: ParserSelection[] = [];
+  const deduped: Array<ParserSelection & { requestedOutputKey: string }> = [];
   selections.forEach((selection) => {
     const path = selection.path.trim();
     if (getParserPathWarning(path) || usedPaths.has(path)) return;
     usedPaths.add(path);
+    const requestedOutputKey = sanitizeOutputKey(selection.outputKey || getOutputKeyFromPath(path));
     deduped.push({
       path,
-      outputKey: uniqueOutputKey(sanitizeOutputKey(selection.outputKey || getOutputKeyFromPath(path)), deduped),
+      outputKey: uniqueOutputKey(requestedOutputKey, deduped),
+      requestedOutputKey,
       selectionMode: selection.selectionMode,
       loopPaths: selection.loopPaths,
     });
   });
   const rootFields: ParserField[] = [];
   const loopPlans: JsonLoopFieldPlan[] = [];
+  const loopFieldKeys = new Set<string>();
   const candidatesByPath = new Map<string, JsonLoopCandidate[]>();
   const loopCounts = new Map<string, number>();
 
@@ -6938,7 +6942,14 @@ export function generateParserCode(workspaceName: string, selections: ParserSele
       rootFields.push({ outputKey: selection.outputKey, path: parts });
       return;
     }
-    loopPlans.push({ outputKey: selection.outputKey, path: parts, loops: selectedLoops });
+    const loopFieldKey = [
+      selectedLoopChainKey(selectedLoops),
+      pathKey(relativePathAfterLoop(parts, deepestLoop)),
+      selection.requestedOutputKey,
+    ].join("|");
+    if (loopFieldKeys.has(loopFieldKey)) return;
+    loopFieldKeys.add(loopFieldKey);
+    loopPlans.push({ outputKey: selection.outputKey, requestedOutputKey: selection.requestedOutputKey, path: parts, loops: selectedLoops });
   });
 
   const outputChains = new Map<string, SelectedLoopCandidate[]>();
@@ -7013,11 +7024,7 @@ export function generateParserCode(workspaceName: string, selections: ParserSele
 
   outputPlans.forEach((plan) => {
     lines.push(`    result[${pythonString(plan.outputKey)}] = []`);
-    if (plan.loops.length > 1 && areLoopsNested(plan.loops)) {
-      emitGroupedNestedJsonLoopPlan(lines, plan, 0, "data", "    ", new Set(), "row");
-    } else {
-      emitNestedJsonLoopPlan(lines, plan, 0, "data", "    ", new Set());
-    }
+    emitNestedJsonLoopPlan(lines, plan, 0, "data", "    ", new Set());
     lines.push("");
   });
 
