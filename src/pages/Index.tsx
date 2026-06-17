@@ -81,6 +81,7 @@ type ParserPageTab = "source" | "paths" | "parser" | "output" | "jsonSource" | "
 type ParserOutputView = "json" | "table";
 type DbDialect = "mysql" | "mongodb";
 type WorkspaceSaveState = "idle" | "saving" | "saved" | "error" | "session-expired";
+type WorkspaceLoadState = "idle" | "loading" | "success" | "error";
 type PendingWorkspacePayload = {
   userId: string;
   savedAt: string;
@@ -601,10 +602,15 @@ export default function Index() {
   const [dividerPos, setDividerPos] = useState(50);
   const [isDraggingDivider, setIsDraggingDivider] = useState(false);
   const [hasLoadedRemoteWorkspace, setHasLoadedRemoteWorkspace] = useState(false);
+  const [workspaceLoadState, setWorkspaceLoadState] = useState<WorkspaceLoadState>("idle");
+  const [workspaceLoadError, setWorkspaceLoadError] = useState("");
+  const [workspaceTransitionLoading, setWorkspaceTransitionLoading] = useState(false);
+  const [displayWorkspaceLoader, setDisplayWorkspaceLoader] = useState(false);
+  const [workspaceLoaderDisplayMode, setWorkspaceLoaderDisplayMode] = useState<"full" | "overlay">("full");
   const [workspaceSaveState, setWorkspaceSaveState] = useState<WorkspaceSaveState>("idle");
   const [lastWorkspaceSavedAt, setLastWorkspaceSavedAt] = useState<Date | null>(null);
 
-  const { user, accessToken, refreshAccessToken, logout } = useAuth();
+  const { user, accessToken, refreshAccessToken, logout, isLoading: authLoading } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const parserRouteParams = useParams<{ collectionId?: string; snippetId?: string; scriptId?: string }>();
@@ -622,6 +628,9 @@ export default function Index() {
   const saveInFlightRef = useRef(false);
   const pendingWorkspaceVersionRef = useRef(0);
   const queuedWorkspaceSaveRef = useRef<{ payload: WorkspacePayload; manual: boolean; version: number } | null>(null);
+  const workspaceTransitionTimerRef = useRef<number | null>(null);
+  const workspaceLoaderStartedAtRef = useRef<number>(0);
+  const workspaceLoaderHideTimerRef = useRef<number | null>(null);
 
   const activeCollection = collections[activeCollectionId] ?? Object.values(collections)[0] ?? createCollection("tmp", "tmp", [], true);
   const snippets = activeCollection.snippets;
@@ -630,6 +639,11 @@ export default function Index() {
   const backendMergedOutput = activeCollection.backendMergedOutput;
   const backendParserOutput = activeCollection.backendParserOutput;
   const workspaceArtifacts = activeCollection.workspaceArtifacts;
+  const isWorkspaceFetchLoading = authLoading || workspaceLoadState === "loading" || (!!user && !!accessToken && !hasLoadedRemoteWorkspace);
+  const isWorkspaceLoading = isWorkspaceFetchLoading || workspaceTransitionLoading;
+  const isWorkspaceLoaderSettling = displayWorkspaceLoader && !isWorkspaceLoading;
+  const shouldShowFullWorkspaceLoader = (displayWorkspaceLoader && workspaceLoaderDisplayMode === "full") || workspaceLoadState === "error";
+  const shouldShowWorkspaceOverlayLoader = displayWorkspaceLoader && workspaceLoaderDisplayMode === "overlay";
 
   useEffect(() => {
     document.documentElement.classList.toggle("light", theme === "light");
@@ -681,6 +695,38 @@ export default function Index() {
   useEffect(() => {
     accessTokenRef.current = accessToken;
   }, [accessToken]);
+
+  useEffect(() => {
+    return () => {
+      if (workspaceTransitionTimerRef.current !== null) {
+        window.clearTimeout(workspaceTransitionTimerRef.current);
+      }
+      if (workspaceLoaderHideTimerRef.current !== null) {
+        window.clearTimeout(workspaceLoaderHideTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (workspaceLoaderHideTimerRef.current !== null) {
+      window.clearTimeout(workspaceLoaderHideTimerRef.current);
+      workspaceLoaderHideTimerRef.current = null;
+    }
+
+    if (isWorkspaceLoading) {
+      workspaceLoaderStartedAtRef.current = Date.now();
+      setWorkspaceLoaderDisplayMode(isWorkspaceFetchLoading ? "full" : "overlay");
+      setDisplayWorkspaceLoader(true);
+      return;
+    }
+
+    const elapsed = Date.now() - workspaceLoaderStartedAtRef.current;
+    const remaining = Math.max(180, 420 - elapsed);
+    workspaceLoaderHideTimerRef.current = window.setTimeout(() => {
+      setDisplayWorkspaceLoader(false);
+      workspaceLoaderHideTimerRef.current = null;
+    }, remaining);
+  }, [isWorkspaceLoading]);
 
   const buildWorkspacePayload = useCallback((): WorkspacePayload => ({
     collections: sanitizeCollectionsForStorage(collections),
@@ -1213,10 +1259,15 @@ export default function Index() {
   useEffect(() => {
     if (!user || !accessToken) {
       setHasLoadedRemoteWorkspace(false);
+      setWorkspaceLoadState("idle");
+      setWorkspaceLoadError("");
       return;
     }
 
     let active = true;
+    setHasLoadedRemoteWorkspace(false);
+    setWorkspaceLoadState("loading");
+    setWorkspaceLoadError("");
     getUserWorkspace(accessToken)
       .then((workspace) => {
         if (!active) return;
@@ -1249,10 +1300,15 @@ export default function Index() {
         if (workspaceToLoad.theme === "light" || workspaceToLoad.theme === "dark") {
           setTheme(workspaceToLoad.theme);
         }
+        setWorkspaceLoadState("success");
+        setWorkspaceLoadError("");
         setHasLoadedRemoteWorkspace(true);
       })
-      .catch(() => {
-        if (active) setHasLoadedRemoteWorkspace(true);
+      .catch((error) => {
+        if (!active) return;
+        setWorkspaceLoadState("error");
+        setWorkspaceLoadError(getFriendlyErrorMessage(error));
+        setHasLoadedRemoteWorkspace(true);
       });
 
     return () => {
@@ -1270,6 +1326,16 @@ export default function Index() {
 
   // Status bar uses "snippets ready"
   useEffect(() => {
+    if (isWorkspaceFetchLoading) {
+      setStatusKind("info");
+      setStatusMsg(authLoading ? "Checking session..." : "Loading workspace...");
+      return;
+    }
+    if (workspaceLoadState === "error") {
+      setStatusKind("error");
+      setStatusMsg(workspaceLoadError || "Could not load workspace");
+      return;
+    }
     const n = snippets.length;
     if (n === 0) {
       setStatusKind("info");
@@ -1293,7 +1359,7 @@ export default function Index() {
       setStatusKind("success");
       setStatusMsg(`${n} snippet${n === 1 ? "" : "s"} ready`);
     }
-  }, [snippets, blocks, errorCount, mergeMode, nameCounts, effectiveNames]);
+  }, [authLoading, isWorkspaceFetchLoading, snippets, blocks, errorCount, mergeMode, nameCounts, effectiveNames, workspaceLoadError, workspaceLoadState]);
 
   // Focus the name input of newly-added snippet
   useEffect(() => {
@@ -1371,7 +1437,22 @@ export default function Index() {
     setActivePanelTab("response");
   };
 
+  const showWorkspaceTransitionLoader = () => {
+    if (isWorkspaceFetchLoading) return;
+    if (workspaceTransitionTimerRef.current !== null) {
+      window.clearTimeout(workspaceTransitionTimerRef.current);
+    }
+    setWorkspaceTransitionLoading(true);
+    workspaceTransitionTimerRef.current = window.setTimeout(() => {
+      setWorkspaceTransitionLoading(false);
+      workspaceTransitionTimerRef.current = null;
+    }, 220);
+  };
+
   const openWorkspaceFile = (workspaceId: string, file: WorkspaceFile, collectionId = activeCollection.id) => {
+    if (workspaceId !== activeWorkspaceId || collectionId !== activeCollection.id || file !== activeWorkspaceFile) {
+      showWorkspaceTransitionLoader();
+    }
     setActiveWorkspaceId(workspaceId);
     setActiveWorkspaceFile(file);
     setExpandedWorkspaceIds((prev) => {
@@ -1420,6 +1501,9 @@ export default function Index() {
   };
 
   const toggleWorkspace = (workspaceId: string, collectionId = activeCollection.id) => {
+    if (workspaceId !== activeWorkspaceId || collectionId !== activeCollection.id) {
+      showWorkspaceTransitionLoader();
+    }
     if (activeCollection.id !== collectionId) {
       setActiveCollectionId(collectionId);
     }
@@ -1436,6 +1520,9 @@ export default function Index() {
   const selectCollection = (collectionId: string) => {
     const collection = collections[collectionId];
     if (!collection) return;
+    if (collectionId !== activeCollectionId) {
+      showWorkspaceTransitionLoader();
+    }
     setActiveCollectionId(collectionId);
     const existingSnippet = collection.snippets.find((snippet) => snippet.id === activeWorkspaceId);
     const firstSnippet = existingSnippet ?? collection.snippets[0];
@@ -3724,24 +3811,37 @@ export default function Index() {
         </header>
 
         <main className="flex min-h-0 flex-1 flex-col">
-          <div className="flex items-center justify-between border-b border-border bg-surface">
-            <div className="flex min-w-0 flex-1 items-center gap-0 overflow-x-auto scrollbar-thin">
-              {parserTabs.map((tab) => (
-                <button
-                  key={tab}
-                  onClick={() => setParserPageTab(tab)}
-                  className={cn(
-                    panelTabClass,
-                    parserPageTab === tab
-                      ? "bg-background text-foreground before:absolute before:inset-x-2 before:top-0 before:h-px before:bg-primary"
-                      : "text-muted-foreground hover:bg-surface-elevated/80 hover:text-foreground"
-                  )}
-                >
-                  {tab === "jsonSource" ? "JSON Source" : tab === "dbCode" ? "DB Code" : tab.charAt(0).toUpperCase() + tab.slice(1)}
-                </button>
-              ))}
+          {shouldShowFullWorkspaceLoader ? (
+            <div className="min-h-0 flex-1 bg-background">
+              {workspaceLoadState === "error" && !displayWorkspaceLoader ? (
+                <WorkspaceLoadError message={workspaceLoadError} />
+              ) : (
+                <WorkspaceLoader
+                  mode={authLoading ? "auth" : "parser"}
+                  exiting={isWorkspaceLoaderSettling}
+                />
+              )}
             </div>
-          </div>
+          ) : (
+          <>
+            <div className="flex items-center justify-between border-b border-border bg-surface">
+              <div className="flex min-w-0 flex-1 items-center gap-0 overflow-x-auto scrollbar-thin">
+                {parserTabs.map((tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setParserPageTab(tab)}
+                    className={cn(
+                      panelTabClass,
+                      parserPageTab === tab
+                        ? "bg-background text-foreground before:absolute before:inset-x-2 before:top-0 before:h-px before:bg-primary"
+                        : "text-muted-foreground hover:bg-surface-elevated/80 hover:text-foreground"
+                    )}
+                  >
+                    {tab === "jsonSource" ? "JSON Source" : tab === "dbCode" ? "DB Code" : tab.charAt(0).toUpperCase() + tab.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
 
           <ParserInspectorErrorBoundary resetKey={`${parserWorkspaceId}:${parserBuilderMode}:${parserPageTab}:${parserResponseHtml.length}:${parserResponseJson?.length ?? 0}`}>
           {parserBuilderMode === "json" && parserPageTab === "source" ? (
@@ -4204,6 +4304,8 @@ export default function Index() {
             </div>
           )}
           </ParserInspectorErrorBoundary>
+          </>
+          )}
         </main>
       </div>
     );
@@ -4246,6 +4348,7 @@ export default function Index() {
                   key={snippet.id}
                   className={modernMenuItemClass}
                   onClick={() => {
+                    if (activeWorkspaceId !== snippet.id || activeWorkspaceFile !== "request.py") showWorkspaceTransitionLoader();
                     setActiveWorkspaceId(snippet.id);
                     setActiveWorkspaceFile("request.py");
                     setActiveTabId(`req-${snippet.id}`);
@@ -4671,7 +4774,9 @@ export default function Index() {
             </div>
 
             <div className="flex-1 overflow-y-auto py-1.5 scrollbar-thin">
-              {Object.keys(collections).length === 0 ? (
+              {isWorkspaceFetchLoading ? (
+                <SidebarWorkspaceSkeleton />
+              ) : Object.keys(collections).length === 0 ? (
                 <div className="px-3 py-2 text-[11px] text-muted-foreground">
                   No collections yet
                 </div>
@@ -4895,6 +5000,16 @@ export default function Index() {
           style={{ "--split-left": `${dividerPos}%` } as React.CSSProperties}
           className="relative grid flex-1 min-h-0 grid-cols-1 overflow-hidden md:[grid-template-columns:var(--split-left)_1px_minmax(0,1fr)]"
         >
+          {shouldShowFullWorkspaceLoader ? (
+            <div className="col-span-full h-full min-h-0 bg-background">
+              {workspaceLoadState === "error" && !displayWorkspaceLoader ? (
+                <WorkspaceLoadError message={workspaceLoadError} />
+              ) : (
+                <WorkspaceLoader mode={authLoading ? "auth" : "workspace"} exiting={isWorkspaceLoaderSettling} />
+              )}
+            </div>
+          ) : (
+          <>
           {/* LEFT - SNIPPET INPUT */}
           <section
             className="flex min-h-0 min-w-0 flex-col border-b border-border md:border-b-0"
@@ -5209,6 +5324,7 @@ export default function Index() {
                             if (t.kind === "request" && t.reqIdx != null) {
                               const workspace = blocks[t.reqIdx];
                               if (workspace) {
+                                if (activeWorkspaceId !== workspace.id || activeWorkspaceFile !== "request.py") showWorkspaceTransitionLoader();
                                 setActiveWorkspaceId(workspace.id);
                                 setActiveWorkspaceFile("request.py");
                                 setExpandedWorkspaceIds((prev) => new Set(prev).add(workspace.id));
@@ -5293,6 +5409,7 @@ export default function Index() {
                         <div
                           key={tab.id}
                           onClick={() => {
+                            if (activeWorkspaceId !== tab.workspaceId || activeWorkspaceFile !== tab.fileName) showWorkspaceTransitionLoader();
                             setActiveResponseTabId(tab.id);
                             setActiveWorkspaceId(tab.workspaceId);
                             setActiveWorkspaceFile(tab.fileName);
@@ -5367,6 +5484,13 @@ export default function Index() {
               </div>
             )}
           </section>
+          </>
+          )}
+          {shouldShowWorkspaceOverlayLoader && (
+            <div className={cn("cc-workspace-overlay absolute inset-0 z-20 flex items-center justify-center bg-background/15 backdrop-blur-[3px]", isWorkspaceLoaderSettling && "cc-loader-exit")}>
+              <WorkspaceLoader mode="switch" compact exiting={isWorkspaceLoaderSettling} />
+            </div>
+          )}
         </main>
       </div>
 
@@ -8169,6 +8293,84 @@ function EmptyState({ title, detail }: { title: string; detail?: string }) {
         <div className="text-[12px] font-semibold text-foreground">{title}</div>
         {detail && <div className="mt-1 text-[11px] leading-5 text-muted-foreground">{detail}</div>}
       </div>
+    </div>
+  );
+}
+
+function WorkspaceLoader({ mode = "workspace", compact = false, exiting = false }: { mode?: "auth" | "workspace" | "switch" | "parser"; compact?: boolean; exiting?: boolean }) {
+  const [stageIndex, setStageIndex] = useState(0);
+  const messages = compact
+    ? ["Switching workspace..."]
+    : ["Loading workspace...", "Fetching saved requests...", "Restoring collections and snippets...", "Preparing editor state..."];
+
+  useEffect(() => {
+    setStageIndex(0);
+    const timer = window.setInterval(() => {
+      setStageIndex((current) => (current + 1) % messages.length);
+    }, 900);
+    return () => window.clearInterval(timer);
+  }, [messages.length, mode]);
+
+  return (
+    <div className={cn("cc-loader-presence flex h-full min-h-[220px] items-center justify-center px-4 py-7", exiting && "cc-loader-exit", compact && "min-h-0")}>
+      <div className={cn("w-full font-mono", compact ? "max-w-[15rem] rounded-sm border border-border/70 bg-surface/80 px-3.5 py-3.5 shadow-sm" : "max-w-[19rem] px-1 py-1")}>
+        <div className={cn("mx-auto flex items-center justify-center rounded-sm border border-primary/50 bg-primary/10 text-primary cc-loader-glow", compact ? "h-8 w-8" : "h-9 w-9")}>
+          <div className="relative flex h-5 w-5 items-center justify-center cc-loader-icon">
+            <FileCode className="h-4 w-4" strokeWidth={1.8} />
+            <span className="absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full bg-primary/70 cc-loader-dot" />
+          </div>
+        </div>
+        <div className="mt-3 text-center text-[12px] font-semibold text-foreground">{messages[stageIndex]}</div>
+        <div className="mt-1 text-center text-[11px] leading-5 text-muted-foreground">
+          {compact ? "Preparing editor state" : "Restoring your saved CurlCraft workspace"}
+        </div>
+        <div className="mt-3 h-px overflow-hidden rounded-sm bg-border">
+          <div className="h-full w-1/2 bg-primary/65 cc-progress-line" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WorkspaceLoadError({ message }: { message: string }) {
+  return (
+    <div className="flex h-full min-h-[220px] items-center justify-center px-4 py-8">
+      <div className="max-w-sm rounded-sm border border-destructive/40 bg-destructive/5 px-5 py-4 text-center font-mono">
+        <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-sm border border-destructive/40 bg-background/50 text-destructive">
+          <AlertCircle className="h-4 w-4" strokeWidth={1.8} />
+        </div>
+        <div className="mt-3 text-[12px] font-semibold text-destructive">Could not load workspace</div>
+        <div className="mt-1 text-[11px] leading-5 text-muted-foreground">
+          {message || "Please refresh or try again."}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SidebarWorkspaceSkeleton() {
+  return (
+    <div className="space-y-2 px-2 py-2">
+      {[0, 1, 2].map((group) => (
+        <div key={group} className="rounded-sm px-1 py-1">
+          <div className="flex items-center gap-2 px-1 py-1.5">
+            <div className="h-3 w-3 rounded-sm border border-border bg-background/50 cc-shimmer" />
+            <div className="h-3 w-3 rounded-sm bg-border/80 cc-shimmer" />
+            <div className={cn("h-2 rounded-sm bg-border/80 cc-shimmer", group === 0 ? "w-24" : group === 1 ? "w-20" : "w-28")} />
+          </div>
+          <div className="ml-4 border-l border-border/70 py-1 pl-3">
+            {[0, 1].map((row) => (
+              <div key={row} className="flex items-center gap-2 px-1 py-1">
+                <div className="h-3 w-8 rounded-sm bg-primary/10 cc-shimmer" />
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className={cn("h-2 rounded-sm bg-border/80 cc-shimmer", row === 0 ? "w-20" : "w-16")} />
+                  <div className={cn("h-1.5 rounded-sm bg-border/60 cc-shimmer", row === 0 ? "w-24" : "w-20")} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
