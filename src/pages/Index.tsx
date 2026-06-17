@@ -4412,10 +4412,10 @@ export default function Index() {
 
       <Dialog open={!!pendingParserReplacePath} onOpenChange={(open) => !open && setPendingParserReplacePath(null)}>
         <DialogContent className="max-w-sm border-border bg-background font-mono text-foreground">
-          <DialogHeader>
+          <DialogHeader className="min-w-0">
             <DialogTitle className="text-[15px]">Replace parser.py?</DialogTitle>
           </DialogHeader>
-          <div className="text-[12px] leading-5 text-muted-foreground">
+          <div className="min-w-0 whitespace-pre-wrap break-words text-[12px] leading-5 text-muted-foreground">
             This request has custom parser code. Adding this path will replace it with generated parser code.
           </div>
           <DialogFooter>
@@ -4443,12 +4443,12 @@ export default function Index() {
 
       <Dialog open={raiseIssueOpen} onOpenChange={setRaiseIssueOpen}>
         <DialogContent className="max-w-md border-border bg-background font-mono text-foreground">
-          <DialogHeader>
+          <DialogHeader className="min-w-0">
             <DialogTitle className="text-[15px]">Raise an Issue</DialogTitle>
           </DialogHeader>
           {submittedIssueId ? (
-            <div className="space-y-4 text-[12px] leading-6">
-              <div className="rounded-sm border border-success/40 bg-success/5 px-3 py-2 text-success">
+            <div className="min-w-0 space-y-4 text-[12px] leading-6">
+              <div className="min-w-0 whitespace-pre-wrap break-all rounded-sm border border-success/40 bg-success/5 px-3 py-2 text-success">
                 Issue submitted. Your issue ID is: {submittedIssueId}
                 <div className="text-muted-foreground">Please save this ID for tracking.</div>
               </div>
@@ -4478,13 +4478,13 @@ export default function Index() {
               </DialogFooter>
             </div>
           ) : (
-            <form className="space-y-3 text-[12px]" onSubmit={(event) => void handleSubmitIssue(event)}>
+            <form className="min-w-0 space-y-3 text-[12px]" onSubmit={(event) => void handleSubmitIssue(event)}>
               <label className="block space-y-1">
                 <span className="text-muted-foreground">Issue Type / Page</span>
                 <select
                   value={issueType}
                   onChange={(event) => setIssueType(event.target.value)}
-                  className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none focus:border-border-strong"
+                  className="h-8 w-full min-w-0 rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none focus:border-border-strong"
                 >
                   <option value="Workspace">Workspace</option>
                   <option value="Parser">Parser</option>
@@ -4499,12 +4499,12 @@ export default function Index() {
                   value={issueDescription}
                   onChange={(event) => setIssueDescription(event.target.value)}
                   required
-                  className="min-h-24 w-full resize-y rounded-sm border border-border bg-background px-2 py-2 font-mono text-[12px] text-foreground outline-none focus:border-border-strong"
+                  className="max-h-48 min-h-24 w-full min-w-0 resize-y overflow-y-auto overflow-x-hidden rounded-sm border border-border bg-background px-2 py-2 font-mono text-[12px] text-foreground outline-none focus:border-border-strong"
                 />
               </label>
               <label className="block space-y-1">
                 <span className="text-muted-foreground">Account Email</span>
-                <div className="h-8 w-full rounded-sm border border-border bg-surface-elevated px-2 py-2 font-mono text-[12px] text-muted-foreground">
+                <div className="h-8 w-full min-w-0 overflow-hidden text-ellipsis whitespace-nowrap rounded-sm border border-border bg-surface-elevated px-2 py-2 font-mono text-[12px] text-muted-foreground">
                   {user?.email || "Login required"}
                 </div>
               </label>
@@ -4515,7 +4515,7 @@ export default function Index() {
                   multiple
                   accept=".png,.jpg,.jpeg,.webp,.txt,.log,.json,image/png,image/jpeg,image/webp,text/plain,application/json"
                   onChange={(event) => setIssueFiles(Array.from(event.target.files ?? []))}
-                  className="block w-full text-[11px] text-muted-foreground file:mr-3 file:rounded-sm file:border file:border-border file:bg-background file:px-2 file:py-1 file:font-mono file:text-foreground"
+                  className="block w-full min-w-0 text-[11px] text-muted-foreground file:mr-3 file:rounded-sm file:border file:border-border file:bg-background file:px-2 file:py-1 file:font-mono file:text-foreground"
                 />
               </label>
               <DialogFooter>
@@ -4556,9 +4556,9 @@ export default function Index() {
             <DialogTitle className="text-[15px]">HTML Parser</DialogTitle>
           </DialogHeader>
           <div className="min-h-0 min-w-0 space-y-3 overflow-y-auto pr-1 text-[12px]">
-            <div className="rounded-sm border border-border bg-surface px-3 py-3">
+            <div className="min-w-0 rounded-sm border border-border bg-surface px-3 py-3">
               <div className="font-semibold text-foreground">Extract JSON from script tag</div>
-              <div className="mt-1 text-[11px] text-muted-foreground">
+              <div className="mt-1 min-w-0 whitespace-pre-wrap break-words text-[11px] text-muted-foreground">
                 Scan the current HTML response and choose the script JSON block to save.
               </div>
               <button onClick={scanHtmlScriptJson} className={cn(primaryToolbarButtonClass, "mt-3")}>
@@ -4568,7 +4568,7 @@ export default function Index() {
 
             {htmlScriptJsonSources.length > 0 && (
               <div className="min-w-0 space-y-2">
-                <div className="text-[11px] text-muted-foreground">
+                <div className="min-w-0 whitespace-pre-wrap break-words text-[11px] text-muted-foreground">
                   Found {htmlScriptJsonSources.length} script JSON block{htmlScriptJsonSources.length === 1 ? "" : "s"}. Select one to save.
                 </div>
                 <div className="max-h-[min(46vh,24rem)] min-w-0 space-y-2 overflow-y-auto overflow-x-hidden pr-1">
@@ -4606,7 +4606,7 @@ export default function Index() {
               </div>
             )}
 
-            <div className="rounded-sm border border-border bg-surface px-3 py-2 text-[11px] text-muted-foreground">
+            <div className="min-w-0 whitespace-pre-wrap break-words rounded-sm border border-border bg-surface px-3 py-2 text-[11px] text-muted-foreground">
               CSS selector parsing, XPath parsing, DOM table extraction, and other HTML actions: Coming soon.
             </div>
           </div>
@@ -8306,7 +8306,7 @@ function AutoTextarea({
       placeholder={placeholder}
       rows={2}
       className={cn(
-        "block w-full resize-none bg-transparent px-3 pb-2 pt-1 font-mono text-[12px] leading-[1.6] text-foreground caret-primary outline-none placeholder:text-muted-foreground/50",
+        "block max-h-48 w-full min-w-0 resize-none overflow-y-auto overflow-x-hidden bg-transparent px-3 pb-2 pt-1 font-mono text-[12px] leading-[1.6] text-foreground caret-primary outline-none placeholder:text-muted-foreground/50",
         hasError && "text-destructive"
       )}
     />

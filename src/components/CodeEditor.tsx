@@ -493,24 +493,24 @@ export function CodeEditor({ value, filename, onChange, wordWrap = false, readOn
       />
       <Dialog open={!!pendingDialog} onOpenChange={(open) => !open && closeVariableDialog()}>
         <DialogContent className="max-w-sm border-border bg-background font-mono text-foreground">
-          <DialogHeader>
+          <DialogHeader className="min-w-0">
             <DialogTitle className="text-[15px]">
               {pendingDialog?.mode === "manual" ? "Make Variable" : "Insert Parser Value"}
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-3 text-[12px]">
+          <div className="min-w-0 space-y-3 text-[12px]">
             {pendingDialog?.mode === "manual" ? (
               <label className="block space-y-1">
                 <span className="text-muted-foreground">Variable Name</span>
                 <input
                   value={variableName}
                   onChange={(event) => setVariableName(event.target.value)}
-                  className="h-8 w-full rounded-sm border border-border bg-background px-2 text-foreground outline-none focus:border-border-strong"
+                  className="h-8 w-full min-w-0 rounded-sm border border-border bg-background px-2 text-foreground outline-none focus:border-border-strong"
                   autoFocus
                 />
               </label>
             ) : (
-              <div className="rounded-sm border border-border bg-surface/50 px-2 py-1.5 text-muted-foreground">
+              <div className="max-h-20 min-w-0 overflow-auto whitespace-pre-wrap break-all rounded-sm border border-border bg-surface/50 px-2 py-1.5 text-muted-foreground">
                 {pendingDialog?.requestName}.{pendingDialog?.key}
               </div>
             )}
@@ -519,7 +519,7 @@ export function CodeEditor({ value, filename, onChange, wordWrap = false, readOn
               <select
                 value={variableType}
                 onChange={(event) => setVariableType(event.target.value as VariableType)}
-                className="h-8 w-full rounded-sm border border-border bg-background px-2 text-foreground outline-none focus:border-border-strong"
+                className="h-8 w-full min-w-0 rounded-sm border border-border bg-background px-2 text-foreground outline-none focus:border-border-strong"
                 autoFocus={pendingDialog?.mode === "parser"}
               >
                 {VARIABLE_TYPE_OPTIONS.map((type) => (
@@ -530,13 +530,13 @@ export function CodeEditor({ value, filename, onChange, wordWrap = false, readOn
             {pendingDialog?.selectedText ? (
               <div className="space-y-1">
                 <span className="text-muted-foreground">Current Value</span>
-                <div className="max-h-20 overflow-auto rounded-sm border border-border bg-surface/50 px-2 py-1.5 text-foreground">
+                <div className="max-h-20 min-w-0 overflow-auto whitespace-pre-wrap break-all rounded-sm border border-border bg-surface/50 px-2 py-1.5 text-foreground">
                   {pendingDialog.selectedText}
                 </div>
               </div>
             ) : null}
             {dialogError ? (
-              <div className="rounded-sm border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-destructive">
+              <div className="min-w-0 overflow-auto whitespace-pre-wrap break-all rounded-sm border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-destructive">
                 {dialogError}
               </div>
             ) : null}
