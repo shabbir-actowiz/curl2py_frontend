@@ -897,17 +897,27 @@ function buildRequestFramework(): string {
     "def get_run_folder():",
     '    return f"pagesaves_{datetime.now().strftime(\'%Y_%m_%d\')}"',
     "",
+    "EXECUTION_LOG_FILE = None",
+    "",
+    "def get_execution_log_file():",
+    "    global EXECUTION_LOG_FILE",
+    "    if EXECUTION_LOG_FILE is None:",
+    "        timestamp = datetime.now()",
+    '        run_folder = f"pagesaves_{timestamp.strftime(\'%Y_%m_%d\')}"',
+    "        os.makedirs(run_folder, exist_ok=True)",
+    '        EXECUTION_LOG_FILE = os.path.join(run_folder, f"execution_{timestamp.strftime(\'%Y_%m_%d_%H_%M_%S\')}.log")',
+    "    return EXECUTION_LOG_FILE",
+    "",
     "def get_request_folder(request_name):",
     "    request_folder = os.path.join(get_run_folder(), request_name)",
     "    os.makedirs(request_folder, exist_ok=True)",
     "    return request_folder",
     "",
     "def setup_request_logger(request_name):",
-    '    logger = logging.getLogger(f"curl2py.{request_name}")',
+    '    logger = logging.getLogger("curl2py.execution")',
     "    logger.setLevel(logging.INFO)",
     "    logger.propagate = False",
-    "    request_folder = get_request_folder(request_name)",
-    '    log_file = os.path.join(request_folder, f"{request_name}.log")',
+    "    log_file = get_execution_log_file()",
     '    formatter = RequestLogFormatter("%(asctime)s | %(levelname)s | %(request_name)s | %(message)s")',
     "    if not logger.handlers:",
     "        console_handler = logging.StreamHandler()",
@@ -1090,6 +1100,7 @@ export function buildMergedScript({ requests, parserFunctionNames = [] }: BatchE
     code.push("");
   }
   requests.forEach((entry) => code.push(`from ${entry.functionName} import ${entry.functionName}`));
+  if (requests.length > 0) code.push(`from ${requests[0].functionName} import setup_request_logger`);
   requests.forEach((entry) => {
     const parserName = `${entry.functionName}_parser`;
     if (parserSet.has(parserName)) code.push(`from ${entry.functionName}_parser import ${parserName}`);
@@ -1107,24 +1118,33 @@ export function buildMergedScript({ requests, parserFunctionNames = [] }: BatchE
     code.push("");
   }
   code.push("def main():");
-  code.push("    pipeline_context = {}");
-  if (hasParsers) code.push("    parsed_outputs = {}");
+  code.push('    execution_logger = setup_request_logger("program")');
+  code.push('    execution_logger.info("Program started")');
+  code.push("    try:");
+  code.push("        pipeline_context = {}");
+  if (hasParsers) code.push("        parsed_outputs = {}");
   code.push("");
   requestCalls.forEach(({ entry, lines, hasResponse }) => {
     const parserName = `${entry.functionName}_parser`;
-    code.push(...lines);
+    code.push(...lines.map((line) => line ? `    ${line}` : line));
     if (hasResponse && parserSet.has(parserName)) {
-      code.push(`    parsed_${entry.functionName} = ${parserName}(response_${entry.functionName})`);
-      code.push(`    save_parsed_output(${pyString(entry.functionName)}, parsed_${entry.functionName})`);
-      code.push(`    pipeline_context[${pyString(entry.functionName)}] = parsed_${entry.functionName}`);
-      code.push(`    parsed_outputs[${pyString(entry.functionName)}] = parsed_${entry.functionName}`);
+      code.push(`        parsed_${entry.functionName} = ${parserName}(response_${entry.functionName})`);
+      code.push(`        save_parsed_output(${pyString(entry.functionName)}, parsed_${entry.functionName})`);
+      code.push(`        pipeline_context[${pyString(entry.functionName)}] = parsed_${entry.functionName}`);
+      code.push(`        parsed_outputs[${pyString(entry.functionName)}] = parsed_${entry.functionName}`);
     }
     code.push("");
   });
   if (hasParsers) {
-    code.push("    return parsed_outputs");
+    code.push('        execution_logger.info("Program completed")');
+    code.push("        return parsed_outputs");
     code.push("");
+  } else {
+    code.push('        execution_logger.info("Program completed")');
   }
+  code.push("    except Exception:");
+  code.push('        execution_logger.exception("Program failed")');
+  code.push("        raise");
   code.push('if __name__ == "__main__":');
   code.push("    main()");
   return code.join("\n");

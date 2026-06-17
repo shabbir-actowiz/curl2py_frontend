@@ -103,7 +103,11 @@ describe("frontend curlconverter pipeline", () => {
     expect(code).toContain("def suggestion():");
     expect(code).toContain('request_name="suggestion"');
     expect(code).toContain('request_folder = os.path.join(get_run_folder(), request_name)');
-    expect(code).toContain('log_file = os.path.join(request_folder, f"{request_name}.log")');
+    expect(code).toContain('logger = logging.getLogger("curl2py.execution")');
+    expect(code).toContain("EXECUTION_LOG_FILE = None");
+    expect(code).toContain('EXECUTION_LOG_FILE = os.path.join(run_folder, f"execution_{timestamp.strftime(\'%Y_%m_%d_%H_%M_%S\')}.log")');
+    expect(code).toContain("return EXECUTION_LOG_FILE");
+    expect(code).not.toContain('log_file = os.path.join(request_folder, f"{request_name}.log")');
     expect(code).toContain('filename = f"{request_name}_response.html.gz"');
     expect(code).toContain('filename = f"{request_name}_response_status_{status_code}.html.gz"');
     expect(code).not.toContain('request_name="request_1"');
@@ -399,10 +403,13 @@ def request_2(pipeline_context=None):
 
     expect(merged).toContain('    resolved_search_term = "shoes"');
     expect(merged).toContain('    resolved_pincode = "110001"');
-    expect(merged).toContain(`    response_request_2 = request_2(
-        search_term=resolved_search_term,
-        pincode=resolved_pincode,
-    )`);
+    expect(merged).toContain('from request_1 import setup_request_logger');
+    expect(merged).toContain('    execution_logger.info("Program started")');
+    expect(merged).toContain('        execution_logger.info("Program completed")');
+    expect(merged).toContain(`        response_request_2 = request_2(
+            search_term=resolved_search_term,
+            pincode=resolved_pincode,
+        )`);
     expect(merged).not.toContain("response_request_2 = request_2()");
   });
 
@@ -424,10 +431,10 @@ def request_2(pipeline_context=None):
       parserFunctionNames: ["request_1_parser"],
     });
 
-    expect(merged).toContain(`    response_request_2 = request_2(
-        search_term=resolved_search_term,
-        pipeline_context=pipeline_context,
-    )`);
+    expect(merged).toContain(`        response_request_2 = request_2(
+            search_term=resolved_search_term,
+            pipeline_context=pipeline_context,
+        )`);
     expect(merged).not.toContain("response_request_2 = request_2(pipeline_context=pipeline_context)");
   });
 
