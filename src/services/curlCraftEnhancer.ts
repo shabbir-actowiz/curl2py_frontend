@@ -14,6 +14,11 @@ interface BatchEnhanceOptions {
   parserFunctionNames?: string[];
 }
 
+interface PythonFunctionArg {
+  name: string;
+  defaultValue?: string;
+}
+
 const PIPELINE_PLACEHOLDER_PATTERN = /\{\{?\s*[A-Za-z_][A-Za-z0-9_]*(?:\.(?:[A-Za-z_][A-Za-z0-9_]*|\d+)|\[\d+\])+(?:\|(?:string|int|float|bool))?\s*\}\}?/;
 const PIPELINE_REFERENCE_PATTERN = /\{\{?\s*([A-Za-z_][A-Za-z0-9_]*)((?:\.(?:[A-Za-z_][A-Za-z0-9_]*|\d+)|\[\d+\])+)(?:\|(string|int|float|bool))?\s*\}\}?/g;
 const PIPELINE_FULL_REFERENCE_PATTERN = /^\{\{?\s*([A-Za-z_][A-Za-z0-9_]*)((?:\.(?:[A-Za-z_][A-Za-z0-9_]*|\d+)|\[\d+\])+)(?:\|(string|int|float|bool))?\s*\}\}?$/;
@@ -337,6 +342,155 @@ function assertNoUnresolvedPipelinePlaceholders(code: string): void {
   if (/\{\{?\s*request_[A-Za-z0-9_]*(?:\.|\[)/.test(code)) {
     throw new Error("Generated request code contains unresolved pipeline placeholders");
   }
+}
+
+function splitPythonArguments(args: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let depth = 0;
+  let quote: string | null = null;
+  let escape = false;
+
+  for (const char of args) {
+    current += char;
+    if (quote) {
+      if (escape) {
+        escape = false;
+      } else if (char === "\\") {
+        escape = true;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (char === "\"" || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === "(" || char === "[" || char === "{") depth += 1;
+    if (char === ")" || char === "]" || char === "}") depth -= 1;
+    if (char === "," && depth === 0) {
+      parts.push(current.slice(0, -1).trim());
+      current = "";
+    }
+  }
+  if (current.trim()) parts.push(current.trim());
+  return parts;
+}
+
+function findRequestFunctionArgs(code: string | undefined, functionName: string): PythonFunctionArg[] {
+  if (!code) return [];
+  const lines = code.split("\n");
+  const escapedName = functionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const startPattern = new RegExp(`^def\\s+${escapedName}\\s*\\(`);
+  const startIndex = lines.findIndex((line) => startPattern.test(line));
+  if (startIndex < 0) return [];
+
+  const signatureLines: string[] = [];
+  let depth = 0;
+  for (let index = startIndex; index < lines.length; index += 1) {
+    const line = lines[index];
+    signatureLines.push(line);
+    for (const char of line) {
+      if (char === "(") depth += 1;
+      if (char === ")") depth -= 1;
+    }
+    if (depth <= 0 && /\):\s*$/.test(line)) break;
+  }
+
+  const signature = signatureLines.join("\n");
+  const openIndex = signature.indexOf("(");
+  const closeIndex = signature.lastIndexOf(")");
+  if (openIndex < 0 || closeIndex <= openIndex) return [];
+
+  return splitPythonArguments(signature.slice(openIndex + 1, closeIndex))
+    .map((rawArg) => rawArg.trim())
+    .filter((rawArg) => rawArg && rawArg !== "/" && rawArg !== "*")
+    .map((rawArg) => {
+      const equalsIndex = rawArg.indexOf("=");
+      const namePart = (equalsIndex >= 0 ? rawArg.slice(0, equalsIndex) : rawArg).trim();
+      return {
+        name: namePart.replace(/^\*\*?/, "").trim(),
+        defaultValue: equalsIndex >= 0 ? rawArg.slice(equalsIndex + 1).trim() : undefined,
+      };
+    })
+    .filter((arg) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(arg.name));
+}
+
+function defaultExpressionNeedsPipeline(defaultValue: string | undefined): boolean {
+  return !!defaultValue && (
+    defaultValue.includes("get_pipeline_value(")
+    || defaultValue.includes("resolve_pipeline_placeholders(")
+    || PIPELINE_PLACEHOLDER_PATTERN.test(defaultValue)
+  );
+}
+
+function unquoteSimplePythonString(value: string): string | null {
+  const trimmed = value.trim();
+  if (trimmed.length < 2) return null;
+  const quote = trimmed[0];
+  if ((quote !== "\"" && quote !== "'") || trimmed[trimmed.length - 1] !== quote) return null;
+  try {
+    return JSON.parse(quote === "\"" ? trimmed : `"${trimmed.slice(1, -1).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`) as string;
+  } catch {
+    return trimmed.slice(1, -1);
+  }
+}
+
+function resolveMergedDefaultExpression(defaultValue: string): string {
+  const stringValue = unquoteSimplePythonString(defaultValue);
+  if (stringValue !== null && valueHasPipelinePlaceholder(stringValue)) return pyPipelineString(stringValue);
+  return defaultValue;
+}
+
+function buildMergedRequestCall(entry: BatchEnhanceOptions["requests"][number]): { lines: string[]; needsPipelineImport: boolean; hasResponse: boolean } {
+  const functionArgs = findRequestFunctionArgs(entry.code, entry.functionName);
+  const needsPipelineContext = requestUsesPipeline(entry.request) || (entry.code ? scriptNeedsPipelineContext(entry.code) : false);
+  const callArgs: string[] = [];
+  const lines: string[] = [];
+  let needsPipelineImport = false;
+  let hasMissingRequiredArgument = false;
+
+  functionArgs.forEach((arg) => {
+    if (arg.name === "pipeline_context") {
+      if (needsPipelineContext) callArgs.push("pipeline_context=pipeline_context");
+      return;
+    }
+
+    const resolvedName = `resolved_${arg.name}`;
+    if (arg.defaultValue === undefined) {
+      lines.push(`    raise ValueError("Missing required argument '${arg.name}' for ${entry.functionName}. Please provide value or pipeline mapping.")`);
+      hasMissingRequiredArgument = true;
+      return;
+    }
+
+    const defaultExpression = resolveMergedDefaultExpression(arg.defaultValue);
+    needsPipelineImport = needsPipelineImport || defaultExpressionNeedsPipeline(defaultExpression);
+    lines.push(`    ${resolvedName} = ${defaultExpression}`);
+    lines.push(`    if ${resolvedName} is None:`);
+    lines.push(`        raise ValueError("Missing required argument '${arg.name}' for ${entry.functionName}. Please provide value or pipeline mapping.")`);
+    callArgs.push(`${arg.name}=${resolvedName}`);
+  });
+
+  if (needsPipelineContext && !callArgs.some((arg) => arg.startsWith("pipeline_context="))) {
+    callArgs.push("pipeline_context=pipeline_context");
+  }
+
+  if (hasMissingRequiredArgument) return { lines, needsPipelineImport, hasResponse: false };
+
+  if (callArgs.length === 0) {
+    lines.push(`    response_${entry.functionName} = ${entry.functionName}()`);
+    return { lines, needsPipelineImport, hasResponse: true };
+  }
+  if (callArgs.length === 1 && callArgs[0] === "pipeline_context=pipeline_context") {
+    lines.push(`    response_${entry.functionName} = ${entry.functionName}(pipeline_context=pipeline_context)`);
+    return { lines, needsPipelineImport, hasResponse: true };
+  }
+
+  lines.push(`    response_${entry.functionName} = ${entry.functionName}(`);
+  callArgs.forEach((arg) => lines.push(`        ${arg},`));
+  lines.push("    )");
+  return { lines, needsPipelineImport, hasResponse: true };
 }
 
 function buildDefaultContextFromCode(code: string): Record<string, unknown> {
@@ -918,12 +1072,21 @@ export function buildCurlCraftScript({ requests, proxy, targetFunctionName }: Ba
 export function buildMergedScript({ requests, parserFunctionNames = [] }: BatchEnhanceOptions): string {
   const parserSet = new Set(parserFunctionNames);
   const hasParsers = requests.some((entry) => parserSet.has(`${entry.functionName}_parser`));
+  const requestCalls = requests.map((entry) => ({
+    entry,
+    ...buildMergedRequestCall(entry),
+  }));
+  const needsPipelineImport = requestCalls.some((call) => call.needsPipelineImport);
   const code: string[] = [];
 
   if (hasParsers) {
     code.push("import gzip");
     code.push("import json");
     code.push("import os");
+    code.push("");
+  }
+  if (needsPipelineImport) {
+    code.push("from pipeline_utils import get_pipeline_value, resolve_pipeline_placeholders");
     code.push("");
   }
   requests.forEach((entry) => code.push(`from ${entry.functionName} import ${entry.functionName}`));
@@ -947,11 +1110,10 @@ export function buildMergedScript({ requests, parserFunctionNames = [] }: BatchE
   code.push("    pipeline_context = {}");
   if (hasParsers) code.push("    parsed_outputs = {}");
   code.push("");
-  requests.forEach((entry) => {
+  requestCalls.forEach(({ entry, lines, hasResponse }) => {
     const parserName = `${entry.functionName}_parser`;
-    const args = requestUsesPipeline(entry.request) || (entry.code ? scriptNeedsPipelineContext(entry.code) : false) ? "pipeline_context=pipeline_context" : "";
-    code.push(`    response_${entry.functionName} = ${entry.functionName}(${args})`);
-    if (parserSet.has(parserName)) {
+    code.push(...lines);
+    if (hasResponse && parserSet.has(parserName)) {
       code.push(`    parsed_${entry.functionName} = ${parserName}(response_${entry.functionName})`);
       code.push(`    save_parsed_output(${pyString(entry.functionName)}, parsed_${entry.functionName})`);
       code.push(`    pipeline_context[${pyString(entry.functionName)}] = parsed_${entry.functionName}`);

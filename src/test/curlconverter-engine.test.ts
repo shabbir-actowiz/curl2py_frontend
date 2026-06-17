@@ -379,6 +379,78 @@ def request_2(pipeline_context=None):
     expect(merged).toContain("response_request_2 = request_2(pipeline_context=pipeline_context)");
   });
 
+  it("forwards Make Variable function arguments in merged request calls", () => {
+    const request1 = convertCurlLocally("curl 'https://example.com/bootstrap'").request;
+    const request2 = convertCurlLocally("curl 'https://example.com/products?searchTerm=placeholder&pincode=000000'").request;
+
+    const merged = buildMergedScript({
+      requests: [
+        { functionName: "request_1", request: request1 },
+        {
+          functionName: "request_2",
+          request: request2,
+          code: `def request_2(search_term="shoes", pincode="110001"):
+    return None
+`,
+        },
+      ],
+      parserFunctionNames: [],
+    });
+
+    expect(merged).toContain('    resolved_search_term = "shoes"');
+    expect(merged).toContain('    resolved_pincode = "110001"');
+    expect(merged).toContain(`    response_request_2 = request_2(
+        search_term=resolved_search_term,
+        pincode=resolved_pincode,
+    )`);
+    expect(merged).not.toContain("response_request_2 = request_2()");
+  });
+
+  it("forwards Make Variable arguments together with pipeline_context in merged request calls", () => {
+    const request1 = convertCurlLocally("curl 'https://example.com/bootstrap'").request;
+    const request2 = convertCurlLocally("curl 'https://example.com/products?searchTerm={{request_1.term}}'").request;
+    const editedRequest2 = repairPythonPipelinePlaceholders(`def request_2(search_term="shoes"):
+    params = {
+        "searchTerm": "{{request_1.term}}",
+    }
+    return None
+`);
+
+    const merged = buildMergedScript({
+      requests: [
+        { functionName: "request_1", request: request1 },
+        { functionName: "request_2", request: request2, code: editedRequest2 },
+      ],
+      parserFunctionNames: ["request_1_parser"],
+    });
+
+    expect(merged).toContain(`    response_request_2 = request_2(
+        search_term=resolved_search_term,
+        pipeline_context=pipeline_context,
+    )`);
+    expect(merged).not.toContain("response_request_2 = request_2(pipeline_context=pipeline_context)");
+  });
+
+  it("raises a clear merged runner error for unresolved required request arguments", () => {
+    const request2 = convertCurlLocally("curl 'https://example.com/products?searchTerm=placeholder'").request;
+
+    const merged = buildMergedScript({
+      requests: [
+        {
+          functionName: "request_2",
+          request: request2,
+          code: `def request_2(search_term):
+    return None
+`,
+        },
+      ],
+      parserFunctionNames: [],
+    });
+
+    expect(merged).toContain("raise ValueError(\"Missing required argument 'search_term' for request_2. Please provide value or pipeline mapping.\")");
+    expect(merged).not.toContain("response_request_2 = request_2()");
+  });
+
   it("does not call an unselected parser for the final merged request", () => {
     const request1 = convertCurlLocally("curl 'https://example.com/bootstrap'").request;
     const request2 = convertCurlLocally("curl 'https://example.com/home'").request;
