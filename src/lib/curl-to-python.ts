@@ -12,7 +12,117 @@ export interface ParsedCurl {
   error?: string;
 }
 
-// Tokenize a shell-like command honoring quotes and backslash continuations.
+function decodeAnsiCString(value: string): string {
+  let decoded = "";
+  for (let i = 0; i < value.length; i++) {
+    if (value[i] !== "\\" || i + 1 >= value.length) {
+      decoded += value[i];
+      continue;
+    }
+
+    const nextChar = value[i + 1];
+    const rest = value.slice(i + 1);
+    const hexMatch = rest.match(/^(u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|x[0-9a-fA-F]{1,2})/);
+    const octalMatch = rest.match(/^[0-7]{1,3}/);
+    const escape = hexMatch?.[1] ?? octalMatch?.[0] ?? nextChar;
+
+    switch (escape[0]) {
+      case "u":
+      case "U":
+        decoded += String.fromCodePoint(parseInt(escape.slice(1), 16));
+        i += escape.length;
+        break;
+      case "x":
+        decoded += String.fromCharCode(parseInt(escape.slice(1), 16));
+        i += escape.length;
+        break;
+      case "a":
+        decoded += "\x07";
+        i++;
+        break;
+      case "b":
+        decoded += "\b";
+        i++;
+        break;
+      case "e":
+        decoded += "\x1b";
+        i++;
+        break;
+      case "f":
+        decoded += "\f";
+        i++;
+        break;
+      case "n":
+        decoded += "\n";
+        i++;
+        break;
+      case "r":
+        decoded += "\r";
+        i++;
+        break;
+      case "t":
+        decoded += "\t";
+        i++;
+        break;
+      case "v":
+        decoded += "\v";
+        i++;
+        break;
+      case "%":
+        decoded += "%";
+        i++;
+        break;
+      default:
+        if (/^[0-7]/.test(escape)) {
+          decoded += String.fromCharCode(parseInt(escape, 8));
+          i += escape.length;
+        } else {
+          decoded += escape;
+          i++;
+        }
+        break;
+    }
+  }
+  return decoded;
+}
+
+function readQuoted(cleaned: string, index: number, quote: string, ansiC = false): { value: string; index: number } {
+  let i = index + 1;
+  let buf = "";
+  while (i < cleaned.length) {
+    if (ansiC && cleaned[i] === "\\" && i + 1 < cleaned.length) {
+      buf += cleaned[i] + cleaned[i + 1];
+      i += 2;
+      continue;
+    }
+    if (cleaned[i] === quote) break;
+    if (cleaned[i] === "\\" && quote === '"' && i + 1 < cleaned.length) {
+      const nextChar = cleaned[i + 1];
+      buf += nextChar === '"' || nextChar === "\\" || nextChar === "$" || nextChar === "`" ? nextChar : "\\" + nextChar;
+      i += 2;
+    } else {
+      buf += cleaned[i++];
+    }
+  }
+  if (i < cleaned.length && cleaned[i] === quote) i++;
+  return { value: ansiC ? decodeAnsiCString(buf) : buf, index: i };
+}
+
+function cleanShellValue(rawValue: string): string {
+  let value = rawValue.replace(/\\\r?\n/g, "").trim();
+  if (value.length >= 3 && value[0] === "$" && value[1] === "'" && value[value.length - 1] === "'") {
+    return decodeAnsiCString(value.slice(2, -1)).trim();
+  }
+  if (value.length >= 3 && value[0] === "$" && value[1] === '"' && value[value.length - 1] === '"') {
+    return value.slice(2, -1).trim();
+  }
+  if (value.length >= 2 && ((value[0] === "'" && value[value.length - 1] === "'") || (value[0] === '"' && value[value.length - 1] === '"'))) {
+    return value.slice(1, -1).trim();
+  }
+  return value;
+}
+
+// Tokenize a shell-like command honoring quotes, Bash ANSI-C quotes, and backslash continuations.
 function tokenize(input: string): string[] {
   // Collapse line-continuation: backslash + newline
   const cleaned = input.replace(/\\\r?\n/g, " ");
@@ -25,37 +135,20 @@ function tokenize(input: string): string[] {
       i++;
       continue;
     }
-    if (c === '"' || c === "'") {
-      const quote = c;
-      i++;
-      let buf = "";
-      while (i < n && cleaned[i] !== quote) {
-        if (cleaned[i] === "\\" && quote === '"' && i + 1 < n) {
-          const nextChar = cleaned[i + 1];
-          if (nextChar === '"' || nextChar === "\\" || nextChar === "$" || nextChar === "`") {
-            buf += nextChar;
-          } else {
-            buf += "\\" + nextChar;
-          }
-          i += 2;
-        } else {
-          buf += cleaned[i++];
-        }
-      }
-      i++; // closing quote
+    if (c === '"' || c === "'" || (c === "$" && cleaned[i + 1] === "'")) {
+      const ansiC = c === "$" && cleaned[i + 1] === "'";
+      const quote = ansiC ? "'" : c;
+      const quoted = readQuoted(cleaned, ansiC ? i + 1 : i, quote, ansiC);
+      let buf = quoted.value;
+      i = quoted.index;
       // concat with adjacent tokens (e.g. -H'X: Y')
       while (i < n && cleaned[i] !== " " && cleaned[i] !== "\t" && cleaned[i] !== "\n") {
-        if (cleaned[i] === '"' || cleaned[i] === "'") {
-          const q2 = cleaned[i++];
-          while (i < n && cleaned[i] !== q2) {
-            if (cleaned[i] === "\\" && q2 === '"' && i + 1 < n) {
-              const nextChar = cleaned[i + 1];
-              buf += nextChar === '"' || nextChar === "\\" || nextChar === "$" || nextChar === "`" ? nextChar : "\\" + nextChar;
-              i += 2;
-            }
-            else buf += cleaned[i++];
-          }
-          i++;
+        if (cleaned[i] === '"' || cleaned[i] === "'" || (cleaned[i] === "$" && cleaned[i + 1] === "'")) {
+          const nestedAnsiC = cleaned[i] === "$" && cleaned[i + 1] === "'";
+          const q2 = nestedAnsiC ? "'" : cleaned[i];
+          const nested = readQuoted(cleaned, nestedAnsiC ? i + 1 : i, q2, nestedAnsiC);
+          buf += nested.value;
+          i = nested.index;
         } else {
           buf += cleaned[i++];
         }
@@ -64,17 +157,12 @@ function tokenize(input: string): string[] {
     } else {
       let buf = "";
       while (i < n && cleaned[i] !== " " && cleaned[i] !== "\t" && cleaned[i] !== "\n") {
-        if (cleaned[i] === '"' || cleaned[i] === "'") {
-          const q2 = cleaned[i++];
-          while (i < n && cleaned[i] !== q2) {
-            if (cleaned[i] === "\\" && q2 === '"' && i + 1 < n) {
-              const nextChar = cleaned[i + 1];
-              buf += nextChar === '"' || nextChar === "\\" || nextChar === "$" || nextChar === "`" ? nextChar : "\\" + nextChar;
-              i += 2;
-            }
-            else buf += cleaned[i++];
-          }
-          i++;
+        if (cleaned[i] === '"' || cleaned[i] === "'" || (cleaned[i] === "$" && cleaned[i + 1] === "'")) {
+          const nestedAnsiC = cleaned[i] === "$" && cleaned[i + 1] === "'";
+          const q2 = nestedAnsiC ? "'" : cleaned[i];
+          const nested = readQuoted(cleaned, nestedAnsiC ? i + 1 : i, q2, nestedAnsiC);
+          buf += nested.value;
+          i = nested.index;
         } else {
           buf += cleaned[i++];
         }
@@ -88,17 +176,10 @@ function tokenize(input: string): string[] {
 export type BodyType = "json" | "form" | "multipart" | "text" | "none";
 
 export function normalize_shell_body(rawBody: string): string {
-  let body = rawBody.replace(/\\\r?\n/g, "");
-  body = body.trim();
+  let body = cleanShellValue(rawBody);
 
   if (body.length >= 2 && body[0] === "$" && (body[1] === "{" || body[1] === "[")) {
     body = body.slice(1);
-  }
-
-  if (body.length >= 3 && body[0] === "$" && (body[1] === "'" || body[1] === '"') && body[body.length - 1] === body[1]) {
-    body = body.slice(2, -1);
-  } else if (body.length >= 2 && ((body[0] === "'" && body[body.length - 1] === "'") || (body[0] === '"' && body[body.length - 1] === '"'))) {
-    body = body.slice(1, -1);
   }
 
   return body;
@@ -179,14 +260,14 @@ export function parseCurl(raw: string): ParsedCurl {
     let isMultipart = false;
 
     for (let i = 1; i < tokens.length; i++) {
-      const t = tokens[i];
+      const t = cleanShellValue(tokens[i]);
       const next = () => tokens[++i];
 
       if (t === "-X" || t === "--request") {
         result.method = (next() || "GET").toUpperCase();
         explicitMethod = true;
       } else if (t === "-H" || t === "--header") {
-        const h = next() || "";
+        const h = cleanShellValue(next() || "");
         const idx = h.indexOf(":");
         if (idx > 0) {
           const k = h.slice(0, idx).trim();
@@ -205,11 +286,13 @@ export function parseCurl(raw: string): ParsedCurl {
         const u = next() || "";
         result.headers["Authorization"] = `Basic ${btoa(u)}`;
       } else if (t === "-A" || t === "--user-agent") {
-        result.headers["User-Agent"] = next() || "";
+        result.headers["User-Agent"] = cleanShellValue(next() || "");
       } else if (t === "-e" || t === "--referer") {
-        result.headers["Referer"] = next() || "";
+        result.headers["Referer"] = cleanShellValue(next() || "");
       } else if (t === "-b" || t === "--cookie") {
-        result.headers["Cookie"] = next() || "";
+        result.headers["Cookie"] = cleanShellValue(next() || "");
+      } else if (t === "--url") {
+        result.url = cleanShellValue(next() || "");
       } else if (
         t === "-I" || t === "--head"
       ) {
@@ -229,9 +312,9 @@ export function parseCurl(raw: string): ParsedCurl {
         // ignore (some take an arg)
         if (t === "-o" || t === "--output") next();
       } else if (t.startsWith("http://") || t.startsWith("https://") || t.startsWith("//")) {
-        result.url = t;
+        result.url = cleanShellValue(t);
       } else if (!t.startsWith("-") && !result.url) {
-        result.url = t;
+        result.url = cleanShellValue(t);
       }
     }
 

@@ -13,6 +13,40 @@ describe("curl-to-python conversion", () => {
     expect(python("curl 'https://example.com/api?q=milk'")).toContain('timeout=30');
   });
 
+  it("extracts Bash ANSI-C quoted HTTPS URLs", () => {
+    const parsed = parseCurl(String.raw`curl $'https://example.com/path?x=\u00211'`);
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.url).toBe("https://example.com/path?x=!1");
+  });
+
+  it("extracts Bash ANSI-C quoted HTTP URLs", () => {
+    const parsed = parseCurl("curl $'http://example.com'");
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.url).toBe("http://example.com");
+  });
+
+  it("keeps existing quoted and bare URL support", () => {
+    expect(parseCurl("curl 'https://example.com'").url).toBe("https://example.com");
+    expect(parseCurl('curl "https://example.com"').url).toBe("https://example.com");
+    expect(parseCurl("curl https://example.com").url).toBe("https://example.com");
+  });
+
+  it("extracts Bash ANSI-C quoted --url values", () => {
+    const parsed = parseCurl("curl --url $'https://example.com'");
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.url).toBe("https://example.com");
+  });
+
+  it("decodes Bash ANSI-C quoted headers", () => {
+    const parsed = parseCurl(String.raw`curl https://example.com -H $'x-test: value\u0021'`);
+    expect(parsed.headers["x-test"]).toBe("value!");
+  });
+
+  it("decodes Bash ANSI-C quoted data", () => {
+    const parsed = parseCurl(String.raw`curl https://example.com --data-raw $'a=\u0021b'`);
+    expect(parsed.data).toBe("a=!b");
+  });
+
   it("converts POST JSON curl using json=json_data", () => {
     const code = python(`curl 'https://example.com/api' -H 'content-type: application/json' --data '{"key":"value"}'`);
     expect(code).toContain("json_data = {");
@@ -50,7 +84,7 @@ describe("curl-to-python conversion", () => {
 
   it("preserves GraphQL JSON payload escape text", () => {
     const code = python(`curl 'https://example.com/graphql' --data-raw $'{"query":"query X {\\\\n title\\\\u0021 \\\\n}"}'`);
-    expect(code).toContain(String.raw`"query": "query X {\\n title\\u0021 \\n}"`);
+    expect(code).toContain(String.raw`"query": "query X {\n title! \n}"`);
     expect(code).not.toContain('"""');
   });
 
