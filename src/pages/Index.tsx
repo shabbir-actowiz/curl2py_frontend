@@ -8060,7 +8060,7 @@ function HtmlResponseViewer({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const initialPreview = useMemo(() => previewSourceLines(html), [html]);
-  const [showFullHtml, setShowFullHtml] = useState(!initialPreview.isPreview);
+  const [showFullHtml, setShowFullHtml] = useState(true);
   const visibleHtml = showFullHtml ? html : initialPreview.preview;
   const documentNode = useMemo(() => new DOMParser().parseFromString(visibleHtml, "text/html"), [visibleHtml]);
   const [selectedElement, setSelectedElement] = useState<HtmlElementSelection | null>(null);
@@ -8094,8 +8094,8 @@ function HtmlResponseViewer({
   const selectedElementIsAdded = !!selectedElementAddedSelector;
   useEffect(() => {
     setSelectedElement(null);
-    setShowFullHtml(!initialPreview.isPreview);
-  }, [html, initialPreview.isPreview]);
+    setShowFullHtml(true);
+  }, [html]);
 
   return (
     <div
