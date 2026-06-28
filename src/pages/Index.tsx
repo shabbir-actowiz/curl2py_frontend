@@ -7769,7 +7769,10 @@ function ResponseBodyViewer({
 
 function ResponsePreviewNotice() {
   return (
-    <div className="mb-3 flex items-start gap-2 rounded-sm border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-[11px] leading-[1.5] text-amber-900 dark:text-amber-200">
+    <div
+      className="mb-3 flex w-full max-w-[42rem] select-none items-start gap-2 rounded-sm border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-[11px] leading-[1.5] text-amber-900 dark:text-amber-200"
+      onMouseDown={(event) => event.preventDefault()}
+    >
       <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={2} />
       <span>Response preview only. For the most accurate final result, copy the generated code and run it on your local machine.</span>
     </div>
@@ -7860,9 +7863,24 @@ function JsonResponseViewer({
   }, [selected, updateToolbarPosition]);
 
   return (
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground">
+      <ResponsePreviewNotice />
+      {quickAddMode ? (
+        <div className="mb-3 flex shrink-0 select-none items-center gap-2 rounded-sm border border-primary/30 bg-primary/5 px-3 py-2 text-[11px] text-primary">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+          </span>
+          <span>Quick Add Mode Active: Click any JSON key or value to immediately add its path.</span>
+        </div>
+      ) : !selected && (
+        <div className="mb-3 shrink-0 select-none rounded-sm border border-border bg-surface/35 px-3 py-2 text-[11px] text-muted-foreground">
+          Select a JSON key or value
+        </div>
+      )}
     <div
       ref={containerRef}
-      className="relative h-full min-h-0 overflow-auto px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground"
+      className="relative min-h-0 flex-1 overflow-auto"
       onScroll={updateToolbarPosition}
       onClick={(e) => {
         if (e.target === e.currentTarget) {
@@ -7873,20 +7891,6 @@ function JsonResponseViewer({
         }
       }}
     >
-      <ResponsePreviewNotice />
-      {quickAddMode ? (
-        <div className="mb-3 flex items-center gap-2 rounded-sm border border-primary/30 bg-primary/5 px-3 py-2 text-[11px] text-primary">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
-          </span>
-          <span>Quick Add Mode Active: Click any JSON key or value to immediately add its path.</span>
-        </div>
-      ) : !selected && (
-        <div className="mb-3 rounded-sm border border-border bg-surface/35 px-3 py-2 text-[11px] text-muted-foreground">
-          Select a JSON key or value
-        </div>
-      )}
       {!quickAddMode && selected && (
         <div
           ref={toolbarRef}
@@ -7960,6 +7964,7 @@ function JsonResponseViewer({
           onSelectedPathChange?.(nextPath, nodeValue);
         }}
       />
+    </div>
     </div>
   );
 }
@@ -8209,20 +8214,19 @@ function HtmlResponseViewer({
   }, []);
 
   return (
-    <div
-      ref={containerRef}
-      className="relative px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground"
-      onClick={(e) => {
-        e.preventDefault();
-        if (e.target === e.currentTarget) setSelectedElement(null);
-      }}
-    >
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground">
       <ResponsePreviewNotice />
-      {!selectedElement && (
-        <div className="mb-3 rounded-sm border border-border bg-surface/35 px-3 py-2 text-[11px] text-muted-foreground">
-          Select an element to inspect
-        </div>
-      )}
+      <div className="mb-3 shrink-0 select-none rounded-sm border border-border bg-surface/35 px-3 py-2 text-[11px] text-muted-foreground">
+        Select an element to inspect
+      </div>
+      <div
+        ref={containerRef}
+        className="relative min-h-0 flex-1 overflow-auto"
+        onClick={(e) => {
+          e.preventDefault();
+          if (e.target === e.currentTarget) setSelectedElement(null);
+        }}
+      >
       {selectedElement && (
         <div
           className="absolute z-20 flex items-center gap-2 rounded-sm border border-border bg-background px-2 py-1 text-[11px] shadow-sm"
@@ -8328,6 +8332,7 @@ function HtmlResponseViewer({
       ) : (
         <pre className="whitespace-pre-wrap">{html}</pre>
       )}
+      </div>
     </div>
   );
 }
