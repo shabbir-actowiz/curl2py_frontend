@@ -7756,10 +7756,24 @@ function ResponseBodyViewer({
   }
 
   if ((contentType || "").toLowerCase().includes("json")) {
-    return <pre className="whitespace-pre-wrap px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground">{source}</pre>;
+    return (
+      <div className="px-4 py-3">
+        <ResponsePreviewNotice />
+        <pre className="whitespace-pre-wrap font-mono text-[12px] leading-[1.6] text-foreground">{source}</pre>
+      </div>
+    );
   }
 
   return <HtmlResponseViewer html={mode.value} />;
+}
+
+function ResponsePreviewNotice() {
+  return (
+    <div className="mb-3 flex items-start gap-2 rounded-sm border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-[11px] leading-[1.5] text-amber-900 dark:text-amber-200">
+      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={2} />
+      <span>Response preview only. For the most accurate final result, copy the generated code and run it on your local machine.</span>
+    </div>
+  );
 }
 
 function JsonResponseViewer({
@@ -7840,6 +7854,7 @@ function JsonResponseViewer({
         }
       }}
     >
+      <ResponsePreviewNotice />
       {quickAddMode ? (
         <div className="mb-3 flex items-center gap-2 rounded-sm border border-primary/30 bg-primary/5 px-3 py-2 text-[11px] text-primary">
           <span className="relative flex h-2 w-2">
@@ -8106,6 +8121,7 @@ function HtmlResponseViewer({
         if (e.target === e.currentTarget) setSelectedElement(null);
       }}
     >
+      <ResponsePreviewNotice />
       {!selectedElement && (
         <div className="mb-3 rounded-sm border border-border bg-surface/35 px-3 py-2 text-[11px] text-muted-foreground">
           Select an element to inspect
