@@ -4446,16 +4446,6 @@ export default function Index() {
               {isRunning ? "Running..." : "Run"}
             </button>
 
-            <a
-              href="/user-guide.html"
-              target="_blank"
-              rel="noopener noreferrer"
-              className={topbarButtonClass}
-              title="Open User Guide (Help)"
-            >
-              <HelpCircle className="h-3.5 w-3.5" strokeWidth={2} />
-              <span className="hidden xl:inline">Help</span>
-            </a>
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -4478,6 +4468,10 @@ export default function Index() {
                   <AlertCircle className="h-3.5 w-3.5" strokeWidth={2} />
                   Raise Issue
                 </DropdownMenuItem> */}
+                <DropdownMenuItem className={modernMenuItemClass} onClick={() => window.open("/user-guide.html", "_blank")}>
+                  <HelpCircle className="h-3.5 w-3.5" strokeWidth={2} />
+                  Help
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
 
