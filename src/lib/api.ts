@@ -267,7 +267,14 @@ export interface CreateIssueResponse {
 
 const DEFAULT_API_BASE_URL = "";
 
-export const API_BASE_URL = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? DEFAULT_API_BASE_URL).replace(/\/$/, "");
+const CONFIGURED_API_BASE_URL = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? DEFAULT_API_BASE_URL).replace(/\/$/, "");
+
+function isLocalFrontendHost(): boolean {
+  if (typeof window === "undefined") return false;
+  return ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+}
+
+export const API_BASE_URL = isLocalFrontendHost() ? DEFAULT_API_BASE_URL : CONFIGURED_API_BASE_URL;
 
 export class ApiError extends Error {
   status: number;

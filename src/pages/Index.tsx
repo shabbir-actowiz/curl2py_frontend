@@ -7756,10 +7756,27 @@ function ResponseBodyViewer({
   }
 
   if ((contentType || "").toLowerCase().includes("json")) {
-    return <pre className="whitespace-pre-wrap px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground">{source}</pre>;
+    return (
+      <div className="px-4 py-3">
+        <ResponsePreviewNotice />
+        <pre className="whitespace-pre-wrap font-mono text-[12px] leading-[1.6] text-foreground">{source}</pre>
+      </div>
+    );
   }
 
   return <HtmlResponseViewer html={mode.value} />;
+}
+
+function ResponsePreviewNotice() {
+  return (
+    <div
+      className="mb-3 flex w-full max-w-[42rem] select-none items-start gap-2 rounded-sm border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-[11px] leading-[1.5] text-amber-900 dark:text-amber-200"
+      onMouseDown={(event) => event.preventDefault()}
+    >
+      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={2} />
+      <span>Response preview only. For the most accurate final result, copy the generated code and run it on your local machine.</span>
+    </div>
+  );
 }
 
 function JsonResponseViewer({
@@ -7783,7 +7800,13 @@ function JsonResponseViewer({
   const toolbarRef = useRef<HTMLDivElement>(null);
   const selectedAnchorRef = useRef<HTMLElement | null>(null);
   const [selected, setSelected] = useState<JsonValueSelection | null>(null);
+  const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(() => new Set());
   const [toolbarPosition, setToolbarPosition] = useState<{ left: number; top: number } | null>(null);
+  let lineNumber = 0;
+  const nextLineNumber = () => {
+    lineNumber += 1;
+    return lineNumber;
+  };
   const updateToolbarPosition = useCallback(() => {
     const anchor = selectedAnchorRef.current;
     if (!anchor) {
@@ -7814,9 +7837,22 @@ function JsonResponseViewer({
 
   useEffect(() => {
     setSelected(null);
+    setCollapsedPaths(new Set());
     selectedAnchorRef.current = null;
     setToolbarPosition(null);
   }, [value]);
+
+  const toggleCollapsedPath = useCallback((path: string) => {
+    setCollapsedPaths((current) => {
+      const next = new Set(current);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (!selected) return;
@@ -7827,9 +7863,24 @@ function JsonResponseViewer({
   }, [selected, updateToolbarPosition]);
 
   return (
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground">
+      <ResponsePreviewNotice />
+      {quickAddMode ? (
+        <div className="mb-3 flex shrink-0 select-none items-center gap-2 rounded-sm border border-primary/30 bg-primary/5 px-3 py-2 text-[11px] text-primary">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+          </span>
+          <span>Quick Add Mode Active: Click any JSON key or value to immediately add its path.</span>
+        </div>
+      ) : !selected && (
+        <div className="mb-3 shrink-0 select-none rounded-sm border border-border bg-surface/35 px-3 py-2 text-[11px] text-muted-foreground">
+          Select a JSON key or value
+        </div>
+      )}
     <div
       ref={containerRef}
-      className="relative h-full min-h-0 overflow-auto px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground"
+      className="relative min-h-0 flex-1 overflow-auto"
       onScroll={updateToolbarPosition}
       onClick={(e) => {
         if (e.target === e.currentTarget) {
@@ -7840,19 +7891,6 @@ function JsonResponseViewer({
         }
       }}
     >
-      {quickAddMode ? (
-        <div className="mb-3 flex items-center gap-2 rounded-sm border border-primary/30 bg-primary/5 px-3 py-2 text-[11px] text-primary">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
-          </span>
-          <span>Quick Add Mode Active: Click any JSON key or value to immediately add its path.</span>
-        </div>
-      ) : !selected && (
-        <div className="mb-3 rounded-sm border border-border bg-surface/35 px-3 py-2 text-[11px] text-muted-foreground">
-          Select a JSON key or value
-        </div>
-      )}
       {!quickAddMode && selected && (
         <div
           ref={toolbarRef}
@@ -7895,8 +7933,12 @@ function JsonResponseViewer({
       <JsonTreeNode
         value={value}
         path={[]}
+        depth={0}
         selectedPath={selectedPath}
         addedPaths={addedPaths}
+        collapsedPaths={collapsedPaths}
+        nextLineNumber={nextLineNumber}
+        onToggleCollapsed={toggleCollapsedPath}
         onSelect={(path, nodeValue, event) => {
           const nextPath = formatJsonPath(path);
           if (quickAddMode) {
@@ -7923,22 +7965,33 @@ function JsonResponseViewer({
         }}
       />
     </div>
+    </div>
   );
 }
 
 export function JsonTreeNode({
   value,
   path,
+  depth,
   name,
+  trailingComma,
   selectedPath,
   addedPaths,
+  collapsedPaths,
+  nextLineNumber,
+  onToggleCollapsed,
   onSelect,
 }: {
   value: unknown;
   path: Array<string | number>;
+  depth: number;
   name?: string | number;
+  trailingComma?: boolean;
   selectedPath?: string | null;
   addedPaths?: Set<string>;
+  collapsedPaths: Set<string>;
+  nextLineNumber: () => number;
+  onToggleCollapsed: (path: string) => void;
   onSelect: (path: Array<string | number>, value: unknown, event: React.MouseEvent) => void;
 }) {
   const isArray = Array.isArray(value);
@@ -7950,6 +8003,9 @@ export function JsonTreeNode({
       : [];
   const displayName = name !== undefined ? String(name) : "";
   const pathString = formatJsonPath(path);
+  const isCollapsed = isObject && collapsedPaths.has(pathString);
+  const currentLineNumber = nextLineNumber();
+  const indentStyle = { paddingLeft: `${depth * 1.25}rem` };
   const isTemporarySelected = selectedPath === pathString;
   const isPermanentlySelected = addedPaths?.has(pathString) ?? false;
   const highlightClass = isPermanentlySelected
@@ -7982,7 +8038,7 @@ export function JsonTreeNode({
             }}
             className="text-syntax-function hover:text-foreground"
           >
-            "{displayName}":
+            "{displayName}": 
           </button>
         )}
         <button
@@ -8005,42 +8061,78 @@ export function JsonTreeNode({
 
   return (
     <div className={cn("text-foreground", highlightClass)}>
-      {displayName && (
+      <div className="grid grid-cols-[3.25rem_1.25rem_minmax(0,1fr)]">
+        <span className="select-none pr-3 text-right text-syntax-comment/70">{currentLineNumber}</span>
         <button
           onClick={(e) => {
             e.stopPropagation();
-            onSelect(path, value, e);
+            onToggleCollapsed(pathString);
           }}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onSelect(path, value, e);
-          }}
-          className="text-left hover:text-foreground"
+          className="flex h-[1.6em] items-center justify-center text-syntax-comment hover:text-foreground"
+          aria-label={isCollapsed ? "Expand JSON node" : "Collapse JSON node"}
         >
-          <span className="text-syntax-function">"{displayName}": </span>
+          {isCollapsed ? <ChevronRight className="h-3 w-3" strokeWidth={2} /> : <ChevronDown className="h-3 w-3" strokeWidth={2} />}
         </button>
-      )}
-      <span className="text-syntax-punct">{isArray ? "[" : "{"}</span>
-      <div className="pl-4">
-        {entries.map(([key, child], index) => {
-          const childPath = [...path, key];
-          return (
-            <div key={`${key}-${index}`} className="flex items-start gap-1">
-              <JsonTreeNode
-                value={child}
-                path={childPath}
-                name={isArray ? undefined : key}
-                selectedPath={selectedPath}
-                addedPaths={addedPaths}
-                onSelect={onSelect}
-              />
-              {index < entries.length - 1 && <span className="text-syntax-punct">,</span>}
-            </div>
-          );
-        })}
+        <span className="min-w-0" style={indentStyle}>
+          {displayName && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelect(path, value, e);
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onSelect(path, value, e);
+              }}
+              className="text-left hover:text-foreground"
+            >
+              <span className="text-syntax-function">"{displayName}": </span>
+            </button>
+          )}
+          <span className="text-syntax-punct">{isArray ? "[" : "{"}</span>
+          {isCollapsed && (
+            <>
+              <span className="text-syntax-comment"> ... </span>
+              <span className="text-syntax-punct">{isArray ? "]" : "}"}</span>
+              {trailingComma && <span className="text-syntax-punct">,</span>}
+            </>
+          )}
+        </span>
       </div>
-      <span className="text-syntax-punct">{isArray ? "]" : "}"}</span>
+      {!isCollapsed && (
+        <>
+          <div>
+            {entries.map(([key, child], index) => {
+              const childPath = [...path, key];
+              return (
+                <JsonTreeNode
+                  key={`${key}-${index}`}
+                  value={child}
+                  path={childPath}
+                  depth={depth + 1}
+                  name={isArray ? undefined : key}
+                  trailingComma={index < entries.length - 1}
+                  selectedPath={selectedPath}
+                  addedPaths={addedPaths}
+                  collapsedPaths={collapsedPaths}
+                  nextLineNumber={nextLineNumber}
+                  onToggleCollapsed={onToggleCollapsed}
+                  onSelect={onSelect}
+                />
+              );
+            })}
+          </div>
+          <div className="grid grid-cols-[3.25rem_1.25rem_minmax(0,1fr)]">
+            <span className="select-none pr-3 text-right text-syntax-comment/70">{nextLineNumber()}</span>
+            <span />
+            <span className="text-syntax-punct" style={indentStyle}>
+              {isArray ? "]" : "}"}
+              {trailingComma && <span>,</span>}
+            </span>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -8060,10 +8152,16 @@ function HtmlResponseViewer({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const initialPreview = useMemo(() => previewSourceLines(html), [html]);
-  const [showFullHtml, setShowFullHtml] = useState(!initialPreview.isPreview);
+  const [showFullHtml, setShowFullHtml] = useState(true);
   const visibleHtml = showFullHtml ? html : initialPreview.preview;
   const documentNode = useMemo(() => new DOMParser().parseFromString(visibleHtml, "text/html"), [visibleHtml]);
   const [selectedElement, setSelectedElement] = useState<HtmlElementSelection | null>(null);
+  const [collapsedSelectors, setCollapsedSelectors] = useState<Set<string>>(() => new Set());
+  let lineNumber = 0;
+  const nextLineNumber = () => {
+    lineNumber += 1;
+    return lineNumber;
+  };
   const root = documentNode.documentElement;
   const selectedElementAddedSelector = selectedElement && addedPaths?.has(selectedElement.xpath)
     ? selectedElement.xpath
@@ -8094,23 +8192,36 @@ function HtmlResponseViewer({
   const selectedElementIsAdded = !!selectedElementAddedSelector;
   useEffect(() => {
     setSelectedElement(null);
-    setShowFullHtml(!initialPreview.isPreview);
-  }, [html, initialPreview.isPreview]);
+    setCollapsedSelectors(new Set());
+    setShowFullHtml(true);
+  }, [html]);
+
+  const toggleCollapsedSelector = useCallback((selector: string) => {
+    setCollapsedSelectors((current) => {
+      const next = new Set(current);
+      if (next.has(selector)) {
+        next.delete(selector);
+      } else {
+        next.add(selector);
+      }
+      return next;
+    });
+  }, []);
 
   return (
-    <div
-      ref={containerRef}
-      className="relative px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground"
-      onClick={(e) => {
-        e.preventDefault();
-        if (e.target === e.currentTarget) setSelectedElement(null);
-      }}
-    >
-      {!selectedElement && (
-        <div className="mb-3 rounded-sm border border-border bg-surface/35 px-3 py-2 text-[11px] text-muted-foreground">
-          Select an element to inspect
-        </div>
-      )}
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground">
+      <ResponsePreviewNotice />
+      <div className="mb-3 shrink-0 select-none rounded-sm border border-border bg-surface/35 px-3 py-2 text-[11px] text-muted-foreground">
+        Select an element to inspect
+      </div>
+      <div
+        ref={containerRef}
+        className="relative min-h-0 flex-1 overflow-auto"
+        onClick={(e) => {
+          e.preventDefault();
+          if (e.target === e.currentTarget) setSelectedElement(null);
+        }}
+      >
       {selectedElement && (
         <div
           className="absolute z-20 flex items-center gap-2 rounded-sm border border-border bg-background px-2 py-1 text-[11px] shadow-sm"
@@ -8187,14 +8298,20 @@ function HtmlResponseViewer({
       {root ? (
         <>
           {documentNode.doctype && (
-            <div className="text-muted-foreground">
-              &lt;!DOCTYPE {documentNode.doctype.name}&gt;
+            <div className="grid grid-cols-[3.25rem_1.25rem_minmax(0,1fr)] text-muted-foreground">
+              <span className="select-none pr-3 text-right text-syntax-comment/70">{nextLineNumber()}</span>
+              <span />
+              <span>&lt;!DOCTYPE {documentNode.doctype.name}&gt;</span>
             </div>
           )}
           <HtmlTreeNode
             element={root}
+            depth={0}
             selectedSelector={selectedElement?.xpath ?? null}
             addedPaths={addedPaths}
+            collapsedSelectors={collapsedSelectors}
+            nextLineNumber={nextLineNumber}
+            onToggleCollapsed={toggleCollapsedSelector}
             onSelect={(element, event) => {
               try {
                 const nextSelection = createHtmlElementSelection(element, event, containerRef.current, html);
@@ -8210,19 +8327,28 @@ function HtmlResponseViewer({
       ) : (
         <pre className="whitespace-pre-wrap">{html}</pre>
       )}
+      </div>
     </div>
   );
 }
 
 function HtmlTreeNode({
   element,
+  depth,
   selectedSelector,
   addedPaths,
+  collapsedSelectors,
+  nextLineNumber,
+  onToggleCollapsed,
   onSelect,
 }: {
   element: Element;
+  depth: number;
   selectedSelector: string | null;
   addedPaths?: Set<string>;
+  collapsedSelectors: Set<string>;
+  nextLineNumber: () => number;
+  onToggleCollapsed: (selector: string) => void;
   onSelect: (element: Element, event: React.MouseEvent) => void;
 }) {
   const children = Array.from(element.children);
@@ -8240,22 +8366,16 @@ function HtmlTreeNode({
   const cssSelector = getCssSelector(element);
   const isSelected = selectedSelector === xpath;
   const isAdded = addedPaths?.has(xpath) || addedPaths?.has(cssSelector);
+  const isCollapsed = collapsedSelectors.has(xpath);
+  const hasNestedContent = children.length > 0 || !!directText;
+  const openingLineNumber = nextLineNumber();
+  const indentStyle = { paddingLeft: `${depth * 1.25}rem` };
 
   return (
-    <div className="pl-3">
-      <button
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          onSelect(element, e);
-        }}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          onSelect(element, e);
-        }}
+    <div>
+      <div
         className={cn(
-          "block text-left font-mono text-[12px] leading-[1.6] hover:text-foreground",
+          "grid grid-cols-[3.25rem_1.25rem_minmax(0,1fr)] font-mono text-[12px] leading-[1.6]",
           isAdded
             ? "rounded-sm bg-emerald-500/15 text-foreground outline outline-1 outline-emerald-500/70 outline-offset-1"
             : isSelected
@@ -8263,22 +8383,64 @@ function HtmlTreeNode({
               : "text-muted-foreground"
         )}
       >
-        <span className="text-syntax-function">&lt;{element.tagName.toLowerCase()}</span>
-        {attrs && <span className="text-syntax-string"> {attrs}</span>}
-        <span className="text-syntax-function">&gt;</span>
-        {directText && <span className="text-foreground"> {directText}</span>}
-      </button>
-      {children.map((child, index) => (
-        <HtmlTreeNode
-          key={`${child.tagName}-${index}`}
-          element={child}
-          selectedSelector={selectedSelector}
-          addedPaths={addedPaths}
-          onSelect={onSelect}
-        />
+        <span className="select-none pr-3 text-right text-syntax-comment/70">{openingLineNumber}</span>
+        {hasNestedContent ? (
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onToggleCollapsed(xpath);
+            }}
+            className="flex h-[1.6em] items-center justify-center text-syntax-comment hover:text-foreground"
+            aria-label={isCollapsed ? "Expand HTML tag" : "Collapse HTML tag"}
+          >
+            {isCollapsed ? <ChevronRight className="h-3 w-3" strokeWidth={2} /> : <ChevronDown className="h-3 w-3" strokeWidth={2} />}
+          </button>
+        ) : (
+          <span />
+        )}
+        <button
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onSelect(element, e);
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onSelect(element, e);
+          }}
+          className="min-w-0 text-left hover:text-foreground"
+          style={indentStyle}
+        >
+          <span className="text-syntax-function">&lt;{element.tagName.toLowerCase()}</span>
+          {attrs && <span className="text-syntax-string"> {attrs}</span>}
+          <span className="text-syntax-function">&gt;</span>
+          {isCollapsed && <span className="text-syntax-comment"> ... </span>}
+          {isCollapsed && <span className="text-syntax-function">&lt;/{element.tagName.toLowerCase()}&gt;</span>}
+          {!isCollapsed && directText && <span className="text-foreground"> {directText}</span>}
+        </button>
+      </div>
+      {!isCollapsed && children.map((child, index) => (
+        <div key={`${child.tagName}-${index}`}>
+          <HtmlTreeNode
+            element={child}
+            depth={depth + 1}
+            selectedSelector={selectedSelector}
+            addedPaths={addedPaths}
+            collapsedSelectors={collapsedSelectors}
+            nextLineNumber={nextLineNumber}
+            onToggleCollapsed={onToggleCollapsed}
+            onSelect={onSelect}
+          />
+        </div>
       ))}
-      {children.length > 0 && (
-        <div className="text-muted-foreground">&lt;/{element.tagName.toLowerCase()}&gt;</div>
+      {!isCollapsed && children.length > 0 && (
+        <div className="grid grid-cols-[3.25rem_1.25rem_minmax(0,1fr)] font-mono text-[12px] leading-[1.6] text-muted-foreground">
+          <span className="select-none pr-3 text-right text-syntax-comment/70">{nextLineNumber()}</span>
+          <span />
+          <span style={indentStyle}>&lt;/{element.tagName.toLowerCase()}&gt;</span>
+        </div>
       )}
     </div>
   );
