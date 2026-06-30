@@ -1,6 +1,6 @@
 import { Component, type ErrorInfo, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { Check, Copy, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, AlertCircle, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil, Moon, Sun, Play, Loader2, WrapText, Wrench, UserCircle, Sparkles } from "lucide-react";
+import { Check, Copy, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, AlertCircle, HelpCircle, Download, X, PanelLeft, FileCode, Save, FolderOpen, LogIn, Plus, Trash2, GripVertical, Upload, LogOut, Pencil, Moon, Sun, Play, Loader2, WrapText, Wrench, UserCircle, Sparkles } from "lucide-react";
 import JSZip from "jszip";
 import { toast } from "sonner";
 import favicon from "/favicon-32x32.png";
@@ -4445,6 +4445,17 @@ export default function Index() {
               {isRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} /> : <Play className="h-3.5 w-3.5" strokeWidth={2} />}
               {isRunning ? "Running..." : "Run"}
             </button>
+
+            <a
+              href="/user-guide.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              className={topbarButtonClass}
+              title="Open User Guide (Help)"
+            >
+              <HelpCircle className="h-3.5 w-3.5" strokeWidth={2} />
+              <span className="hidden xl:inline">Help</span>
+            </a>
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
