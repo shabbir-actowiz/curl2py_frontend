@@ -978,21 +978,21 @@ export default function Index() {
   const panelCodeFilename = activeWorkspaceFile === "db.py"
     ? "db.py"
     : activeWorkspaceFile === "parser.py"
-    ? "parser.py"
-    : activeWorkspaceFile === "pipeline_utils.py"
-    ? "pipeline_utils.py"
-    : activeTab?.kind === "merged" || activeTab?.kind === "parser"
-    ? activeTab.filename
-    : activeCodeFilename;
+      ? "parser.py"
+      : activeWorkspaceFile === "pipeline_utils.py"
+        ? "pipeline_utils.py"
+        : activeTab?.kind === "merged" || activeTab?.kind === "parser"
+          ? activeTab.filename
+          : activeCodeFilename;
   const panelCodeContent = activeWorkspaceFile === "db.py"
     ? activeWorkspaceArtifact?.dbCode ?? ""
     : activeWorkspaceFile === "parser.py"
-    ? activeWorkspaceArtifact?.parserCode ?? buildParserStub(activeWorkspaceDisplayName)
-    : activeWorkspaceFile === "pipeline_utils.py"
-    ? PIPELINE_UTILS_CODE
-    : activeTab?.kind === "merged" || activeTab?.kind === "parser"
-    ? activeTab.code
-    : activeCodeContent;
+      ? activeWorkspaceArtifact?.parserCode ?? buildParserStub(activeWorkspaceDisplayName)
+      : activeWorkspaceFile === "pipeline_utils.py"
+        ? PIPELINE_UTILS_CODE
+        : activeTab?.kind === "merged" || activeTab?.kind === "parser"
+          ? activeTab.code
+          : activeCodeContent;
   const activeMetaJson = activeWorkspaceArtifact?.metaJson;
   const activeLogsTxt = activeWorkspaceArtifact?.logsTxt ?? "";
   const activeFeasibilityRequest = activeWorkspaceIdx >= 0 ? blocks[activeWorkspaceIdx]?.parsed ?? null : null;
@@ -3823,488 +3823,488 @@ export default function Index() {
               )}
             </div>
           ) : (
-          <>
-            <div className="flex items-center justify-between border-b border-border bg-surface">
-              <div className="flex min-w-0 flex-1 items-center gap-0 overflow-x-auto scrollbar-thin">
-                {parserTabs.map((tab) => (
-                  <button
-                    key={tab}
-                    onClick={() => setParserPageTab(tab)}
-                    className={cn(
-                      panelTabClass,
-                      parserPageTab === tab
-                        ? "bg-background text-foreground before:absolute before:inset-x-2 before:top-0 before:h-px before:bg-primary"
-                        : "text-muted-foreground hover:bg-surface-elevated/80 hover:text-foreground"
-                    )}
-                  >
-                    {tab === "jsonSource" ? "JSON Source" : tab === "dbCode" ? "DB Code" : tab.charAt(0).toUpperCase() + tab.slice(1)}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-          <ParserInspectorErrorBoundary resetKey={`${parserWorkspaceId}:${parserBuilderMode}:${parserPageTab}:${parserResponseHtml.length}:${parserResponseJson?.length ?? 0}`}>
-          {parserBuilderMode === "json" && parserPageTab === "source" ? (
-            <div className="relative min-h-0 flex-1 overflow-auto">
-              {isScriptJsonRoute && !activeScriptJsonSource ? (
-                <div className="flex h-full min-h-[220px] items-center justify-center px-4 py-8 font-mono">
-                  {scriptJsonLoadAttempted ? (
-                    <div className="rounded-sm border border-destructive/40 bg-destructive/5 px-4 py-3 text-[12px] text-destructive">
-                      Script JSON data not found. Reopen from HTML parser.
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2 rounded-sm border border-border bg-surface/35 px-4 py-3 text-[12px] text-muted-foreground">
-                      <Loader2 className="h-4 w-4 animate-spin text-primary" strokeWidth={2} />
-                      Loading script JSON...
-                    </div>
-                  )}
-                </div>
-              ) : parserJsonEditorVisible ? (
-                <textarea
-                  value={parserJsonDraft}
-                  onChange={(event) => setParserJsonDraft(event.target.value)}
-                  onPaste={() => setIsEditingParserJson(true)}
-                  spellCheck={false}
-                  placeholder={isScriptJsonRoute ? "" : "{\n  \"id\": 1,\n  \"items\": []\n}"}
-                  className="block h-full min-h-full w-full resize-none bg-background px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground caret-primary outline-none placeholder:text-muted-foreground/50"
-                />
-              ) : !hasResponse ? (
-                <textarea
-                  value={parserJsonDraft}
-                  onChange={(event) => {
-                    setParserJsonDraft(event.target.value);
-                    setIsEditingParserJson(true);
-                  }}
-                  onPaste={() => setIsEditingParserJson(true)}
-                  spellCheck={false}
-                  placeholder={"{\n  \"id\": 1,\n  \"items\": []\n}"}
-                  className="block h-full min-h-full w-full resize-none bg-background px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground caret-primary outline-none placeholder:text-muted-foreground/50"
-                />
-              ) : canShowJsonParser ? (
-                <ResponseBodyViewer
-                  source={parserResponseJson}
-                  selectedPath={selectedParserPath}
-                  addedPaths={addedParserPaths}
-                  onAddToParser={addSelectedPathToParser}
-                  onRemoveFromParser={removePathFromParser}
-                  onSelectedPathChange={handleParserPathSelect}
-                  quickAddMode={quickAddMode}
-                />
-              ) : (
-                <div className="px-4 py-3 text-[11px] text-muted-foreground">JSON parser builder works only for JSON responses.</div>
-              )}
-            </div>
-          ) : parserBuilderMode === "json" && parserPageTab === "paths" ? (
-            <div className="flex min-h-0 flex-1 flex-col">
-              <div className="flex items-center justify-between gap-3 border-b border-border bg-background px-4 py-1.5">
-                <div className="min-w-0 font-mono text-[11px] text-muted-foreground">
-                  <span>{parserSelections.length} path{parserSelections.length === 1 ? "" : "s"} selected</span>
-                  <span className="px-2 text-syntax-comment">|</span>
-                  <span>{parserLoopCount} loop{parserLoopCount === 1 ? "" : "s"} detected</span>
-                  {currentLoop && (
-                    <>
-                      <span className="px-2 text-syntax-comment">|</span>
-                      <span className="truncate">Loop source: {currentLoop}</span>
-                    </>
-                  )}
-                </div>
-                <button
-                  onClick={addManualParserPath}
-                  disabled={!canUseParser}
-                  className={quietToolbarButtonClass}
-                >
-                  <Plus className="h-3 w-3" strokeWidth={2} />
-                  Add Path
-                </button>
-              </div>
-              <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
-                {parserSelections.length === 0 ? (
-                  <div className="text-[11px] text-muted-foreground">No paths selected</div>
-                ) : (
-                  <div className="space-y-2">
-                    {parserSelections.map((selection, index) => {
-                      const warning = getParserPathExistenceWarning(selection.path, parserResponseJson);
-                      const loopParentPath = getJsonLoopParentPath(selection.path);
-                      return (
-                        <div key={`${selection.path}-${index}`} className="grid gap-1 md:grid-cols-[minmax(0,1fr)_220px_96px_28px] md:items-start">
-                          <div className="min-w-0">
-                            <input
-                              value={selection.path}
-                              onChange={(event) => updateParserSelectionRow(index, { path: event.target.value })}
-                              className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
-                            />
-                            {warning && <div className="mt-1 text-[10px] text-destructive">{warning}</div>}
-                          </div>
-                          <input
-                            value={selection.outputKey}
-                            onChange={(event) => updateParserSelectionRow(index, { outputKey: event.target.value })}
-                            className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
-                            placeholder="output field"
-                          />
-                          {(() => {
-                            const candidates = getJsonLoopCandidatesFromParts(normalizeSelectionParts(selection.path));
-                            if (candidates.length === 0) {
-                              return (
-                                <button
-                                  disabled
-                                  className="h-8 rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-muted-foreground w-full text-left"
-                                >
-                                  single
-                                </button>
-                              );
-                            }
-
-                            const explicitLoopPaths = selection.loopPaths ?? [];
-                            const selectedCount = selection.selectionMode === "loop" ? (explicitLoopPaths.length > 0 ? explicitLoopPaths.length : 1) : 0;
-                            const dropdownOpen = openLoopDropdownIndex === index;
-
-                            return (
-                              <div className="relative w-full">
-                                <button
-                                  onClick={() => setOpenLoopDropdownIndex(dropdownOpen ? null : index)}
-                                  className="h-8 rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong w-full text-left flex items-center justify-between"
-                                >
-                                  <span className="truncate">
-                                    {selectedCount === 0 ? "single" : `${selectedCount} loop${selectedCount > 1 ? "s" : ""}`}
-                                  </span>
-                                  <span className="text-[8px] text-muted-foreground ml-1">▼</span>
-                                </button>
-
-                                {dropdownOpen && (
-                                  <>
-                                    <div 
-                                      className="fixed inset-0 z-40" 
-                                      onClick={() => setOpenLoopDropdownIndex(null)}
-                                    />
-                                    <div className="absolute right-0 top-9 z-50 min-w-[280px] max-w-[320px] rounded-md border border-border bg-popover p-2 shadow-md animate-in fade-in-50 slide-in-from-top-1 text-popover-foreground">
-                                      <div className="text-[10px] font-semibold text-muted-foreground px-2 py-1 border-b border-border mb-1.5 flex justify-between items-center">
-                                        <span>SELECT LOOPS</span>
-                                        {selectedCount > 0 && (
-                                          <button 
-                                            onClick={() => {
-                                              updateParserSelectionRow(index, { selectionMode: "single", loopPaths: [] });
-                                              setOpenLoopDropdownIndex(null);
-                                            }}
-                                            className="text-[9px] text-destructive hover:underline"
-                                          >
-                                            Clear all
-                                          </button>
-                                        )}
-                                      </div>
-                                      <div className="space-y-1 max-h-[200px] overflow-y-auto">
-                                        {candidates.map((candidate, idx) => {
-                                          const isChecked = selection.selectionMode === "loop" && (
-                                            explicitLoopPaths.includes(candidate.displayPath) || 
-                                            (explicitLoopPaths.length === 0 && idx === 0)
-                                          );
-
-                                          return (
-                                            <label 
-                                              key={candidate.displayPath} 
-                                              className="flex items-start gap-2.5 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground cursor-pointer text-left select-none"
-                                            >
-                                              <input
-                                                type="checkbox"
-                                                checked={isChecked}
-                                                onChange={(event) => {
-                                                  const checked = event.target.checked;
-                                                  let nextPaths = [...explicitLoopPaths];
-                                                  if (explicitLoopPaths.length === 0 && selection.selectionMode === "loop") {
-                                                    nextPaths = [candidates[0].displayPath];
-                                                  }
-                                                  if (checked) {
-                                                    if (!nextPaths.includes(candidate.displayPath)) {
-                                                      nextPaths.push(candidate.displayPath);
-                                                    }
-                                                  } else {
-                                                    nextPaths = nextPaths.filter(p => p !== candidate.displayPath);
-                                                  }
-                                                  nextPaths = candidates
-                                                    .filter(c => nextPaths.includes(c.displayPath))
-                                                    .map(c => c.displayPath);
-                                                  const nextMode = nextPaths.length > 0 ? "loop" : "single";
-                                                  updateParserSelectionRow(index, { 
-                                                    selectionMode: nextMode, 
-                                                    loopPaths: nextPaths 
-                                                  });
-                                                }}
-                                                className="mt-0.5 rounded border-border bg-background text-primary focus:ring-ring focus:ring-offset-background h-3.5 w-3.5"
-                                              />
-                                              <div className="min-w-0 flex-1">
-                                                <div className="text-[11px] font-medium leading-none text-foreground truncate" title={candidate.displayPath}>
-                                                  {candidate.label}
-                                                </div>
-                                                <div className="text-[9px] text-muted-foreground font-mono mt-0.5 truncate" title={candidate.displayPath}>
-                                                  {candidate.displayPath}
-                                                </div>
-                                              </div>
-                                            </label>
-                                          );
-                                        })}
-                                      </div>
-                                    </div>
-                                  </>
-                                )}
-                              </div>
-                            );
-                          })()}
-                          <button
-                            onClick={() => deleteParserSelectionRow(index)}
-                            className="flex h-8 w-8 items-center justify-center rounded-sm border border-border bg-transparent text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
-                            aria-label={`Delete ${selection.path}`}
-                          >
-                            <Trash2 className="h-3 w-3" strokeWidth={2} />
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : parserBuilderMode === "html" && parserPageTab === "source" ? (
-            <div className="relative min-h-0 flex-1 overflow-auto">
-              {parserHtmlEditorVisible || !hasHtml ? (
-                <textarea
-                  value={parserHtmlDraft}
-                  onChange={(event) => {
-                    setParserHtmlDraft(event.target.value);
-                    setIsEditingParserHtml(true);
-                  }}
-                  onPaste={() => setIsEditingParserHtml(true)}
-                  spellCheck={false}
-                  placeholder={"<html>\n  <body></body>\n</html>"}
-                  className="block h-full min-h-full w-full resize-none bg-background px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground caret-primary outline-none placeholder:text-muted-foreground/50"
-                />
-              ) : (
-                <HtmlResponseViewer
-                  html={parserResponseHtml}
-                  addedPaths={addedHtmlPaths}
-                  onAddToParser={addHtmlPathToParser}
-                  onRemoveFromParser={removeHtmlPathFromParser}
-                  onOpenScriptJson={(source) => {
-                    if (!parserWorkspaceId) return;
-                    const key = `${parserCollection.id}:${parserWorkspaceId}:script-json:${source.scriptId}`;
-                    setScriptJsonSourcesByRequest((prev) => ({ ...prev, [key]: source }));
-                    setParserSelectionsByRequest((prev) => ({ ...prev, [key]: prev[key] ?? [] }));
-                    try {
-                      const storageKey = scriptJsonStorageKey(key);
-                      const payload = JSON.stringify(source);
-                      window.sessionStorage.setItem(storageKey, payload);
-                      window.localStorage.setItem(storageKey, payload);
-                    } catch {
-                      toast.error("Could not cache script JSON for new tab");
-                    }
-                    const scriptJsonUrl = `${window.location.origin}/parser/${encodeURIComponent(parserCollection.id)}/${encodeURIComponent(parserWorkspaceId)}/script-json/${encodeURIComponent(source.scriptId)}`;
-                    window.open(scriptJsonUrl, "_blank", "noopener,noreferrer");
-                    toast.success("Script JSON opened");
-                  }}
-                />
-              )}
-            </div>
-          ) : parserBuilderMode === "html" && parserPageTab === "paths" ? (
-            <div className="flex min-h-0 flex-1 flex-col">
-              <div className="flex items-center justify-between gap-3 border-b border-border bg-background px-4 py-1.5">
-                <div className="min-w-0 font-mono text-[11px] text-muted-foreground">
-                  <span>{htmlParserSelections.length} path{htmlParserSelections.length === 1 ? "" : "s"} selected</span>
-                  <span className="px-2 text-syntax-comment">|</span>
-                  <span>{parserLoopCount} loop{parserLoopCount === 1 ? "" : "s"} detected</span>
-                  {currentLoop && (
-                    <>
-                      <span className="px-2 text-syntax-comment">|</span>
-                      <span className="truncate">Loop source: {currentLoop}</span>
-                    </>
-                  )}
-                </div>
-                <button
-                  onClick={addManualHtmlPath}
-                  disabled={!canUseParser}
-                  className={quietToolbarButtonClass}
-                >
-                  <Plus className="h-3 w-3" strokeWidth={2} />
-                  Add Path
-                </button>
-              </div>
-              <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
-                {htmlParserSelections.length === 0 ? (
-                  <div className="text-[11px] text-muted-foreground">No paths selected</div>
-                ) : (
-                  <div className="space-y-2">
-                    {htmlParserSelections.map((selection, index) => {
-                      const duplicateIndexes = getDuplicateHtmlSelectorIndexes(htmlParserSelections);
-                      const isDuplicate = duplicateIndexes.has(index);
-                      return (
-                        <div key={`${selection.selector || selection.path}-${index}`} className="space-y-1">
-                          <div className="grid gap-1 md:grid-cols-[96px_minmax(0,1fr)_180px_120px_150px_28px] md:items-start">
-                            <select
-                              value={selection.selectorType ?? "xpath"}
-                              onChange={(event) => updateHtmlParserSelectionRow(index, { selectorType: event.target.value as "xpath" | "css" })}
-                              className="h-8 rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
-                            >
-                              <option value="xpath">xpath</option>
-                              <option value="css">css</option>
-                            </select>
-                            <input
-                              value={selection.selector || selection.path}
-                              onChange={(event) => updateHtmlParserSelectionRow(index, { selector: event.target.value, path: event.target.value })}
-                              className={cn(
-                                "h-8 w-full rounded-sm border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong",
-                                isDuplicate ? "border-destructive/70" : "border-border"
-                              )}
-                              placeholder="selector"
-                            />
-                            <input
-                              value={selection.outputKey}
-                              onChange={(event) => updateHtmlParserSelectionRow(index, { outputKey: event.target.value })}
-                              className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
-                              placeholder="output field"
-                            />
-                            <select
-                              value={selection.extractMode ?? selection.valueMode ?? "text"}
-                              onChange={(event) => updateHtmlParserSelectionRow(index, { extractMode: event.target.value as "text" | "attr" | "html" })}
-                              className="h-8 rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
-                            >
-                              <option value="text">text</option>
-                              <option value="attr">attr</option>
-                              <option value="html">html</option>
-                            </select>
-                            <input
-                              value={selection.attrName ?? ""}
-                              onChange={(event) => updateHtmlParserSelectionRow(index, { attrName: event.target.value })}
-                              disabled={(selection.extractMode ?? selection.valueMode ?? "text") !== "attr"}
-                              className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong disabled:cursor-not-allowed disabled:opacity-40"
-                              placeholder="attr name"
-                            />
-                            <button
-                              onClick={() => deleteHtmlParserSelectionRow(index)}
-                              className="flex h-8 w-8 items-center justify-center rounded-sm border border-border bg-transparent text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
-                              aria-label={`Delete ${selection.selector || selection.path}`}
-                            >
-                              <Trash2 className="h-3 w-3" strokeWidth={2} />
-                            </button>
-                          </div>
-                          {isDuplicate && <div className="font-mono text-[10px] text-destructive">Duplicate selector mapping</div>}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : parserPageTab === "parser" ? (
-            <div className="flex min-h-0 flex-1 flex-col">
-              {isScriptJsonRoute && activeScriptJsonSource?.extractorCode && (
-                <div className="flex items-center gap-0 border-b border-border bg-surface">
-                  {(["parser", "extractor"] as const).map((file) => (
+            <>
+              <div className="flex items-center justify-between border-b border-border bg-surface">
+                <div className="flex min-w-0 flex-1 items-center gap-0 overflow-x-auto scrollbar-thin">
+                  {parserTabs.map((tab) => (
                     <button
-                      key={file}
-                      onClick={() => setParserCodeFile(file)}
+                      key={tab}
+                      onClick={() => setParserPageTab(tab)}
                       className={cn(
-                        fileTabClass,
-                        parserCodeFile === file
+                        panelTabClass,
+                        parserPageTab === tab
                           ? "bg-background text-foreground before:absolute before:inset-x-2 before:top-0 before:h-px before:bg-primary"
                           : "text-muted-foreground hover:bg-surface-elevated/80 hover:text-foreground"
                       )}
                     >
-                      <FileCode className="h-3 w-3" strokeWidth={2} />
-                      <span>{file === "parser" ? "parser.py" : "script_json_extractor.py"}</span>
+                      {tab === "jsonSource" ? "JSON Source" : tab === "dbCode" ? "DB Code" : tab.charAt(0).toUpperCase() + tab.slice(1)}
                     </button>
                   ))}
                 </div>
-              )}
-              <div className="relative min-h-0 flex-1 overflow-auto">
-                {parserCode === buildParserStub(parserWorkspaceName) && parserCodeFile === "parser" ? (
-                  <EmptyState title="No parser output yet" detail="Select JSON paths or HTML elements to generate parser code." />
-                ) : (
-                  <pre className="px-4 py-3">
-                    <HighlightedPython code={isScriptJsonRoute && parserCodeFile === "extractor" ? activeScriptJsonSource?.extractorCode ?? "" : parserCode} />
-                  </pre>
-                )}
               </div>
-            </div>
-          ) : parserPageTab === "output" ? (
-            <div className="flex min-h-0 flex-1 flex-col">
-              <div className="flex items-center justify-between border-b border-border bg-background px-4 py-1.5 font-mono text-[11px]">
-                <div className="flex min-w-0 items-center gap-3">
-                  <span className={cn(
-                    "font-semibold",
-                    activeParserRun?.status === "success" && "text-success",
-                    activeParserRun?.status === "error" && "text-destructive",
-                    (!activeParserRun || activeParserRun.status === "idle" || activeParserRun.status === "loading") && "text-muted-foreground"
-                  )}>
-                    {activeParserRun?.status === "success" ? "success" : activeParserRun?.status === "error" ? "error" : activeParserRun?.status === "loading" ? "running" : "idle"}
-                  </span>
-                  <span className="text-syntax-comment">|</span>
-                  <span className="text-muted-foreground">{getParserOutputSummary(activeParserRun?.output)}</span>
-                </div>
-                {canShowTableOutput && (
-                  <div className="flex items-center gap-1">
-                    {(["json", "table"] as ParserOutputView[]).map((view) => (
-                      <button
-                        key={view}
-                        onClick={() => setParserOutputView(view)}
-                        className={cn(
-                          "h-6 rounded-sm border px-2 text-[10px] transition-colors",
-                          parserOutputView === view
-                            ? "border-primary/60 bg-primary/10 text-primary"
-                            : "border-border bg-background/40 text-muted-foreground hover:border-border-strong hover:text-foreground"
+
+              <ParserInspectorErrorBoundary resetKey={`${parserWorkspaceId}:${parserBuilderMode}:${parserPageTab}:${parserResponseHtml.length}:${parserResponseJson?.length ?? 0}`}>
+                {parserBuilderMode === "json" && parserPageTab === "source" ? (
+                  <div className="relative min-h-0 flex-1 overflow-auto">
+                    {isScriptJsonRoute && !activeScriptJsonSource ? (
+                      <div className="flex h-full min-h-[220px] items-center justify-center px-4 py-8 font-mono">
+                        {scriptJsonLoadAttempted ? (
+                          <div className="rounded-sm border border-destructive/40 bg-destructive/5 px-4 py-3 text-[12px] text-destructive">
+                            Script JSON data not found. Reopen from HTML parser.
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 rounded-sm border border-border bg-surface/35 px-4 py-3 text-[12px] text-muted-foreground">
+                            <Loader2 className="h-4 w-4 animate-spin text-primary" strokeWidth={2} />
+                            Loading script JSON...
+                          </div>
                         )}
+                      </div>
+                    ) : parserJsonEditorVisible ? (
+                      <textarea
+                        value={parserJsonDraft}
+                        onChange={(event) => setParserJsonDraft(event.target.value)}
+                        onPaste={() => setIsEditingParserJson(true)}
+                        spellCheck={false}
+                        placeholder={isScriptJsonRoute ? "" : "{\n  \"id\": 1,\n  \"items\": []\n}"}
+                        className="block h-full min-h-full w-full resize-none bg-background px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground caret-primary outline-none placeholder:text-muted-foreground/50"
+                      />
+                    ) : !hasResponse ? (
+                      <textarea
+                        value={parserJsonDraft}
+                        onChange={(event) => {
+                          setParserJsonDraft(event.target.value);
+                          setIsEditingParserJson(true);
+                        }}
+                        onPaste={() => setIsEditingParserJson(true)}
+                        spellCheck={false}
+                        placeholder={"{\n  \"id\": 1,\n  \"items\": []\n}"}
+                        className="block h-full min-h-full w-full resize-none bg-background px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground caret-primary outline-none placeholder:text-muted-foreground/50"
+                      />
+                    ) : canShowJsonParser ? (
+                      <ResponseBodyViewer
+                        source={parserResponseJson}
+                        selectedPath={selectedParserPath}
+                        addedPaths={addedParserPaths}
+                        onAddToParser={addSelectedPathToParser}
+                        onRemoveFromParser={removePathFromParser}
+                        onSelectedPathChange={handleParserPathSelect}
+                        quickAddMode={quickAddMode}
+                      />
+                    ) : (
+                      <div className="px-4 py-3 text-[11px] text-muted-foreground">JSON parser builder works only for JSON responses.</div>
+                    )}
+                  </div>
+                ) : parserBuilderMode === "json" && parserPageTab === "paths" ? (
+                  <div className="flex min-h-0 flex-1 flex-col">
+                    <div className="flex items-center justify-between gap-3 border-b border-border bg-background px-4 py-1.5">
+                      <div className="min-w-0 font-mono text-[11px] text-muted-foreground">
+                        <span>{parserSelections.length} path{parserSelections.length === 1 ? "" : "s"} selected</span>
+                        <span className="px-2 text-syntax-comment">|</span>
+                        <span>{parserLoopCount} loop{parserLoopCount === 1 ? "" : "s"} detected</span>
+                        {currentLoop && (
+                          <>
+                            <span className="px-2 text-syntax-comment">|</span>
+                            <span className="truncate">Loop source: {currentLoop}</span>
+                          </>
+                        )}
+                      </div>
+                      <button
+                        onClick={addManualParserPath}
+                        disabled={!canUseParser}
+                        className={quietToolbarButtonClass}
                       >
-                        {view === "json" ? "JSON View" : "Table View"}
+                        <Plus className="h-3 w-3" strokeWidth={2} />
+                        Add Path
                       </button>
-                    ))}
+                    </div>
+                    <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
+                      {parserSelections.length === 0 ? (
+                        <div className="text-[11px] text-muted-foreground">No paths selected</div>
+                      ) : (
+                        <div className="space-y-2">
+                          {parserSelections.map((selection, index) => {
+                            const warning = getParserPathExistenceWarning(selection.path, parserResponseJson);
+                            const loopParentPath = getJsonLoopParentPath(selection.path);
+                            return (
+                              <div key={`${selection.path}-${index}`} className="grid gap-1 md:grid-cols-[minmax(0,1fr)_220px_96px_28px] md:items-start">
+                                <div className="min-w-0">
+                                  <input
+                                    value={selection.path}
+                                    onChange={(event) => updateParserSelectionRow(index, { path: event.target.value })}
+                                    className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
+                                  />
+                                  {warning && <div className="mt-1 text-[10px] text-destructive">{warning}</div>}
+                                </div>
+                                <input
+                                  value={selection.outputKey}
+                                  onChange={(event) => updateParserSelectionRow(index, { outputKey: event.target.value })}
+                                  className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
+                                  placeholder="output field"
+                                />
+                                {(() => {
+                                  const candidates = getJsonLoopCandidatesFromParts(normalizeSelectionParts(selection.path));
+                                  if (candidates.length === 0) {
+                                    return (
+                                      <button
+                                        disabled
+                                        className="h-8 rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-muted-foreground w-full text-left"
+                                      >
+                                        single
+                                      </button>
+                                    );
+                                  }
+
+                                  const explicitLoopPaths = selection.loopPaths ?? [];
+                                  const selectedCount = selection.selectionMode === "loop" ? (explicitLoopPaths.length > 0 ? explicitLoopPaths.length : 1) : 0;
+                                  const dropdownOpen = openLoopDropdownIndex === index;
+
+                                  return (
+                                    <div className="relative w-full">
+                                      <button
+                                        onClick={() => setOpenLoopDropdownIndex(dropdownOpen ? null : index)}
+                                        className="h-8 rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong w-full text-left flex items-center justify-between"
+                                      >
+                                        <span className="truncate">
+                                          {selectedCount === 0 ? "single" : `${selectedCount} loop${selectedCount > 1 ? "s" : ""}`}
+                                        </span>
+                                        <span className="text-[8px] text-muted-foreground ml-1">▼</span>
+                                      </button>
+
+                                      {dropdownOpen && (
+                                        <>
+                                          <div
+                                            className="fixed inset-0 z-40"
+                                            onClick={() => setOpenLoopDropdownIndex(null)}
+                                          />
+                                          <div className="absolute right-0 top-9 z-50 min-w-[280px] max-w-[320px] rounded-md border border-border bg-popover p-2 shadow-md animate-in fade-in-50 slide-in-from-top-1 text-popover-foreground">
+                                            <div className="text-[10px] font-semibold text-muted-foreground px-2 py-1 border-b border-border mb-1.5 flex justify-between items-center">
+                                              <span>SELECT LOOPS</span>
+                                              {selectedCount > 0 && (
+                                                <button
+                                                  onClick={() => {
+                                                    updateParserSelectionRow(index, { selectionMode: "single", loopPaths: [] });
+                                                    setOpenLoopDropdownIndex(null);
+                                                  }}
+                                                  className="text-[9px] text-destructive hover:underline"
+                                                >
+                                                  Clear all
+                                                </button>
+                                              )}
+                                            </div>
+                                            <div className="space-y-1 max-h-[200px] overflow-y-auto">
+                                              {candidates.map((candidate, idx) => {
+                                                const isChecked = selection.selectionMode === "loop" && (
+                                                  explicitLoopPaths.includes(candidate.displayPath) ||
+                                                  (explicitLoopPaths.length === 0 && idx === 0)
+                                                );
+
+                                                return (
+                                                  <label
+                                                    key={candidate.displayPath}
+                                                    className="flex items-start gap-2.5 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground cursor-pointer text-left select-none"
+                                                  >
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={isChecked}
+                                                      onChange={(event) => {
+                                                        const checked = event.target.checked;
+                                                        let nextPaths = [...explicitLoopPaths];
+                                                        if (explicitLoopPaths.length === 0 && selection.selectionMode === "loop") {
+                                                          nextPaths = [candidates[0].displayPath];
+                                                        }
+                                                        if (checked) {
+                                                          if (!nextPaths.includes(candidate.displayPath)) {
+                                                            nextPaths.push(candidate.displayPath);
+                                                          }
+                                                        } else {
+                                                          nextPaths = nextPaths.filter(p => p !== candidate.displayPath);
+                                                        }
+                                                        nextPaths = candidates
+                                                          .filter(c => nextPaths.includes(c.displayPath))
+                                                          .map(c => c.displayPath);
+                                                        const nextMode = nextPaths.length > 0 ? "loop" : "single";
+                                                        updateParserSelectionRow(index, {
+                                                          selectionMode: nextMode,
+                                                          loopPaths: nextPaths
+                                                        });
+                                                      }}
+                                                      className="mt-0.5 rounded border-border bg-background text-primary focus:ring-ring focus:ring-offset-background h-3.5 w-3.5"
+                                                    />
+                                                    <div className="min-w-0 flex-1">
+                                                      <div className="text-[11px] font-medium leading-none text-foreground truncate" title={candidate.displayPath}>
+                                                        {candidate.label}
+                                                      </div>
+                                                      <div className="text-[9px] text-muted-foreground font-mono mt-0.5 truncate" title={candidate.displayPath}>
+                                                        {candidate.displayPath}
+                                                      </div>
+                                                    </div>
+                                                  </label>
+                                                );
+                                              })}
+                                            </div>
+                                          </div>
+                                        </>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+                                <button
+                                  onClick={() => deleteParserSelectionRow(index)}
+                                  className="flex h-8 w-8 items-center justify-center rounded-sm border border-border bg-transparent text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
+                                  aria-label={`Delete ${selection.path}`}
+                                >
+                                  <Trash2 className="h-3 w-3" strokeWidth={2} />
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                )}
-              </div>
-              <div className="relative min-h-0 flex-1 overflow-auto">
-                {activeParserRun?.status === "loading" ? (
-                  <EmptyState title="Parser running" detail="Output will appear here when the run finishes." />
-                ) : activeParserRun?.status === "error" ? (
-                  <div className="m-4 rounded-sm border border-destructive/40 bg-destructive/5 px-4 py-3 font-mono text-[12px] text-destructive">
-                    {activeParserRun.error || "Parser failed"}
+                ) : parserBuilderMode === "html" && parserPageTab === "source" ? (
+                  <div className="relative min-h-0 flex-1 overflow-auto">
+                    {parserHtmlEditorVisible || !hasHtml ? (
+                      <textarea
+                        value={parserHtmlDraft}
+                        onChange={(event) => {
+                          setParserHtmlDraft(event.target.value);
+                          setIsEditingParserHtml(true);
+                        }}
+                        onPaste={() => setIsEditingParserHtml(true)}
+                        spellCheck={false}
+                        placeholder={"<html>\n  <body></body>\n</html>"}
+                        className="block h-full min-h-full w-full resize-none bg-background px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground caret-primary outline-none placeholder:text-muted-foreground/50"
+                      />
+                    ) : (
+                      <HtmlResponseViewer
+                        html={parserResponseHtml}
+                        addedPaths={addedHtmlPaths}
+                        onAddToParser={addHtmlPathToParser}
+                        onRemoveFromParser={removeHtmlPathFromParser}
+                        onOpenScriptJson={(source) => {
+                          if (!parserWorkspaceId) return;
+                          const key = `${parserCollection.id}:${parserWorkspaceId}:script-json:${source.scriptId}`;
+                          setScriptJsonSourcesByRequest((prev) => ({ ...prev, [key]: source }));
+                          setParserSelectionsByRequest((prev) => ({ ...prev, [key]: prev[key] ?? [] }));
+                          try {
+                            const storageKey = scriptJsonStorageKey(key);
+                            const payload = JSON.stringify(source);
+                            window.sessionStorage.setItem(storageKey, payload);
+                            window.localStorage.setItem(storageKey, payload);
+                          } catch {
+                            toast.error("Could not cache script JSON for new tab");
+                          }
+                          const scriptJsonUrl = `${window.location.origin}/parser/${encodeURIComponent(parserCollection.id)}/${encodeURIComponent(parserWorkspaceId)}/script-json/${encodeURIComponent(source.scriptId)}`;
+                          window.open(scriptJsonUrl, "_blank", "noopener,noreferrer");
+                          toast.success("Script JSON opened");
+                        }}
+                      />
+                    )}
                   </div>
-                ) : activeParserRun?.status === "success" && parserOutputView === "table" && canShowTableOutput ? (
-                  <ParserOutputTable value={activeParserRun.output} />
-                ) : activeParserRun?.status === "success" ? (
-                  <pre className="px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground">{parserOutputContent}</pre>
+                ) : parserBuilderMode === "html" && parserPageTab === "paths" ? (
+                  <div className="flex min-h-0 flex-1 flex-col">
+                    <div className="flex items-center justify-between gap-3 border-b border-border bg-background px-4 py-1.5">
+                      <div className="min-w-0 font-mono text-[11px] text-muted-foreground">
+                        <span>{htmlParserSelections.length} path{htmlParserSelections.length === 1 ? "" : "s"} selected</span>
+                        <span className="px-2 text-syntax-comment">|</span>
+                        <span>{parserLoopCount} loop{parserLoopCount === 1 ? "" : "s"} detected</span>
+                        {currentLoop && (
+                          <>
+                            <span className="px-2 text-syntax-comment">|</span>
+                            <span className="truncate">Loop source: {currentLoop}</span>
+                          </>
+                        )}
+                      </div>
+                      <button
+                        onClick={addManualHtmlPath}
+                        disabled={!canUseParser}
+                        className={quietToolbarButtonClass}
+                      >
+                        <Plus className="h-3 w-3" strokeWidth={2} />
+                        Add Path
+                      </button>
+                    </div>
+                    <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
+                      {htmlParserSelections.length === 0 ? (
+                        <div className="text-[11px] text-muted-foreground">No paths selected</div>
+                      ) : (
+                        <div className="space-y-2">
+                          {htmlParserSelections.map((selection, index) => {
+                            const duplicateIndexes = getDuplicateHtmlSelectorIndexes(htmlParserSelections);
+                            const isDuplicate = duplicateIndexes.has(index);
+                            return (
+                              <div key={`${selection.selector || selection.path}-${index}`} className="space-y-1">
+                                <div className="grid gap-1 md:grid-cols-[96px_minmax(0,1fr)_180px_120px_150px_28px] md:items-start">
+                                  <select
+                                    value={selection.selectorType ?? "xpath"}
+                                    onChange={(event) => updateHtmlParserSelectionRow(index, { selectorType: event.target.value as "xpath" | "css" })}
+                                    className="h-8 rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
+                                  >
+                                    <option value="xpath">xpath</option>
+                                    <option value="css">css</option>
+                                  </select>
+                                  <input
+                                    value={selection.selector || selection.path}
+                                    onChange={(event) => updateHtmlParserSelectionRow(index, { selector: event.target.value, path: event.target.value })}
+                                    className={cn(
+                                      "h-8 w-full rounded-sm border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong",
+                                      isDuplicate ? "border-destructive/70" : "border-border"
+                                    )}
+                                    placeholder="selector"
+                                  />
+                                  <input
+                                    value={selection.outputKey}
+                                    onChange={(event) => updateHtmlParserSelectionRow(index, { outputKey: event.target.value })}
+                                    className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
+                                    placeholder="output field"
+                                  />
+                                  <select
+                                    value={selection.extractMode ?? selection.valueMode ?? "text"}
+                                    onChange={(event) => updateHtmlParserSelectionRow(index, { extractMode: event.target.value as "text" | "attr" | "html" })}
+                                    className="h-8 rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong"
+                                  >
+                                    <option value="text">text</option>
+                                    <option value="attr">attr</option>
+                                    <option value="html">html</option>
+                                  </select>
+                                  <input
+                                    value={selection.attrName ?? ""}
+                                    onChange={(event) => updateHtmlParserSelectionRow(index, { attrName: event.target.value })}
+                                    disabled={(selection.extractMode ?? selection.valueMode ?? "text") !== "attr"}
+                                    className="h-8 w-full rounded-sm border border-border bg-background px-2 font-mono text-[12px] text-foreground outline-none transition-colors focus:border-border-strong disabled:cursor-not-allowed disabled:opacity-40"
+                                    placeholder="attr name"
+                                  />
+                                  <button
+                                    onClick={() => deleteHtmlParserSelectionRow(index)}
+                                    className="flex h-8 w-8 items-center justify-center rounded-sm border border-border bg-transparent text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
+                                    aria-label={`Delete ${selection.selector || selection.path}`}
+                                  >
+                                    <Trash2 className="h-3 w-3" strokeWidth={2} />
+                                  </button>
+                                </div>
+                                {isDuplicate && <div className="font-mono text-[10px] text-destructive">Duplicate selector mapping</div>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : parserPageTab === "parser" ? (
+                  <div className="flex min-h-0 flex-1 flex-col">
+                    {isScriptJsonRoute && activeScriptJsonSource?.extractorCode && (
+                      <div className="flex items-center gap-0 border-b border-border bg-surface">
+                        {(["parser", "extractor"] as const).map((file) => (
+                          <button
+                            key={file}
+                            onClick={() => setParserCodeFile(file)}
+                            className={cn(
+                              fileTabClass,
+                              parserCodeFile === file
+                                ? "bg-background text-foreground before:absolute before:inset-x-2 before:top-0 before:h-px before:bg-primary"
+                                : "text-muted-foreground hover:bg-surface-elevated/80 hover:text-foreground"
+                            )}
+                          >
+                            <FileCode className="h-3 w-3" strokeWidth={2} />
+                            <span>{file === "parser" ? "parser.py" : "script_json_extractor.py"}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <div className="relative min-h-0 flex-1 overflow-auto">
+                      {parserCode === buildParserStub(parserWorkspaceName) && parserCodeFile === "parser" ? (
+                        <EmptyState title="No parser output yet" detail="Select JSON paths or HTML elements to generate parser code." />
+                      ) : (
+                        <pre className="px-4 py-3">
+                          <HighlightedPython code={isScriptJsonRoute && parserCodeFile === "extractor" ? activeScriptJsonSource?.extractorCode ?? "" : parserCode} />
+                        </pre>
+                      )}
+                    </div>
+                  </div>
+                ) : parserPageTab === "output" ? (
+                  <div className="flex min-h-0 flex-1 flex-col">
+                    <div className="flex items-center justify-between border-b border-border bg-background px-4 py-1.5 font-mono text-[11px]">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span className={cn(
+                          "font-semibold",
+                          activeParserRun?.status === "success" && "text-success",
+                          activeParserRun?.status === "error" && "text-destructive",
+                          (!activeParserRun || activeParserRun.status === "idle" || activeParserRun.status === "loading") && "text-muted-foreground"
+                        )}>
+                          {activeParserRun?.status === "success" ? "success" : activeParserRun?.status === "error" ? "error" : activeParserRun?.status === "loading" ? "running" : "idle"}
+                        </span>
+                        <span className="text-syntax-comment">|</span>
+                        <span className="text-muted-foreground">{getParserOutputSummary(activeParserRun?.output)}</span>
+                      </div>
+                      {canShowTableOutput && (
+                        <div className="flex items-center gap-1">
+                          {(["json", "table"] as ParserOutputView[]).map((view) => (
+                            <button
+                              key={view}
+                              onClick={() => setParserOutputView(view)}
+                              className={cn(
+                                "h-6 rounded-sm border px-2 text-[10px] transition-colors",
+                                parserOutputView === view
+                                  ? "border-primary/60 bg-primary/10 text-primary"
+                                  : "border-border bg-background/40 text-muted-foreground hover:border-border-strong hover:text-foreground"
+                              )}
+                            >
+                              {view === "json" ? "JSON View" : "Table View"}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="relative min-h-0 flex-1 overflow-auto">
+                      {activeParserRun?.status === "loading" ? (
+                        <EmptyState title="Parser running" detail="Output will appear here when the run finishes." />
+                      ) : activeParserRun?.status === "error" ? (
+                        <div className="m-4 rounded-sm border border-destructive/40 bg-destructive/5 px-4 py-3 font-mono text-[12px] text-destructive">
+                          {activeParserRun.error || "Parser failed"}
+                        </div>
+                      ) : activeParserRun?.status === "success" && parserOutputView === "table" && canShowTableOutput ? (
+                        <ParserOutputTable value={activeParserRun.output} />
+                      ) : activeParserRun?.status === "success" ? (
+                        <pre className="px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground">{parserOutputContent}</pre>
+                      ) : (
+                        <EmptyState title="No parser output yet" detail="Run Parser from the Parser tab to see results here." />
+                      )}
+                    </div>
+                  </div>
+                ) : parserPageTab === "jsonSource" ? (
+                  <div className="relative min-h-0 flex-1 overflow-auto">
+                    {isEditingDbJson ? (
+                      <textarea
+                        value={dbJsonDraft}
+                        onChange={(event) => setDbJsonDraft(event.target.value)}
+                        spellCheck={false}
+                        placeholder={"{\n  \"id\": 1,\n  \"items\": []\n}"}
+                        className="block h-full min-h-full w-full resize-none bg-background px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground caret-primary outline-none placeholder:text-muted-foreground/50"
+                      />
+                    ) : dbSourceJson ? (
+                      <pre className="px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground">{dbSourceJson}</pre>
+                    ) : (
+                      <EmptyState title="No JSON source yet" detail="Run Parser or save JSON source to generate DB code." />
+                    )}
+                  </div>
                 ) : (
-                  <EmptyState title="No parser output yet" detail="Run Parser from the Parser tab to see results here." />
+                  <div className="relative min-h-0 flex-1 overflow-auto">
+                    {dbGeneration.error ? (
+                      <div className="m-4 rounded-sm border border-destructive/40 bg-destructive/5 px-4 py-3 font-mono text-[12px] text-destructive">
+                        {dbGeneration.error}
+                      </div>
+                    ) : dbCode ? (
+                      <pre className="px-4 py-3">
+                        <HighlightedPython code={dbCode} />
+                      </pre>
+                    ) : (
+                      <EmptyState title="No DB code yet" detail="Run Parser or save JSON source to generate DB code." />
+                    )}
+                  </div>
                 )}
-              </div>
-            </div>
-          ) : parserPageTab === "jsonSource" ? (
-            <div className="relative min-h-0 flex-1 overflow-auto">
-              {isEditingDbJson ? (
-                <textarea
-                  value={dbJsonDraft}
-                  onChange={(event) => setDbJsonDraft(event.target.value)}
-                  spellCheck={false}
-                  placeholder={"{\n  \"id\": 1,\n  \"items\": []\n}"}
-                  className="block h-full min-h-full w-full resize-none bg-background px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground caret-primary outline-none placeholder:text-muted-foreground/50"
-                />
-              ) : dbSourceJson ? (
-                <pre className="px-4 py-3 font-mono text-[12px] leading-[1.6] text-foreground">{dbSourceJson}</pre>
-              ) : (
-                <EmptyState title="No JSON source yet" detail="Run Parser or save JSON source to generate DB code." />
-              )}
-            </div>
-          ) : (
-            <div className="relative min-h-0 flex-1 overflow-auto">
-              {dbGeneration.error ? (
-                <div className="m-4 rounded-sm border border-destructive/40 bg-destructive/5 px-4 py-3 font-mono text-[12px] text-destructive">
-                  {dbGeneration.error}
-                </div>
-              ) : dbCode ? (
-                <pre className="px-4 py-3">
-                  <HighlightedPython code={dbCode} />
-                </pre>
-              ) : (
-                <EmptyState title="No DB code yet" detail="Run Parser or save JSON source to generate DB code." />
-              )}
-            </div>
-          )}
-          </ParserInspectorErrorBoundary>
-          </>
+              </ParserInspectorErrorBoundary>
+            </>
           )}
         </main>
       </div>
@@ -4366,7 +4366,7 @@ export default function Index() {
             </DropdownMenuContent>
           </DropdownMenu>
 
-         
+
           <div className="ml-auto flex shrink-0 items-center gap-2">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -4785,11 +4785,11 @@ export default function Index() {
                   const collectionBlocks = collection.id === activeCollection.id
                     ? blocks
                     : collection.snippets.map((s) => ({
-                        id: s.id,
-                        name: s.name,
-                        raw: s.raw,
-                        parsed: parseCurl(s.raw.trim() ? s.raw : "curl"),
-                      }));
+                      id: s.id,
+                      name: s.name,
+                      raw: s.raw,
+                      parsed: parseCurl(s.raw.trim() ? s.raw : "curl"),
+                    }));
                   const collectionNames = collection.id === activeCollection.id
                     ? effectiveNames
                     : resolveEffectiveNames(collection.snippets);
@@ -5009,482 +5009,482 @@ export default function Index() {
               )}
             </div>
           ) : (
-          <>
-          {/* LEFT - SNIPPET INPUT */}
-          <section
-            className="flex min-h-0 min-w-0 flex-col border-b border-border md:border-b-0"
-          >
-            <PanelHeader label={
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setActiveInputTab("input")}
-                  className={cn("label-eyebrow transition-colors", activeInputTab === "input" ? "text-foreground" : "text-muted-foreground hover:text-foreground")}
-                >
-                  Input
-                </button>
-                <button
-                  onClick={() => setActiveInputTab("proxy")}
-                  className={cn("label-eyebrow transition-colors", activeInputTab === "proxy" ? "text-foreground" : "text-muted-foreground hover:text-foreground")}
-                >
-                  Proxy
-                </button>
-              </div>
-            } right={
-              <span className="text-[10px] text-muted-foreground">
-                {snippets.length > 0 ? `${snippets.length} snippet${snippets.length === 1 ? "" : "s"}` : "-"}
-              </span>
-            } />
-
-            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-thin">
-              {activeInputTab === "proxy" ? (
-                <div className="flex flex-col gap-3 p-3 font-mono text-[11px]">
-                  <label className="flex items-center gap-2 text-muted-foreground">
-                    <input
-                      type="checkbox"
-                      checked={proxyConfig.enabled}
-                      onChange={(e) => setProxyConfig((prev) => ({ ...prev, enabled: e.target.checked }))}
-                      className="h-3 w-3"
-                    />
-                    Enable Proxy
-                  </label>
-                  <label className="flex flex-col gap-1 text-muted-foreground">
-                    Proxy URL
-                    <input
-                      value={proxyConfig.url}
-                      onChange={(e) => setProxyConfig((prev) => ({ ...prev, url: e.target.value }))}
-                      placeholder="http://username:password@host:port"
-                      spellCheck={false}
-                      className="w-full rounded-sm border border-border bg-transparent px-2 py-1.5 font-mono text-[11px] text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-border-strong"
-                    />
-                  </label>
-                  <p className="text-[10px] text-muted-foreground/70">
-                    Used in generated Python requests code.
-                  </p>
-                </div>
-              ) : (
-              <div className="flex flex-col">
-                {snippets.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center gap-2 px-6 py-10 text-center">
-                    <FileCode className="h-6 w-6 text-muted-foreground/50" strokeWidth={1.5} />
-                    <p className="font-mono text-[12px] text-muted-foreground">
-                      No snippets yet
-                    </p>
-                    <p className="font-mono text-[11px] text-muted-foreground/70">
-                      Add a snippet to see the request
-                    </p>
+            <>
+              {/* LEFT - SNIPPET INPUT */}
+              <section
+                className="flex min-h-0 min-w-0 flex-col border-b border-border md:border-b-0"
+              >
+                <PanelHeader label={
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setActiveInputTab("input")}
+                      className={cn("label-eyebrow transition-colors", activeInputTab === "input" ? "text-foreground" : "text-muted-foreground hover:text-foreground")}
+                    >
+                      Input
+                    </button>
+                    <button
+                      onClick={() => setActiveInputTab("proxy")}
+                      className={cn("label-eyebrow transition-colors", activeInputTab === "proxy" ? "text-foreground" : "text-muted-foreground hover:text-foreground")}
+                    >
+                      Proxy
+                    </button>
                   </div>
-                ) : (
-                  snippets.map((s, i) => {
-                    const block = blocks[i];
-                    const isActive = activeReqIdx === i;
-                    const isHover = hoveredSnippetId === s.id;
-                    const dup = isDuplicate(s.name);
-                    const hasError = s.raw.trim() && !!block?.parsed.error;
-                    const collapsed = !!s.collapsed;
-                    const method = (block?.parsed.method || "GET").toUpperCase();
-                    const url = block?.parsed.url || "";
-                    const previewUrl = url || (s.raw.trim() ? s.raw.trim().slice(0, 80) : "no curl yet");
-                    return (
-                      <div
-                        key={s.id}
-                        ref={(el) => { snippetRefs.current[s.id] = el; }}
-                        onMouseEnter={() => setHoveredSnippetId(s.id)}
-                        onMouseLeave={() => setHoveredSnippetId(null)}
-                        onClick={() => focusSnippet(s.id)}
-                        onDragOver={(e) => {
-                          if (!dragId || dragId === s.id) return;
-                          e.preventDefault();
-                          e.dataTransfer.dropEffect = "move";
-                          if (dragOverId !== s.id) setDragOverId(s.id);
-                        }}
-                        onDragLeave={() => {
-                          if (dragOverId === s.id) setDragOverId(null);
-                        }}
-                        onDrop={(e) => {
-                          e.preventDefault();
-                          if (dragId && dragId !== s.id) reorderSnippets(dragId, s.id);
-                          setDragId(null);
-                          setDragOverId(null);
-                        }}
-                        className={cn(
-                          "group animate-fade-in border-b border-border transition-colors",
-                          isActive
-                            ? "border-l-2 border-l-primary bg-primary/[0.04]"
-                            : isHover
-                              ? "border-l-2 border-l-primary/40 bg-surface-elevated/40"
-                              : "border-l-2 border-l-transparent",
-                          dragId === s.id && "opacity-40",
-                          dragOverId === s.id && dragId !== s.id && "border-t-2 border-t-primary"
-                        )}
-                      >
-                        {/* Top row: drag + collapse + name + remove */}
-                        <div className="flex items-center gap-2 px-3 pt-2">
-                          <button
-                            draggable
-                            onDragStart={(e) => {
-                              setDragId(s.id);
-                              e.dataTransfer.effectAllowed = "move";
-                              try { e.dataTransfer.setData("text/plain", s.id); } catch { /* ignore */ }
-                            }}
-                            onDragEnd={() => { setDragId(null); setDragOverId(null); }}
-                            onClick={(e) => e.stopPropagation()}
-                            className="flex h-4 w-4 shrink-0 cursor-grab items-center justify-center rounded-sm text-muted-foreground/60 opacity-0 transition-opacity hover:text-foreground active:cursor-grabbing group-hover:opacity-100"
-                            title="Drag to reorder"
-                            aria-label="Drag to reorder snippet"
-                          >
-                            <GripVertical className="h-3 w-3" strokeWidth={2} />
-                          </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); toggleCollapse(s.id); }}
-                            className="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-surface-elevated hover:text-foreground"
-                            title={collapsed ? "Expand" : "Collapse"}
-                            aria-label={collapsed ? "Expand snippet" : "Collapse snippet"}
-                          >
-                            {collapsed ? (
-                              <ChevronRight className="h-3 w-3" strokeWidth={2} />
-                            ) : (
-                              <ChevronDown className="h-3 w-3" strokeWidth={2} />
-                            )}
-                          </button>
-                          <span className="select-none font-mono text-[10px] text-syntax-comment">
-                            #{i + 1}
-                          </span>
-                          <input
-                            ref={(el) => { nameInputRefs.current[s.id] = el; }}
-                            value={s.name}
-                            onChange={(e) => handleNameChange(s.id, e.target.value)}
-                            onClick={(e) => e.stopPropagation()}
-                            placeholder={`request_${i + 1}`}
-                            spellCheck={false}
-                            className={cn(
-                              "min-w-0 flex-1 bg-transparent font-mono text-[12px] text-foreground outline-none placeholder:text-muted-foreground/60",
-                              dup && "text-destructive"
-                            )}
-                            aria-label="Snippet name"
-                          />
-                          {dup && (
-                            <span className="flex items-center gap-1 text-[10px] text-destructive">
-                              <AlertCircle className="h-3 w-3" strokeWidth={2} />
-                              Duplicate
-                            </span>
-                          )}
-                          <span className="hidden text-[10px] text-muted-foreground sm:inline">
-                            {effectiveNames[i]}.py
-                          </span>
-                          <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleRemoveSnippet(s.id); }}
-                              className="flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                              title="Remove snippet"
-                              aria-label="Remove snippet"
-                            >
-                              <Trash2 className="h-3 w-3" strokeWidth={2} />
-                            </button>
-                          </div>
-                        </div>
+                } right={
+                  <span className="text-[10px] text-muted-foreground">
+                    {snippets.length > 0 ? `${snippets.length} snippet${snippets.length === 1 ? "" : "s"}` : "-"}
+                  </span>
+                } />
 
-                        <div className="flex items-center gap-2 px-9 pt-1 font-mono text-[10px] text-muted-foreground">
-                          <label
-                            className="flex cursor-pointer items-center gap-1.5"
-                            title="Uses a secure backend proxy during hosted runs. Proxy details are never shown or exported."
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={!!s.useBackendProxy}
-                              onChange={(e) => updateSnippet(s.id, { useBackendProxy: e.target.checked })}
-                              className="h-3 w-3"
-                            />
-                            Enable IP rotation
-                          </label>
-                          {!!s.useBackendProxy && (
-                            <span className="text-primary/80">Backend proxy: enabled</span>
-                          )}
-                        </div>
-
-                        {collapsed ? (
-                          /* Collapsed preview: METHOD + url */
-                          <div
-                            onClick={(e) => { e.stopPropagation(); toggleCollapse(s.id); }}
-                            className="flex cursor-pointer items-center gap-2 px-3 pb-2 pt-1 pl-9 font-mono text-[11px]"
-                            title="Click to expand"
-                          >
-                            <span className={cn(
-                              "shrink-0 text-[9px] font-semibold uppercase tracking-wider",
-                              hasError ? "text-destructive" : "text-syntax-function"
-                            )}>
-                              {method}
-                            </span>
-                            <span className={cn(
-                              "truncate",
-                              url ? "text-muted-foreground" : "text-muted-foreground/60 italic"
-                            )}>
-                              {previewUrl}
-                            </span>
-                          </div>
-                        ) : (
-                          <>
-                            {/* Curl textarea - auto-expand, auto-collapse on paste */}
-                            <AutoTextarea
-                              value={s.raw}
-                              onChange={(v) => updateSnippet(s.id, { raw: v })}
-                              onPasteCollapse={() => {
-                                // Collapse this snippet shortly after a paste so user sees the preview
-                                setTimeout(() => {
-                                  setSnippets((prev) => prev.map((x) => x.id === s.id ? { ...x, collapsed: true } : x));
-                                }, 50);
-                              }}
-                              placeholder="Paste your curl command here..."
-                              hasError={!!hasError}
-                            />
-
-                            {hasError && (
-                              <div className="px-3 pb-2 font-mono text-[10px] text-destructive">
-                                {block?.parsed.error}
-                              </div>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    );
-                  })
-                )}
-
-                {/* Add Request */}
-                <div className="p-3">
-                  <button
-                    onClick={handleAddSnippet}
-                    className="flex w-full items-center justify-center gap-1.5 rounded-sm border border-primary/60 bg-primary/[0.08] px-3 py-2 text-[11px] font-mono text-primary transition-colors hover:bg-primary/[0.14] hover:text-primary"
-                  >
-                    <Plus className="h-3 w-3" strokeWidth={2} />
-                    Add Request
-                  </button>
-                </div>
-              </div>
-              )}
-            </div>
-          </section>
-
-          {/* RESIZABLE DIVIDER */}
-          <div
-            className={cn(
-              "hidden md:block relative h-full w-px self-stretch bg-border",
-              isDraggingDivider && "bg-primary"
-            )}
-            aria-label="Resize panels"
-            role="separator"
-          />
-
-          <div
-            onMouseDown={() => setIsDraggingDivider(true)}
-            onPointerDown={() => setIsDraggingDivider(true)}
-            className="hidden md:block absolute z-10 h-full w-4 -translate-x-1/2 cursor-col-resize touch-none bg-transparent"
-            style={{ left: `calc(${dividerPos}% + 0.5px)` }}
-            aria-label="Resize panels"
-          />
-
-          {/* RIGHT - OUTPUT */}
-          <section ref={outputRef} className="flex min-h-0 min-w-0 flex-col">
-           
-
-            <div className="flex items-center border-b border-border bg-surface">
-              <div className="flex min-w-0 flex-1 items-center gap-0 overflow-x-auto scrollbar-thin">
-                {(["code", "response"] as WorkspacePanelTab[]).map((tab) => (
-                  <button
-                    key={tab}
-                    onClick={() => setActivePanelTab(tab)}
-                    className={cn(
-                      panelTabClass,
-                      activePanelTab === tab
-                        ? "bg-background text-foreground before:absolute before:inset-x-2 before:top-0 before:h-px before:bg-primary"
-                        : "text-muted-foreground hover:bg-surface-elevated/80 hover:text-foreground"
-                    )}
-                  >
-                    {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {activePanelTab === "code" ? (
-              <div className="flex min-h-0 flex-1 flex-col">
-                <div className="flex items-center gap-0 overflow-x-auto border-b border-border bg-surface scrollbar-thin">
-                  {visibleTabs.length === 0 ? (
-                    <div className="px-3 py-2 text-[11px] text-muted-foreground">No output yet</div>
+                <div className="flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-thin">
+                  {activeInputTab === "proxy" ? (
+                    <div className="flex flex-col gap-3 p-3 font-mono text-[11px]">
+                      <label className="flex items-center gap-2 text-muted-foreground">
+                        <input
+                          type="checkbox"
+                          checked={proxyConfig.enabled}
+                          onChange={(e) => setProxyConfig((prev) => ({ ...prev, enabled: e.target.checked }))}
+                          className="h-3 w-3"
+                        />
+                        Enable Proxy
+                      </label>
+                      <label className="flex flex-col gap-1 text-muted-foreground">
+                        Proxy URL
+                        <input
+                          value={proxyConfig.url}
+                          onChange={(e) => setProxyConfig((prev) => ({ ...prev, url: e.target.value }))}
+                          placeholder="http://username:password@host:port"
+                          spellCheck={false}
+                          className="w-full rounded-sm border border-border bg-transparent px-2 py-1.5 font-mono text-[11px] text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-border-strong"
+                        />
+                      </label>
+                      <p className="text-[10px] text-muted-foreground/70">
+                        Used in generated Python requests code.
+                      </p>
+                    </div>
                   ) : (
-                    visibleTabs.map((t) => {
-                      const isActive = t.id === activeTabId;
-                      const hoverIdx = blocks.findIndex((b) => b.id === hoveredSnippetId);
-                      const isHover = t.kind === "request" && t.reqIdx === hoverIdx && hoverIdx !== -1;
-                      return (
-                        <div
-                          key={t.id}
-                          onClick={() => {
-                            setActiveTabId(t.id);
-                            if (t.kind === "request" && t.reqIdx != null) {
-                              const workspace = blocks[t.reqIdx];
-                              if (workspace) {
-                                if (activeWorkspaceId !== workspace.id || activeWorkspaceFile !== "request.py") showWorkspaceTransitionLoader();
-                                setActiveWorkspaceId(workspace.id);
-                                setActiveWorkspaceFile("request.py");
-                                setExpandedWorkspaceIds((prev) => new Set(prev).add(workspace.id));
-                              }
-                            }
-                          }}
-                          onMouseEnter={() => {
-                            if (t.kind === "request" && t.reqIdx != null) {
-                              const b = blocks[t.reqIdx];
-                              if (b) setHoveredSnippetId(b.id);
-                            }
-                          }}
-                          onMouseLeave={() => t.kind === "request" && setHoveredSnippetId(null)}
-                          className={cn(
-                            fileTabClass,
-                            isActive
-                              ? "bg-background text-foreground before:absolute before:inset-x-2 before:top-0 before:h-px before:bg-primary"
-                              : "text-muted-foreground hover:bg-surface-elevated/80 hover:text-foreground",
-                            isHover && !isActive && "bg-surface-elevated text-foreground",
-                            t.hasError && "text-destructive",
-                          )}
-                        >
-                          {t.hasError && <AlertCircle className="h-3 w-3" strokeWidth={2} />}
-                          {(t.kind === "merged" || t.kind === "parser") && (
-                            <FileCode className={cn("h-3 w-3", isActive ? "text-primary" : "")} strokeWidth={2} />
-                          )}
-                          <span>{t.filename}{dirtyCodeTabs[t.id] ? "*" : ""}</span>
-                          <button
-                            onClick={(e) => handleCloseTab(t.id, e)}
-                            className={cn(
-                              "ml-1 flex h-3.5 w-3.5 items-center justify-center rounded-sm opacity-0 transition-opacity hover:bg-border-strong hover:text-foreground group-hover:opacity-100",
-                              isActive && "opacity-60"
-                            )}
-                            aria-label={`Close ${t.filename}`}
-                          >
-                            <X className="h-2.5 w-2.5" strokeWidth={2.5} />
-                          </button>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-
-                {activeTab && (
-                  <div className="flex min-h-0 flex-1 flex-col">
-                    <MetaRow tab={activeTab} blocks={blocks} names={effectiveNames} actions={currentFileActions} dirty={isActiveCodeDirty} saveStatus={saveStatusLabel} />
-
-                    <div className="relative min-h-0 flex-1 overflow-auto">
-                      {activeWorkspaceFile !== "parser.py" && activeWorkspaceFile !== "db.py" && activeTab.hasError && activeTab.kind === "request" ? (
-                        <div className="m-3 rounded-sm border border-destructive/40 bg-destructive/5 p-3 text-[12px] text-destructive">
-                          Issue in {effectiveNames[activeTab.reqIdx ?? 0]}
-                          <div className="mt-1 text-[11px] text-muted-foreground">
-                            {blocks[activeTab.reqIdx ?? 0]?.parsed.error || "Empty snippet - paste a curl command"}
-                          </div>
+                    <div className="flex flex-col">
+                      {snippets.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center gap-2 px-6 py-10 text-center">
+                          <FileCode className="h-6 w-6 text-muted-foreground/50" strokeWidth={1.5} />
+                          <p className="font-mono text-[12px] text-muted-foreground">
+                            No snippets yet
+                          </p>
+                          <p className="font-mono text-[11px] text-muted-foreground/70">
+                            Add a snippet to see the request
+                          </p>
                         </div>
                       ) : (
-                        <CodeEditor
-                          value={panelCodeContent}
-                          filename={panelCodeFilename}
-                          onChange={handleCodePanelChange}
-                          wordWrap={codeWordWrap}
-                          parserInsertGroups={activeWorkspaceFile === "request.py" && activeTab.kind === "request" ? parserInsertGroups : []}
-                          className="absolute inset-0"
+                        snippets.map((s, i) => {
+                          const block = blocks[i];
+                          const isActive = activeReqIdx === i;
+                          const isHover = hoveredSnippetId === s.id;
+                          const dup = isDuplicate(s.name);
+                          const hasError = s.raw.trim() && !!block?.parsed.error;
+                          const collapsed = !!s.collapsed;
+                          const method = (block?.parsed.method || "GET").toUpperCase();
+                          const url = block?.parsed.url || "";
+                          const previewUrl = url || (s.raw.trim() ? s.raw.trim().slice(0, 80) : "no curl yet");
+                          return (
+                            <div
+                              key={s.id}
+                              ref={(el) => { snippetRefs.current[s.id] = el; }}
+                              onMouseEnter={() => setHoveredSnippetId(s.id)}
+                              onMouseLeave={() => setHoveredSnippetId(null)}
+                              onClick={() => focusSnippet(s.id)}
+                              onDragOver={(e) => {
+                                if (!dragId || dragId === s.id) return;
+                                e.preventDefault();
+                                e.dataTransfer.dropEffect = "move";
+                                if (dragOverId !== s.id) setDragOverId(s.id);
+                              }}
+                              onDragLeave={() => {
+                                if (dragOverId === s.id) setDragOverId(null);
+                              }}
+                              onDrop={(e) => {
+                                e.preventDefault();
+                                if (dragId && dragId !== s.id) reorderSnippets(dragId, s.id);
+                                setDragId(null);
+                                setDragOverId(null);
+                              }}
+                              className={cn(
+                                "group animate-fade-in border-b border-border transition-colors",
+                                isActive
+                                  ? "border-l-2 border-l-primary bg-primary/[0.04]"
+                                  : isHover
+                                    ? "border-l-2 border-l-primary/40 bg-surface-elevated/40"
+                                    : "border-l-2 border-l-transparent",
+                                dragId === s.id && "opacity-40",
+                                dragOverId === s.id && dragId !== s.id && "border-t-2 border-t-primary"
+                              )}
+                            >
+                              {/* Top row: drag + collapse + name + remove */}
+                              <div className="flex items-center gap-2 px-3 pt-2">
+                                <button
+                                  draggable
+                                  onDragStart={(e) => {
+                                    setDragId(s.id);
+                                    e.dataTransfer.effectAllowed = "move";
+                                    try { e.dataTransfer.setData("text/plain", s.id); } catch { /* ignore */ }
+                                  }}
+                                  onDragEnd={() => { setDragId(null); setDragOverId(null); }}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="flex h-4 w-4 shrink-0 cursor-grab items-center justify-center rounded-sm text-muted-foreground/60 opacity-0 transition-opacity hover:text-foreground active:cursor-grabbing group-hover:opacity-100"
+                                  title="Drag to reorder"
+                                  aria-label="Drag to reorder snippet"
+                                >
+                                  <GripVertical className="h-3 w-3" strokeWidth={2} />
+                                </button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); toggleCollapse(s.id); }}
+                                  className="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-surface-elevated hover:text-foreground"
+                                  title={collapsed ? "Expand" : "Collapse"}
+                                  aria-label={collapsed ? "Expand snippet" : "Collapse snippet"}
+                                >
+                                  {collapsed ? (
+                                    <ChevronRight className="h-3 w-3" strokeWidth={2} />
+                                  ) : (
+                                    <ChevronDown className="h-3 w-3" strokeWidth={2} />
+                                  )}
+                                </button>
+                                <span className="select-none font-mono text-[10px] text-syntax-comment">
+                                  #{i + 1}
+                                </span>
+                                <input
+                                  ref={(el) => { nameInputRefs.current[s.id] = el; }}
+                                  value={s.name}
+                                  onChange={(e) => handleNameChange(s.id, e.target.value)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  placeholder={`request_${i + 1}`}
+                                  spellCheck={false}
+                                  className={cn(
+                                    "min-w-0 flex-1 bg-transparent font-mono text-[12px] text-foreground outline-none placeholder:text-muted-foreground/60",
+                                    dup && "text-destructive"
+                                  )}
+                                  aria-label="Snippet name"
+                                />
+                                {dup && (
+                                  <span className="flex items-center gap-1 text-[10px] text-destructive">
+                                    <AlertCircle className="h-3 w-3" strokeWidth={2} />
+                                    Duplicate
+                                  </span>
+                                )}
+                                <span className="hidden text-[10px] text-muted-foreground sm:inline">
+                                  {effectiveNames[i]}.py
+                                </span>
+                                <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); handleRemoveSnippet(s.id); }}
+                                    className="flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                                    title="Remove snippet"
+                                    aria-label="Remove snippet"
+                                  >
+                                    <Trash2 className="h-3 w-3" strokeWidth={2} />
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 px-9 pt-1 font-mono text-[10px] text-muted-foreground">
+                                <label
+                                  className="flex cursor-pointer items-center gap-1.5"
+                                  title="Uses a secure backend proxy during hosted runs. Proxy details are never shown or exported."
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={!!s.useBackendProxy}
+                                    onChange={(e) => updateSnippet(s.id, { useBackendProxy: e.target.checked })}
+                                    className="h-3 w-3"
+                                  />
+                                  Enable IP rotation
+                                </label>
+                                {!!s.useBackendProxy && (
+                                  <span className="text-primary/80">Backend proxy: enabled</span>
+                                )}
+                              </div>
+
+                              {collapsed ? (
+                                /* Collapsed preview: METHOD + url */
+                                <div
+                                  onClick={(e) => { e.stopPropagation(); toggleCollapse(s.id); }}
+                                  className="flex cursor-pointer items-center gap-2 px-3 pb-2 pt-1 pl-9 font-mono text-[11px]"
+                                  title="Click to expand"
+                                >
+                                  <span className={cn(
+                                    "shrink-0 text-[9px] font-semibold uppercase tracking-wider",
+                                    hasError ? "text-destructive" : "text-syntax-function"
+                                  )}>
+                                    {method}
+                                  </span>
+                                  <span className={cn(
+                                    "truncate",
+                                    url ? "text-muted-foreground" : "text-muted-foreground/60 italic"
+                                  )}>
+                                    {previewUrl}
+                                  </span>
+                                </div>
+                              ) : (
+                                <>
+                                  {/* Curl textarea - auto-expand, auto-collapse on paste */}
+                                  <AutoTextarea
+                                    value={s.raw}
+                                    onChange={(v) => updateSnippet(s.id, { raw: v })}
+                                    onPasteCollapse={() => {
+                                      // Collapse this snippet shortly after a paste so user sees the preview
+                                      setTimeout(() => {
+                                        setSnippets((prev) => prev.map((x) => x.id === s.id ? { ...x, collapsed: true } : x));
+                                      }, 50);
+                                    }}
+                                    placeholder="Paste your curl command here..."
+                                    hasError={!!hasError}
+                                  />
+
+                                  {hasError && (
+                                    <div className="px-3 pb-2 font-mono text-[10px] text-destructive">
+                                      {block?.parsed.error}
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          );
+                        })
+                      )}
+
+                      {/* Add Request */}
+                      <div className="p-3">
+                        <button
+                          onClick={handleAddSnippet}
+                          className="flex w-full items-center justify-center gap-1.5 rounded-sm border border-primary/60 bg-primary/[0.08] px-3 py-2 text-[11px] font-mono text-primary transition-colors hover:bg-primary/[0.14] hover:text-primary"
+                        >
+                          <Plus className="h-3 w-3" strokeWidth={2} />
+                          Add Request
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              {/* RESIZABLE DIVIDER */}
+              <div
+                className={cn(
+                  "hidden md:block relative h-full w-px self-stretch bg-border",
+                  isDraggingDivider && "bg-primary"
+                )}
+                aria-label="Resize panels"
+                role="separator"
+              />
+
+              <div
+                onMouseDown={() => setIsDraggingDivider(true)}
+                onPointerDown={() => setIsDraggingDivider(true)}
+                className="hidden md:block absolute z-10 h-full w-4 -translate-x-1/2 cursor-col-resize touch-none bg-transparent"
+                style={{ left: `calc(${dividerPos}% + 0.5px)` }}
+                aria-label="Resize panels"
+              />
+
+              {/* RIGHT - OUTPUT */}
+              <section ref={outputRef} className="flex min-h-0 min-w-0 flex-col">
+
+
+                <div className="flex items-center border-b border-border bg-surface">
+                  <div className="flex min-w-0 flex-1 items-center gap-0 overflow-x-auto scrollbar-thin">
+                    {(["code", "response"] as WorkspacePanelTab[]).map((tab) => (
+                      <button
+                        key={tab}
+                        onClick={() => setActivePanelTab(tab)}
+                        className={cn(
+                          panelTabClass,
+                          activePanelTab === tab
+                            ? "bg-background text-foreground before:absolute before:inset-x-2 before:top-0 before:h-px before:bg-primary"
+                            : "text-muted-foreground hover:bg-surface-elevated/80 hover:text-foreground"
+                        )}
+                      >
+                        {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {activePanelTab === "code" ? (
+                  <div className="flex min-h-0 flex-1 flex-col">
+                    <div className="flex items-center gap-0 overflow-x-auto border-b border-border bg-surface scrollbar-thin">
+                      {visibleTabs.length === 0 ? (
+                        <div className="px-3 py-2 text-[11px] text-muted-foreground">No output yet</div>
+                      ) : (
+                        visibleTabs.map((t) => {
+                          const isActive = t.id === activeTabId;
+                          const hoverIdx = blocks.findIndex((b) => b.id === hoveredSnippetId);
+                          const isHover = t.kind === "request" && t.reqIdx === hoverIdx && hoverIdx !== -1;
+                          return (
+                            <div
+                              key={t.id}
+                              onClick={() => {
+                                setActiveTabId(t.id);
+                                if (t.kind === "request" && t.reqIdx != null) {
+                                  const workspace = blocks[t.reqIdx];
+                                  if (workspace) {
+                                    if (activeWorkspaceId !== workspace.id || activeWorkspaceFile !== "request.py") showWorkspaceTransitionLoader();
+                                    setActiveWorkspaceId(workspace.id);
+                                    setActiveWorkspaceFile("request.py");
+                                    setExpandedWorkspaceIds((prev) => new Set(prev).add(workspace.id));
+                                  }
+                                }
+                              }}
+                              onMouseEnter={() => {
+                                if (t.kind === "request" && t.reqIdx != null) {
+                                  const b = blocks[t.reqIdx];
+                                  if (b) setHoveredSnippetId(b.id);
+                                }
+                              }}
+                              onMouseLeave={() => t.kind === "request" && setHoveredSnippetId(null)}
+                              className={cn(
+                                fileTabClass,
+                                isActive
+                                  ? "bg-background text-foreground before:absolute before:inset-x-2 before:top-0 before:h-px before:bg-primary"
+                                  : "text-muted-foreground hover:bg-surface-elevated/80 hover:text-foreground",
+                                isHover && !isActive && "bg-surface-elevated text-foreground",
+                                t.hasError && "text-destructive",
+                              )}
+                            >
+                              {t.hasError && <AlertCircle className="h-3 w-3" strokeWidth={2} />}
+                              {(t.kind === "merged" || t.kind === "parser") && (
+                                <FileCode className={cn("h-3 w-3", isActive ? "text-primary" : "")} strokeWidth={2} />
+                              )}
+                              <span>{t.filename}{dirtyCodeTabs[t.id] ? "*" : ""}</span>
+                              <button
+                                onClick={(e) => handleCloseTab(t.id, e)}
+                                className={cn(
+                                  "ml-1 flex h-3.5 w-3.5 items-center justify-center rounded-sm opacity-0 transition-opacity hover:bg-border-strong hover:text-foreground group-hover:opacity-100",
+                                  isActive && "opacity-60"
+                                )}
+                                aria-label={`Close ${t.filename}`}
+                              >
+                                <X className="h-2.5 w-2.5" strokeWidth={2.5} />
+                              </button>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {activeTab && (
+                      <div className="flex min-h-0 flex-1 flex-col">
+                        <MetaRow tab={activeTab} blocks={blocks} names={effectiveNames} actions={currentFileActions} dirty={isActiveCodeDirty} saveStatus={saveStatusLabel} />
+
+                        <div className="relative min-h-0 flex-1 overflow-auto">
+                          {activeWorkspaceFile !== "parser.py" && activeWorkspaceFile !== "db.py" && activeTab.hasError && activeTab.kind === "request" ? (
+                            <div className="m-3 rounded-sm border border-destructive/40 bg-destructive/5 p-3 text-[12px] text-destructive">
+                              Issue in {effectiveNames[activeTab.reqIdx ?? 0]}
+                              <div className="mt-1 text-[11px] text-muted-foreground">
+                                {blocks[activeTab.reqIdx ?? 0]?.parsed.error || "Empty snippet - paste a curl command"}
+                              </div>
+                            </div>
+                          ) : (
+                            <CodeEditor
+                              value={panelCodeContent}
+                              filename={panelCodeFilename}
+                              onChange={handleCodePanelChange}
+                              wordWrap={codeWordWrap}
+                              parserInsertGroups={activeWorkspaceFile === "request.py" && activeTab.kind === "request" ? parserInsertGroups : []}
+                              className="absolute inset-0"
+                            />
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    {!activeTab && (
+                      <EmptyState title="No parser output yet" detail="Run a request or select an existing output file to view generated code." />
+                    )}
+                  </div>
+                ) : activePanelTab === "response" ? (
+                  <div className="flex min-h-0 flex-1 flex-col">
+                    <div className="flex items-center gap-0 overflow-x-auto border-b border-border bg-surface scrollbar-thin">
+                      {visibleResponseTabs.length === 0 ? (
+                        <div className="px-3 py-2 text-[11px] text-muted-foreground">No response yet</div>
+                      ) : (
+                        visibleResponseTabs.map((tab) => {
+                          const isActive = tab.id === activeResponseTab?.id;
+                          return (
+                            <div
+                              key={tab.id}
+                              onClick={() => {
+                                if (activeWorkspaceId !== tab.workspaceId || activeWorkspaceFile !== tab.fileName) showWorkspaceTransitionLoader();
+                                setActiveResponseTabId(tab.id);
+                                setActiveWorkspaceId(tab.workspaceId);
+                                setActiveWorkspaceFile(tab.fileName);
+                              }}
+                              className={cn(
+                                fileTabClass,
+                                isActive
+                                  ? "bg-background text-foreground before:absolute before:inset-x-2 before:top-0 before:h-px before:bg-primary"
+                                  : "text-muted-foreground hover:bg-surface-elevated/80 hover:text-foreground"
+                              )}
+                            >
+                              <FileCode className={cn("h-3 w-3", isActive ? "text-primary" : "")} strokeWidth={2} />
+                              <span>{tab.label}</span>
+                              <button
+                                onClick={(e) => handleCloseResponseTab(tab.id, e)}
+                                className={cn(
+                                  "ml-1 flex h-3.5 w-3.5 items-center justify-center rounded-sm opacity-0 transition-opacity hover:bg-border-strong hover:text-foreground group-hover:opacity-100",
+                                  isActive && "opacity-60"
+                                )}
+                                aria-label={`Close ${tab.label}`}
+                              >
+                                <X className="h-2.5 w-2.5" strokeWidth={2.5} />
+                              </button>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 border-b border-border bg-background px-4 py-1.5 font-mono text-[11px]">
+                      <span className="font-semibold text-primary">Status</span>
+                      <span className="text-muted-foreground">{activeResponseMeta?.status ?? "-"}</span>
+                      <span className="text-syntax-comment">|</span>
+                      <span className="font-semibold text-primary">Time</span>
+                      <span className="text-muted-foreground">{activeResponseMeta ? `${activeResponseMeta.time_ms ?? activeResponseMeta.time ?? 0}ms` : "-"}</span>
+                      <span className="text-syntax-comment">|</span>
+                      <span className="font-semibold text-primary">Size</span>
+                      <span className="text-muted-foreground">{activeResponseMeta?.size ?? "-"}</span>
+                      {currentFileActions}
+                    </div>
+                    <div className="relative min-h-0 flex-1 overflow-auto">
+                      {activeResponseJson ? (
+                        <ResponseBodyViewer
+                          source={activeResponseJson}
+                          filename={activeResponseTab?.fileName}
+                          contentType={activeResponseContentType}
+                          selectedPath={selectedParserPath}
+                          addedPaths={addedParserPaths}
+                          onAddToParser={addPathToParser}
+                          onRemoveFromParser={removePathFromParser}
+                          onSelectedPathChange={handleParserPathSelect}
                         />
+                      ) : (
+                        <EmptyState title="No response yet" detail="Run the selected request to inspect its response." />
                       )}
                     </div>
                   </div>
-                )}
-                {!activeTab && (
-                  <EmptyState title="No parser output yet" detail="Run a request or select an existing output file to view generated code." />
-                )}
-              </div>
-            ) : activePanelTab === "response" ? (
-              <div className="flex min-h-0 flex-1 flex-col">
-                <div className="flex items-center gap-0 overflow-x-auto border-b border-border bg-surface scrollbar-thin">
-                  {visibleResponseTabs.length === 0 ? (
-                    <div className="px-3 py-2 text-[11px] text-muted-foreground">No response yet</div>
-                  ) : (
-                    visibleResponseTabs.map((tab) => {
-                      const isActive = tab.id === activeResponseTab?.id;
-                      return (
-                        <div
-                          key={tab.id}
-                          onClick={() => {
-                            if (activeWorkspaceId !== tab.workspaceId || activeWorkspaceFile !== tab.fileName) showWorkspaceTransitionLoader();
-                            setActiveResponseTabId(tab.id);
-                            setActiveWorkspaceId(tab.workspaceId);
-                            setActiveWorkspaceFile(tab.fileName);
-                          }}
-                          className={cn(
-                            fileTabClass,
-                            isActive
-                              ? "bg-background text-foreground before:absolute before:inset-x-2 before:top-0 before:h-px before:bg-primary"
-                              : "text-muted-foreground hover:bg-surface-elevated/80 hover:text-foreground"
-                          )}
-                        >
-                          <FileCode className={cn("h-3 w-3", isActive ? "text-primary" : "")} strokeWidth={2} />
-                          <span>{tab.label}</span>
-                          <button
-                            onClick={(e) => handleCloseResponseTab(tab.id, e)}
-                            className={cn(
-                              "ml-1 flex h-3.5 w-3.5 items-center justify-center rounded-sm opacity-0 transition-opacity hover:bg-border-strong hover:text-foreground group-hover:opacity-100",
-                              isActive && "opacity-60"
-                            )}
-                            aria-label={`Close ${tab.label}`}
-                          >
-                            <X className="h-2.5 w-2.5" strokeWidth={2.5} />
-                          </button>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-                <div className="flex items-center gap-3 border-b border-border bg-background px-4 py-1.5 font-mono text-[11px]">
-                  <span className="font-semibold text-primary">Status</span>
-                  <span className="text-muted-foreground">{activeResponseMeta?.status ?? "-"}</span>
-                  <span className="text-syntax-comment">|</span>
-                  <span className="font-semibold text-primary">Time</span>
-                  <span className="text-muted-foreground">{activeResponseMeta ? `${activeResponseMeta.time_ms ?? activeResponseMeta.time ?? 0}ms` : "-"}</span>
-                  <span className="text-syntax-comment">|</span>
-                  <span className="font-semibold text-primary">Size</span>
-                  <span className="text-muted-foreground">{activeResponseMeta?.size ?? "-"}</span>
-                  {currentFileActions}
-                </div>
-                <div className="relative min-h-0 flex-1 overflow-auto">
-                  {activeResponseJson ? (
-                    <ResponseBodyViewer
-                      source={activeResponseJson}
-                      filename={activeResponseTab?.fileName}
-                      contentType={activeResponseContentType}
-                      selectedPath={selectedParserPath}
-                      addedPaths={addedParserPaths}
-                      onAddToParser={addPathToParser}
-                      onRemoveFromParser={removePathFromParser}
-                      onSelectedPathChange={handleParserPathSelect}
-                    />
-                  ) : (
-                    <EmptyState title="No response yet" detail="Run the selected request to inspect its response." />
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="relative min-h-0 flex-1 overflow-auto px-4 py-3 font-mono text-[12px] leading-[1.6]">
-                {activeLogsTxt ? (
-                  activeLogsTxt.split("\n").map((line, index) => {
-                    const lower = line.toLowerCase();
-                    const isError = lower.includes("error") || lower.includes("failed");
-                    return (
-                      <div key={`${index}-${line}`} className={cn(isError && "text-destructive")}>
-                        {line || "\u00a0"}
-                      </div>
-                    );
-                  })
                 ) : (
-                  <div className="text-[11px] text-muted-foreground">No logs yet</div>
+                  <div className="relative min-h-0 flex-1 overflow-auto px-4 py-3 font-mono text-[12px] leading-[1.6]">
+                    {activeLogsTxt ? (
+                      activeLogsTxt.split("\n").map((line, index) => {
+                        const lower = line.toLowerCase();
+                        const isError = lower.includes("error") || lower.includes("failed");
+                        return (
+                          <div key={`${index}-${line}`} className={cn(isError && "text-destructive")}>
+                            {line || "\u00a0"}
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="text-[11px] text-muted-foreground">No logs yet</div>
+                    )}
+                  </div>
                 )}
-              </div>
-            )}
-          </section>
-          </>
+              </section>
+            </>
           )}
           {shouldShowWorkspaceOverlayLoader && (
             <div className={cn("cc-workspace-overlay absolute inset-0 z-20 flex items-center justify-center bg-background/15 backdrop-blur-[3px]", isWorkspaceLoaderSettling && "cc-loader-exit")}>
@@ -7982,7 +7982,7 @@ export function JsonTreeNode({
             }}
             className="text-syntax-function hover:text-foreground"
           >
-            "{displayName}": 
+            "{displayName}":
           </button>
         )}
         <button
