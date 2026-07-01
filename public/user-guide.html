@@ -1,800 +1,658 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CurlCraft — Official Detailed Documentation</title>
-  <meta name="description" content="Complete documentation for CurlCraft — The advanced cURL to Python converter with built-in parsers, request pipelines, and database code generation." />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-  <style>
-    :root {
-      /* Base Colors - Clean, Modern Light Theme matching CurlCraft */
-      --bg: #F4F4F0;
-      --surface: #FFFFFF;
-      --surface-elevated: #F9FAFB;
-      --primary: #5A7542; /* CurlCraft Green */
-      --primary-muted: rgba(90, 117, 66, 0.1);
-      --primary-border: rgba(90, 117, 66, 0.25);
-      
-      --text-main: #1F211C;
-      --text-muted: #4B5563;
-      --text-light: #6B7280;
-      
-      --border: #D2D3CB;
-      --border-light: #E5E7EB;
-      
-      --success: #10B981;
-      --warning: #F59E0B;
-      --info: #3B82F6;
-      --danger: #EF4444;
-      
-      /* Layout */
-      --sidebar-width: 280px;
-      --max-content-width: 960px;
-      
-      /* Code Blocks */
-      --code-bg: #F8F9FA;
-      --code-text: #24292E;
-      --code-border: #EAECEF;
-    }
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>curl2py — Documentation</title>
+<meta name="description" content="Complete documentation for curl2py — the cURL to Python converter with visual parsers, request pipelines, and database code generation." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --background: 220 14% 8%;
+    --foreground: 220 14% 88%;
+    --surface: 220 13% 10%;
+    --surface-elevated: 220 12% 14%;
+    --card: 220 13% 11%;
+    --card-foreground: 220 14% 88%;
+    --primary: 96 69% 62%;
+    --primary-foreground: 220 18% 8%;
+    --secondary: 220 10% 16%;
+    --secondary-foreground: 220 12% 80%;
+    --muted: 220 10% 15%;
+    --muted-foreground: 220 8% 62%;
+    --accent: 96 42% 22%;
+    --accent-foreground: 96 69% 70%;
+    --destructive: 4 55% 58%;
+    --destructive-foreground: 60 12% 92%;
+    --success: 96 69% 62%;
+    --border: 220 11% 19%;
+    --border-strong: 220 10% 28%;
+    --input: 220 10% 15%;
+    --ring: 96 69% 54%;
+    --radius: 0.25rem;
 
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    html { scroll-behavior: smooth; }
+    --syntax-keyword: 300 38% 68%;
+    --syntax-string: 35 45% 65%;
+    --syntax-number: 25 50% 65%;
+    --syntax-comment: 80 6% 40%;
+    --syntax-function: 195 62% 70%;
+    --syntax-variable: 60 12% 82%;
+    --syntax-punct: 60 8% 60%;
 
-    body {
-      background-color: var(--surface);
-      color: var(--text-main);
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      font-size: 15px;
-      line-height: 1.7;
-      display: flex;
-      min-height: 100vh;
-      -webkit-font-smoothing: antialiased;
-    }
+    --sidebar-w: 296px;
+    --content-w: 860px;
+  }
 
-    /* ─── TYPOGRAPHY ─── */
-    h1, h2, h3, h4, h5, h6 {
-      color: var(--text-main);
-      font-weight: 600;
-      letter-spacing: -0.02em;
-    }
-    
-    h1 { font-size: 2.5rem; line-height: 1.2; margin-bottom: 1rem; }
-    h2 { font-size: 1.75rem; margin-top: 4rem; margin-bottom: 1.5rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); }
-    h3 { font-size: 1.35rem; margin-top: 2.5rem; margin-bottom: 1rem; }
-    h4 { font-size: 1.1rem; margin-top: 2rem; margin-bottom: 0.75rem; }
-    h5 { font-size: 0.95rem; margin-top: 1.5rem; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
-    
-    p { margin-bottom: 1.25rem; color: var(--text-muted); }
-    strong { color: var(--text-main); font-weight: 600; }
-    
-    a { color: var(--primary); text-decoration: none; font-weight: 500; }
-    a:hover { text-decoration: underline; }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html{scroll-behavior:smooth;}
 
-    /* ─── SIDEBAR NAVIGATION ─── */
-    .sidebar {
-      position: fixed;
-      top: 0; left: 0; bottom: 0;
-      width: var(--sidebar-width);
-      background-color: var(--bg);
-      border-right: 1px solid var(--border);
-      overflow-y: auto;
-      z-index: 50;
-      padding-bottom: 3rem;
-    }
+  body{
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family:'JetBrains Mono','Fira Code',ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:14.5px;
+    line-height:1.75;
+    display:flex;
+    min-height:100vh;
+    -webkit-font-smoothing:antialiased;
+    font-feature-settings:'liga' 1,'calt' 1;
+  }
 
-    .brand {
-      padding: 1.5rem;
-      border-bottom: 1px solid var(--border);
-      position: sticky;
-      top: 0;
-      background: var(--bg);
-      z-index: 10;
-    }
-    
-    .brand-logo {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 1.25rem;
-      font-weight: 600;
-      color: var(--text-main);
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-    }
-    
-    .brand-logo svg { color: var(--primary); }
-    
-    .brand-subtitle {
-      font-size: 0.75rem;
-      color: var(--text-light);
-      margin-top: 0.25rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      font-weight: 600;
-    }
+  ::selection{ background: hsl(var(--primary) / 0.25); color: hsl(var(--foreground)); }
 
-    .nav-group { margin-top: 1.5rem; }
-    
-    .nav-label {
-      padding: 0 1.5rem;
-      font-size: 0.75rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--text-light);
-      margin-bottom: 0.5rem;
-    }
+  ::-webkit-scrollbar{ width:10px; height:10px; }
+  ::-webkit-scrollbar-track{ background:transparent; }
+  ::-webkit-scrollbar-thumb{ background: hsl(var(--border-strong)); border-radius:4px; border:2px solid hsl(var(--background)); }
+  ::-webkit-scrollbar-thumb:hover{ background: hsl(var(--muted-foreground) / 0.5); }
 
-    .nav-links { list-style: none; padding: 0; }
-    
-    .nav-links a {
-      display: block;
-      padding: 0.4rem 1.5rem 0.4rem 2rem;
-      font-size: 0.875rem;
-      color: var(--text-muted);
-      font-weight: 400;
-      border-left: 3px solid transparent;
-      transition: all 0.2s ease;
-    }
-    
-    .nav-links a:hover {
-      color: var(--text-main);
-      background-color: rgba(0,0,0,0.02);
-    }
-    
-    .nav-links a.active {
-      color: var(--primary);
-      font-weight: 600;
-      border-left-color: var(--primary);
-      background-color: var(--primary-muted);
-    }
+  a{ color: hsl(var(--primary)); text-decoration:none; }
+  a:hover{ text-decoration:underline; }
 
-    /* ─── MAIN CONTENT AREA ─── */
-    .main-wrapper {
-      margin-left: var(--sidebar-width);
-      flex: 1;
-      min-width: 0;
-    }
+  /* ── typography ── */
+  h1,h2,h3,h4,h5{ color: hsl(var(--foreground)); font-weight:700; letter-spacing:-0.01em; }
+  h1{ font-size:2.1rem; line-height:1.25; }
+  h2{
+    font-size:1.4rem; margin-top:0; margin-bottom:1.75rem; padding-bottom:0.9rem;
+    border-bottom:1px solid hsl(var(--border)); display:flex; align-items:baseline; gap:0.6rem;
+  }
+  h2 .num{ color: hsl(var(--primary)); font-size:0.85rem; font-weight:700; }
+  h3{ font-size:1.08rem; margin-top:0; margin-bottom:1.15rem; color: hsl(var(--foreground)); }
+  h3::before{ content:'## '; color: hsl(var(--primary)); font-weight:700; }
+  h4{ font-size:0.95rem; margin-top:2rem; margin-bottom:0.85rem; color: hsl(var(--secondary-foreground)); }
+  h4::before{ content:'### '; color: hsl(var(--muted-foreground)); }
+  h5{ font-size:0.75rem; margin-top:1.5rem; margin-bottom:0.6rem; text-transform:uppercase; letter-spacing:0.14em; color: hsl(var(--muted-foreground)); font-weight:700; }
 
-    .hero {
-      background-color: var(--bg);
-      padding: 5rem 4rem;
-      border-bottom: 1px solid var(--border);
-    }
-    
-    .hero-inner {
-      max-width: var(--max-content-width);
-      margin: 0 auto;
-    }
+  p{ margin-bottom:1.15rem; color: hsl(var(--muted-foreground)); max-width:70ch; }
+  strong{ color: hsl(var(--foreground)); font-weight:600; }
+  em{ color: hsl(var(--secondary-foreground)); font-style:normal; border-bottom:1px dashed hsl(var(--border-strong)); }
 
-    .hero-desc {
-      font-size: 1.25rem;
-      color: var(--text-muted);
-      max-width: 750px;
-      line-height: 1.6;
-    }
+  .content-container ul, .content-container ol{ padding-left:1.4rem; margin-bottom:1.15rem; color: hsl(var(--muted-foreground)); max-width:70ch; }
+  .content-container li{ margin-bottom:0.5rem; padding-left:0.15rem; }
+  ul{ list-style:none; }
+  .content-container ul > li::before{ content:'›'; color: hsl(var(--primary)); margin-right:0.6rem; font-weight:700; }
+  ol{ counter-reset:step; }
+  ol > li{ list-style:none; position:relative; padding-left:0.4rem; }
+  ol > li::before{ counter-increment:step; content: counter(step, decimal-leading-zero); color: hsl(var(--primary-foreground)); background: hsl(var(--primary)); font-size:0.65rem; font-weight:700; border-radius:3px; padding:0.1rem 0.35rem; margin-right:0.65rem; }
 
-    .content-container {
-      max-width: var(--max-content-width);
-      margin: 0 auto;
-      padding: 0 4rem 6rem;
-    }
+  /* ── caret / signature motif ── */
+  .terminal-caret::after{
+    content:''; display:inline-block; width:8px; height:1em; background: hsl(var(--primary));
+    margin-left:3px; vertical-align:text-bottom; animation:caret-blink 1.1s steps(1) infinite;
+  }
+  @keyframes caret-blink{ 0%,50%{opacity:1;} 51%,100%{opacity:0;} }
 
-    /* ─── UI COMPONENTS ─── */
-    
-    ul, ol { padding-left: 1.5rem; margin-bottom: 1.25rem; color: var(--text-muted); }
-    li { margin-bottom: 0.5rem; }
+  /* ── layout ── */
+  .sidebar{
+    position:fixed; top:0; left:0; bottom:0; width:var(--sidebar-w);
+    background: hsl(var(--surface)); border-right:1px solid hsl(var(--border));
+    overflow-y:auto; z-index:50; padding-bottom:3rem;
+  }
+  .brand{ padding:1.5rem 1.5rem 1.25rem; border-bottom:1px solid hsl(var(--border)); position:sticky; top:0; background:hsl(var(--surface)); z-index:10; }
+  .brand-logo{ font-size:1.05rem; font-weight:700; color:hsl(var(--foreground)); display:flex; align-items:center; gap:0.5rem; }
+  .brand-logo svg{ color:hsl(var(--primary)); }
+  .brand-sub{ font-size:0.72rem; color: hsl(var(--muted-foreground)); margin-top:0.4rem; }
+  .brand-sub .prompt{ color: hsl(var(--primary)); }
 
-    /* Tables */
-    .table-container {
-      width: 100%;
-      overflow-x: auto;
-      margin: 1.5rem 0;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      background-color: var(--surface);
-    }
-    table { width: 100%; border-collapse: collapse; text-align: left; }
-    th, td { padding: 0.875rem 1.25rem; font-size: 0.875rem; border-bottom: 1px solid var(--border-light); }
-    th { background-color: var(--bg); font-weight: 600; color: var(--text-main); white-space: nowrap; }
-    td { color: var(--text-muted); vertical-align: top; }
-    tr:last-child td { border-bottom: none; }
-    
-    /* Callouts */
-    .callout {
-      display: flex;
-      gap: 1rem;
-      padding: 1.25rem;
-      border-radius: 6px;
-      margin: 1.5rem 0;
-      font-size: 0.9375rem;
-      border: 1px solid var(--border);
-      background-color: var(--surface-elevated);
-    }
-    .callout .icon { flex-shrink: 0; }
-    .callout .title { display: block; font-weight: 600; margin-bottom: 0.25rem; color: var(--text-main); }
-    .callout .body { color: var(--text-muted); }
-    .callout p:last-child { margin-bottom: 0; }
-    
-    .callout-info { border-left: 4px solid var(--info); }
-    .callout-info .icon svg { color: var(--info); }
-    
-    .callout-warning { border-left: 4px solid var(--warning); background-color: #FFFBEB; }
-    .callout-warning .icon svg { color: var(--warning); }
+  .nav-group{ margin-top:0; padding:1.1rem 0; border-top:1px solid hsl(var(--border)); }
+  .nav-group:first-of-type{ border-top:none; padding-top:1.1rem; }
+  .nav-label{
+    padding:0 1.5rem; font-size:0.74rem; font-weight:700; letter-spacing:0.07em;
+    color: hsl(var(--foreground)); margin-bottom:0.5rem; display:flex; gap:0.45rem; align-items:center;
+  }
+  .nav-label .idx{ color: hsl(var(--primary)); }
+  .nav-links{ list-style:none; padding:0; }
+  .nav-links li{ margin-bottom:0; padding-left:0; }
+  .nav-links li + li{ margin-top:0; }
+  .nav-links a{
+    display:block; padding:0.38rem 1.5rem 0.38rem 2.15rem; font-size:0.8rem; color: hsl(var(--muted-foreground));
+    border-left:2px solid transparent; transition:all .15s ease; position:relative; line-height:1.4;
+  }
+  .nav-links a:hover{ color: hsl(var(--foreground)); background: hsl(var(--surface-elevated)); }
+  .nav-links a.active{ color: hsl(var(--primary)); font-weight:600; border-left-color: hsl(var(--primary)); background: hsl(var(--accent) / 0.35); }
 
-    /* Code Blocks */
-    code {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.85em;
-      background-color: var(--bg);
-      color: var(--text-main);
-      padding: 0.2em 0.4em;
-      border-radius: 4px;
-      border: 1px solid var(--border);
-    }
+  .main-wrapper{ margin-left:var(--sidebar-w); flex:1; min-width:0; }
 
-    .code-block {
-      background-color: var(--code-bg);
-      border: 1px solid var(--code-border);
-      border-radius: 6px;
-      margin: 1.5rem 0;
-      overflow: hidden;
-    }
-    .code-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 0.5rem 1rem;
-      background-color: var(--surface);
-      border-bottom: 1px solid var(--code-border);
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.75rem;
-      color: var(--text-light);
-    }
-    .code-header .lang { font-weight: 600; text-transform: uppercase; color: var(--primary); }
-    pre {
-      padding: 1.25rem;
-      overflow-x: auto;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.875rem;
-      line-height: 1.6;
-      color: var(--code-text);
-      margin: 0;
-    }
-    pre code { background: none; padding: 0; border: none; color: inherit; font-size: inherit; }
+  .hero{ padding:5rem 4rem 3.5rem; border-bottom:1px solid hsl(var(--border)); background: hsl(var(--surface) / 0.4); }
+  .hero-inner{ max-width:var(--content-w); margin:0 auto; }
+  .hero-eyebrow{ font-size:0.78rem; color: hsl(var(--primary)); margin-bottom:1rem; display:flex; align-items:center; gap:0.5rem; }
+  .hero-desc{ font-size:1rem; color: hsl(var(--muted-foreground)); max-width:64ch; margin-top:1.1rem; }
 
-    /* Syntax Highlighting */
-    .c-kw { color: #D73A49; font-weight: 500; }
-    .c-fn { color: #6F42C1; }
-    .c-st { color: #032F62; }
-    .c-nu { color: #005CC5; }
-    .c-cm { color: #6A737D; font-style: italic; }
-    
-    .c-pl { background-color: #FFFBEB; border: 1px solid #FCD34D; color: #B45309; padding: 0 4px; border-radius: 3px; font-weight: 600; }
+  .term-window{
+    margin-top:2.25rem; border:1px solid hsl(var(--border)); border-radius: var(--radius);
+    background: hsl(var(--card)); overflow:hidden; box-shadow:0 20px 45px -25px hsl(220 40% 2% / 0.7);
+  }
+  .term-titlebar{
+    display:flex; align-items:center; gap:0.5rem; padding:0.65rem 0.9rem; background: hsl(var(--surface-elevated));
+    border-bottom:1px solid hsl(var(--border));
+  }
+  .term-dot{ width:9px; height:9px; border-radius:50%; background: hsl(var(--border-strong)); }
+  .term-dot.live{ background: hsl(var(--primary)); }
+  .term-title{ margin-left:0.4rem; font-size:0.72rem; color: hsl(var(--muted-foreground)); }
+  .term-body{ padding:1.25rem 1.4rem; font-size:0.85rem; }
+  .term-line{ display:flex; gap:0.6rem; margin-bottom:0.5rem; }
+  .term-prompt{ color: hsl(var(--primary)); flex-shrink:0; }
+  .term-out{ color: hsl(var(--muted-foreground)); }
+  .term-out .k{ color: hsl(var(--syntax-function)); }
+  .term-out .v{ color: hsl(var(--syntax-string)); }
 
-    /* Image placeholders / UI blocks */
-    .ui-mockup {
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      overflow: hidden;
-      margin: 2rem 0;
-      box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
-    }
-    .ui-mockup-header {
-      background: var(--bg);
-      border-bottom: 1px solid var(--border);
-      padding: 0.75rem 1rem;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.75rem;
-      font-weight: 600;
-      color: var(--text-main);
-      display: flex;
-      gap: 0.5rem;
-      align-items: center;
-    }
-    .ui-mockup-body {
-      background: var(--surface);
-      padding: 1.5rem;
-      font-size: 0.875rem;
-      color: var(--text-muted);
-    }
+  .content-container{ max-width:var(--content-w); margin:0 auto; padding:0 4rem 2rem; }
 
-    /* Scroll progress */
-    .progress-bar {
-      position: fixed; top: 0; left: var(--sidebar-width); right: 0;
-      height: 3px; background: transparent; z-index: 100;
-    }
-    .progress-fill {
-      height: 100%; background: var(--primary); width: 0%;
-    }
-  </style>
+  /* ── section rhythm & dividers ── */
+  .content-container section{ margin-top:3rem; padding-top:2.25rem; border-top:1px solid hsl(var(--border) / 0.5); }
+  .content-container section:first-of-type{ margin-top:0; padding-top:0; border-top:none; }
+  .content-container section:has(> h2){
+    margin-top:5.5rem; padding-top:3.25rem; border-top:1px solid hsl(var(--border));
+  }
+  .content-container section:first-of-type:has(> h2){ margin-top:0; padding-top:0; border-top:none; }
+  section > h2:first-child, section > h3:first-child{ margin-top:0; }
+
+  /* ── tables ── */
+  .table-container{ width:100%; overflow-x:auto; margin:1.5rem 0; border:1px solid hsl(var(--border)); border-radius: var(--radius); background: hsl(var(--card)); }
+  table{ width:100%; border-collapse:collapse; text-align:left; font-size:0.82rem; }
+  th,td{ padding:0.8rem 1.1rem; border-bottom:1px solid hsl(var(--border)); vertical-align:top; }
+  th{ background: hsl(var(--surface-elevated)); font-weight:600; color: hsl(var(--foreground)); white-space:nowrap; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.06em; }
+  td{ color: hsl(var(--muted-foreground)); }
+  tr:last-child td{ border-bottom:none; }
+
+  /* ── callouts ── */
+  .callout{ display:flex; gap:0.9rem; padding:1.1rem 1.25rem; border-radius: var(--radius); margin:1.5rem 0; font-size:0.85rem; background: hsl(var(--card)); border:1px solid hsl(var(--border)); border-left:3px solid hsl(var(--border-strong)); }
+  .callout .icon{ flex-shrink:0; margin-top:0.1rem; }
+  .callout .title{ display:block; font-weight:700; margin-bottom:0.3rem; color: hsl(var(--foreground)); font-size:0.78rem; text-transform:uppercase; letter-spacing:0.05em; }
+  .callout p{ margin-bottom:0; color: hsl(var(--muted-foreground)); }
+  .callout-info{ border-left-color: hsl(var(--syntax-function)); }
+  .callout-info .icon svg{ color: hsl(var(--syntax-function)); }
+  .callout-info .title{ color: hsl(var(--syntax-function)); }
+  .callout-warning{ border-left-color: hsl(var(--destructive)); }
+  .callout-warning .icon svg{ color: hsl(var(--destructive)); }
+  .callout-warning .title{ color: hsl(var(--destructive)); }
+
+  /* ── inline code / kbd ── */
+  code{
+    font-family:'JetBrains Mono',monospace; font-size:0.86em; background: hsl(var(--muted));
+    color: hsl(var(--syntax-variable)); padding:0.18em 0.42em; border-radius:3px; border:1px solid hsl(var(--border));
+  }
+  .kbd{
+    display:inline-flex; align-items:center; font-family:'JetBrains Mono',monospace; font-size:0.72rem; font-weight:600;
+    background: hsl(var(--secondary)); color: hsl(var(--foreground)); border:1px solid hsl(var(--border-strong));
+    border-bottom-width:2px; padding:0.2rem 0.5rem; border-radius:4px;
+  }
+
+  /* ── code blocks ── */
+  .code-block{ background: hsl(var(--card)); border:1px solid hsl(var(--border)); border-radius: var(--radius); margin:1.5rem 0; overflow:hidden; }
+  .code-header{
+    display:flex; justify-content:space-between; align-items:center; padding:0.55rem 1rem;
+    background: hsl(var(--surface-elevated)); border-bottom:1px solid hsl(var(--border)); font-size:0.72rem; color: hsl(var(--muted-foreground));
+  }
+  .code-header .dots{ display:flex; gap:5px; margin-right:0.6rem; }
+  .code-header .dots span{ width:8px; height:8px; border-radius:50%; background: hsl(var(--border-strong)); }
+  .code-header-left{ display:flex; align-items:center; }
+  .code-header .lang{ font-weight:700; text-transform:uppercase; color: hsl(var(--primary)); letter-spacing:0.06em; }
+  pre{ padding:1.15rem 1.3rem; overflow-x:auto; font-size:0.82rem; line-height:1.7; color: hsl(var(--syntax-variable)); margin:0; }
+  pre code{ background:none; padding:0; border:none; color:inherit; font-size:inherit; }
+
+  .c-kw{ color: hsl(var(--syntax-keyword)); }
+  .c-fn{ color: hsl(var(--syntax-function)); }
+  .c-st{ color: hsl(var(--syntax-string)); }
+  .c-nu{ color: hsl(var(--syntax-number)); }
+  .c-cm{ color: hsl(var(--syntax-comment)); font-style:italic; }
+  .c-pl{ background: hsl(var(--accent) / 0.55); border:1px solid hsl(var(--primary) / 0.5); color: hsl(var(--accent-foreground)); padding:0 5px; border-radius:3px; font-weight:600; }
+  .c-vr{ color: hsl(var(--syntax-function)); }
+
+  /* ── ui mockup ── */
+  .ui-mockup{ border:1px solid hsl(var(--border)); border-radius: var(--radius); overflow:hidden; margin:2rem 0; background: hsl(var(--card)); }
+  .ui-mockup-header{ background: hsl(var(--surface-elevated)); border-bottom:1px solid hsl(var(--border)); padding:0.7rem 1rem; font-size:0.72rem; font-weight:600; color: hsl(var(--foreground)); display:flex; gap:0.5rem; align-items:center; }
+  .ui-mockup-body{ padding:1.5rem; font-size:0.85rem; color: hsl(var(--muted-foreground)); }
+  .mockup-panel{ background: hsl(var(--surface)); border:1px solid hsl(var(--border)); padding:1rem; border-radius:4px; }
+  .mockup-panel strong{ display:block; margin-bottom:0.5rem; color:hsl(var(--primary)); font-size:0.78rem; text-transform:uppercase; letter-spacing:0.05em; }
+  .mockup-panel small{ color: hsl(var(--muted-foreground)); font-size:0.78rem; }
+
+  footer{ padding:2.25rem 0 0.25rem; margin-top:3rem; border-top:1px solid hsl(var(--border)); text-align:center; }
+  footer p{ font-size:0.78rem; color: hsl(var(--muted-foreground)); margin:0; max-width:none; }
+  footer .prompt{ color: hsl(var(--primary)); }
+
+  .progress-bar{ position:fixed; top:0; left:var(--sidebar-w); right:0; height:2px; background:transparent; z-index:100; }
+  .progress-fill{ height:100%; background: hsl(var(--primary)); width:0%; box-shadow:0 0 8px hsl(var(--primary) / 0.6); }
+
+  @media (max-width: 900px){
+    .sidebar{ display:none; }
+    .main-wrapper{ margin-left:0; }
+    .hero{ padding:3rem 1.5rem; }
+    .content-container{ padding:0 1.5rem 5rem; }
+    .progress-bar{ left:0; }
+    .ui-mockup-body{ flex-direction:column; }
+    .ui-mockup-body > div{ width:100% !important; }
+  }
+</style>
 </head>
 <body>
 
 <div class="progress-bar"><div class="progress-fill" id="progressBar"></div></div>
 
-<!-- SIDEBAR NAVIGATION -->
+<!-- SIDEBAR -->
 <aside class="sidebar">
   <div class="brand">
     <div class="brand-logo">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-      CurlCraft
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+      curl2py
     </div>
-    <div class="brand-subtitle">Detailed User Guide</div>
+    <div class="brand-sub"><span class="prompt">$</span> docs --version 1.0</div>
   </div>
 
   <div class="nav-group">
-    <div class="nav-label">1. Introduction</div>
+    <div class="nav-label"><span class="idx">01</span> Introduction</div>
     <ul class="nav-links">
-      <li><a href="#intro-overview">Overview</a></li>
-      <li><a href="#intro-account">Account &amp; Cloud Save</a></li>
+      <li><a href="#intro-overview">overview</a></li>
+      <li><a href="#intro-account">account &amp; cloud save</a></li>
     </ul>
   </div>
 
   <div class="nav-group">
-    <div class="nav-label">2. The Workspace</div>
+    <div class="nav-label"><span class="idx">02</span> The workspace</div>
     <ul class="nav-links">
-      <li><a href="#workspace-layout">Layout &amp; Panels</a></li>
-      <li><a href="#workspace-topbar">Top Bar Controls</a></li>
-      <li><a href="#workspace-collections">Collections &amp; Snippets</a></li>
+      <li><a href="#workspace-layout">layout &amp; panels</a></li>
+      <li><a href="#workspace-topbar">top bar controls</a></li>
+      <li><a href="#workspace-collections">collections &amp; snippets</a></li>
     </ul>
   </div>
 
   <div class="nav-group">
-    <div class="nav-label">3. Code Generation</div>
+    <div class="nav-label"><span class="idx">03</span> Code generation</div>
     <ul class="nav-links">
-      <li><a href="#code-curl">Pasting cURL &amp; Proxies</a></li>
-      <li><a href="#code-generate">Generating Python (curl_cffi)</a></li>
-      <li><a href="#code-run">Executing &amp; Responses</a></li>
+      <li><a href="#code-curl">pasting cURL &amp; proxies</a></li>
+      <li><a href="#code-generate">generating python (curl_cffi)</a></li>
+      <li><a href="#code-run">executing &amp; responses</a></li>
     </ul>
   </div>
 
   <div class="nav-group">
-    <div class="nav-label">4. Visual Parsers</div>
+    <div class="nav-label"><span class="idx">04</span> Visual parsers</div>
     <ul class="nav-links">
-      <li><a href="#parser-json">JSON Parser in Detail</a></li>
-      <li><a href="#parser-loops">Loop Extraction vs Single</a></li>
-      <li><a href="#parser-html">HTML DOM &amp; Extractors</a></li>
-      <li><a href="#parser-db">Database Generation</a></li>
+      <li><a href="#parser-json">json parser in detail</a></li>
+      <li><a href="#parser-loops">loop vs single extraction</a></li>
+      <li><a href="#parser-html">html dom &amp; extractors</a></li>
+      <li><a href="#parser-db">database generation</a></li>
     </ul>
   </div>
 
   <div class="nav-group">
-    <div class="nav-label">5. Pipelines (Connecting)</div>
+    <div class="nav-label"><span class="idx">05</span> Pipelines</div>
     <ul class="nav-links">
-      <li><a href="#pipeline-intro">How Pipelines Work</a></li>
-      <li><a href="#pipeline-syntax">Variables &amp; Syntax</a></li>
-      <li><a href="#pipeline-tutorial">Tutorial: 3-Step Chain</a></li>
-      <li><a href="#pipeline-merge">Merge Scripts (main.py)</a></li>
+      <li><a href="#pipeline-intro">how pipelines work</a></li>
+      <li><a href="#pipeline-syntax">variables &amp; syntax</a></li>
+      <li><a href="#pipeline-tutorial">tutorial: 3-step chain</a></li>
+      <li><a href="#pipeline-merge">merge scripts (main.py)</a></li>
     </ul>
   </div>
 
   <div class="nav-group">
-    <div class="nav-label">6. Advanced Features</div>
+    <div class="nav-label"><span class="idx">06</span> Advanced</div>
     <ul class="nav-links">
-      <li><a href="#advanced-feasibility">Feasibility Check</a></li>
-      <li><a href="#advanced-proxy">IP Rotation System</a></li>
-      <li><a href="#advanced-export">Exporting (ZIP)</a></li>
-      <li><a href="#advanced-issues">Issue Tracking System</a></li>
+      <li><a href="#advanced-feasibility">feasibility check</a></li>
+      <li><a href="#advanced-proxy">ip rotation system</a></li>
+      <li><a href="#advanced-export">exporting (zip)</a></li>
+      <li><a href="#advanced-issues">issue tracking</a></li>
     </ul>
   </div>
 </aside>
 
-<!-- MAIN CONTENT -->
+<!-- MAIN -->
 <main class="main-wrapper">
-  
+
   <header class="hero" id="intro-overview">
     <div class="hero-inner">
-      <h1>CurlCraft Comprehensive Guide</h1>
-      <p class="hero-desc">This is the official, unabridged documentation for CurlCraft. It covers every single button, feature, configuration, and advanced technique available in the application. Whether you are extracting a single JSON key or building a 10-step proxy-rotated data pipeline, you will find the exact details here.</p>
+      <div class="hero-eyebrow">~/docs <span class="terminal-caret"></span></div>
+      <h1>curl2py documentation</h1>
+      <p class="hero-desc">Everything the app can do, in one place: pasting a cURL command, generating Python with <code>curl_cffi</code>, extracting data with the visual parsers, and chaining requests into a full pipeline.</p>
+
+      <div class="term-window">
+        <div class="term-titlebar">
+          <span class="term-dot"></span><span class="term-dot"></span><span class="term-dot live"></span>
+          <span class="term-title">curl2py — request → python</span>
+        </div>
+        <div class="term-body">
+          <div class="term-line"><span class="term-prompt">$</span><span>paste cURL from devtools, click Generate</span></div>
+          <div class="term-line term-out">→ <span class="k">status</span>: <span class="v">200 OK</span> · <span class="k">impersonate</span>: <span class="v">"chrome"</span> · <span class="k">file</span>: <span class="v">login.py</span></div>
+        </div>
+      </div>
     </div>
   </header>
 
   <div class="content-container">
-    
+
     <section id="intro-account">
-      <h2>1. Account &amp; Cloud Save</h2>
-      <p>CurlCraft functions entirely in your browser without an account using Local Storage. However, registering for a free account unlocks <strong>Cloud Sync</strong>.</p>
-      
-      <h3>Registration &amp; Login</h3>
-      <p>Access the <strong>Login</strong> page via the top right corner. You can register using an Email/Password or continue with Google. Password registration requires a minimum of 8 characters and includes a real-time strength meter.</p>
-      
-      <h3>Forgot Password Flow</h3>
-      <p>If you forget your password, the reset process uses a secure OTP (One Time Password):</p>
+      <h2><span class="num">01.2</span>Account &amp; cloud save</h2>
+      <p>curl2py works entirely in your browser without an account, using local storage. Registering for a free account unlocks <strong>cloud sync</strong>.</p>
+
+      <h3>Registration &amp; login</h3>
+      <p>Open <strong>Login</strong> from the top right corner. Register with email/password or continue with Google. Password registration requires a minimum of 8 characters and shows a real-time strength meter.</p>
+
+      <h3>Forgot password flow</h3>
+      <p>If you forget your password, reset it with a one-time code:</p>
       <ol>
         <li>Enter your registered email address.</li>
-        <li>Receive a 6-digit OTP code in your inbox. Enter it within the time limit.</li>
+        <li>Receive a 6-digit OTP in your inbox and enter it before it expires.</li>
         <li>Set and confirm a new password.</li>
       </ol>
 
-      <h3>Auto-Saving</h3>
-      <p>Once logged in, CurlCraft <strong>auto-saves</strong> your entire workspace (Collections, Snippets, Parsers, Code) every time you make a change. You will see a small "Saved" indicator in the bottom right status bar. You can also manually trigger a save by clicking the <strong>Save</strong> button in the top bar.</p>
+      <h3>Auto-saving</h3>
+      <p>Once logged in, curl2py <strong>auto-saves</strong> your entire workspace — collections, snippets, parsers, code — on every change. A small "Saved" indicator appears in the bottom-right status bar. You can also force a save with the <span class="kbd">Save</span> button in the top bar.</p>
     </section>
 
     <section id="workspace-layout">
-      <h2>2. The Workspace</h2>
-      <p>The CurlCraft workspace is divided into a robust, 4-panel architecture designed to keep input, output, and file management visible simultaneously.</p>
-      
+      <h2><span class="num">02.1</span>The workspace</h2>
+      <p>The workspace is a 4-panel layout that keeps input, output, and file management visible at the same time.</p>
+
       <div class="ui-mockup">
         <div class="ui-mockup-header">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
-          Workspace Anatomy
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+          workspace anatomy
         </div>
-        <div class="ui-mockup-body" style="display: flex; gap: 1rem;">
-          <div style="width: 20%; background: var(--bg); border: 1px solid var(--border); padding: 1rem; border-radius: 4px;"><strong>Sidebar</strong><br><br><small>File tree, collections, generated scripts.</small></div>
-          <div style="width: 35%; background: var(--bg); border: 1px solid var(--border); padding: 1rem; border-radius: 4px;"><strong>Input Panel</strong><br><br><small>cURL inputs, Proxy configuration, Snippet ordering.</small></div>
-          <div style="width: 45%; background: var(--bg); border: 1px solid var(--border); padding: 1rem; border-radius: 4px;"><strong>Output Panel</strong><br><br><small>Code Editor (Monaco), Response Viewer, Error Logs.</small></div>
+        <div class="ui-mockup-body" style="display:flex; gap:1rem;">
+          <div class="mockup-panel" style="width:20%;"><strong>Sidebar</strong><small>File tree, collections, generated scripts.</small></div>
+          <div class="mockup-panel" style="width:35%;"><strong>Input panel</strong><small>cURL input, proxy configuration, snippet ordering.</small></div>
+          <div class="mockup-panel" style="width:45%;"><strong>Output panel</strong><small>Code editor, response viewer, error logs.</small></div>
         </div>
       </div>
     </section>
 
     <section id="workspace-topbar">
-      <h3>Top Bar Controls</h3>
-      <p>The top bar is your command center. Every primary action is triggered here.</p>
-      
+      <h3>Top bar controls</h3>
+      <p>Every primary action lives in the top bar.</p>
+
       <div class="table-container">
         <table>
-          <thead>
-            <tr>
-              <th>Button</th>
-              <th>Detailed Function</th>
-            </tr>
-          </thead>
+          <thead><tr><th>Control</th><th>What it does</th></tr></thead>
           <tbody>
-            <tr>
-              <td><strong>Sidebar Toggle</strong></td>
-              <td>Shows or hides the left file tree panel to maximize editor space.</td>
-            </tr>
-            <tr>
-              <td><strong>N Snippets</strong></td>
-              <td>A dropdown listing all requests in the current collection. Click one to jump to it. Includes a quick "Add Request" button at the bottom.</td>
-            </tr>
-            <tr>
-              <td><strong>Parser</strong></td>
-              <td>Navigates to the dedicated Parser Page for the currently active request. If the request hasn't been run yet, it prompts you to run it first.</td>
-            </tr>
-            <tr>
-              <td><strong>Generate</strong></td>
-              <td>Syncs the frontend state with the backend, translating all raw cURL commands into executable Python code. Generates <code>request.py</code> files.</td>
-            </tr>
-            <tr>
-              <td><strong>Feasibility</strong></td>
-              <td>Generates a diagnostic Python script to test if an endpoint is blocked by WAFs (Web Application Firewalls) or requires JavaScript execution.</td>
-            </tr>
-            <tr>
-              <td><strong>Save</strong></td>
-              <td>Manually forces a cloud-sync of the entire workspace state (requires login).</td>
-            </tr>
-            <tr>
-              <td><strong>Run</strong></td>
-              <td>Sends the generated Python code to the backend for sandboxed execution. Returns the HTTP status, timing, and response body.</td>
-            </tr>
-            <tr>
-              <td><strong>Help</strong></td>
-              <td>Opens this comprehensive documentation in a new tab.</td>
-            </tr>
-            <tr>
-              <td><strong>Tools</strong></td>
-              <td>A dropdown containing advanced utilities: <strong>Merge Scripts</strong> (for orchestrating pipelines) and <strong>Download All</strong> (for exporting as ZIP).</td>
-            </tr>
+            <tr><td><span class="kbd">Sidebar</span></td><td>Shows or hides the left file tree to give the editor more room.</td></tr>
+            <tr><td><span class="kbd">N Snippets</span></td><td>Dropdown listing every request in the current collection, with a quick "Add Request" button at the bottom.</td></tr>
+            <tr><td><span class="kbd">Parser</span></td><td>Opens the Parser page for the active request. If the request hasn't run yet, you're prompted to run it first.</td></tr>
+            <tr><td><span class="kbd">Generate</span></td><td>Turns raw cURL commands into executable Python, producing <code>request.py</code> files.</td></tr>
+            <tr><td><span class="kbd">Feasibility</span></td><td>Generates a diagnostic script to check whether an endpoint is blocked by a WAF or needs JS execution.</td></tr>
+            <tr><td><span class="kbd">Save</span></td><td>Forces a manual cloud sync of the whole workspace (requires login).</td></tr>
+            <tr><td><span class="kbd">Run</span></td><td>Sends the generated Python to the backend for sandboxed execution and returns status, timing, and body.</td></tr>
+            <tr><td><span class="kbd">Help</span></td><td>Opens this documentation in a new tab.</td></tr>
+            <tr><td><span class="kbd">Tools</span></td><td>Dropdown with <strong>Merge Scripts</strong> for pipelines and <strong>Download All</strong> for exporting a ZIP.</td></tr>
           </tbody>
         </table>
       </div>
     </section>
 
     <section id="workspace-collections">
-      <h3>Collections &amp; Snippets</h3>
-      <p>Your work is structured hierarchically. A <strong>Collection</strong> is a project folder. Inside a collection are <strong>Snippets</strong> (individual API requests).</p>
-      
-      <h4>Managing Collections</h4>
+      <h3>Collections &amp; snippets</h3>
+      <p>Work is organized hierarchically. A <strong>collection</strong> is a project folder; a <strong>snippet</strong> is one API request inside it.</p>
+
+      <h4>Managing collections</h4>
       <ul>
-        <li><strong>Create:</strong> Click the <code>+</code> icon next to the "COLLECTION" header in the sidebar.</li>
-        <li><strong>Rename:</strong> Click on the collection name in the sidebar to edit it inline. Press <code>Enter</code> to save.</li>
-        <li><strong>Delete:</strong> Hover over the collection in the sidebar to reveal the trash can icon.</li>
+        <li><strong>Create:</strong> click the <code>+</code> icon next to "COLLECTION" in the sidebar.</li>
+        <li><strong>Rename:</strong> click the collection name to edit it inline, then press <code>Enter</code>.</li>
+        <li><strong>Delete:</strong> hover the collection to reveal the trash icon.</li>
       </ul>
 
-      <h4>Managing Snippets (Requests)</h4>
-      <p>Snippets live in the Input Panel as distinct cards.</p>
+      <h4>Managing snippets</h4>
+      <p>Snippets live in the Input Panel as individual cards.</p>
       <ul>
-        <li><strong>Naming:</strong> At the top of each card is an input field. <em>Always name your snippets</em> (e.g., <code>login</code>, <code>get_data</code>). If left blank, the system auto-generates a name based on the URL path. The snippet name determines the generated Python function name and filename (<code>login.py</code>).</li>
-        <li><strong>Ordering:</strong> Hover over the left side of a snippet card to reveal a grip handle. Click and drag to reorder snippets. The order is critical when using <strong>Merge Scripts</strong>, as they execute top-to-bottom.</li>
-        <li><strong>Deleting:</strong> Hover over a snippet card to reveal an <code>X</code> icon in the top right to remove it.</li>
+        <li><strong>Naming:</strong> name every snippet (e.g. <code>login</code>, <code>get_data</code>). Left blank, a name is generated from the URL path. This name becomes the Python function name and filename (<code>login.py</code>).</li>
+        <li><strong>Ordering:</strong> hover the left edge of a card for the grip handle, then drag to reorder. Order matters for <strong>Merge Scripts</strong>, which execute top to bottom.</li>
+        <li><strong>Deleting:</strong> hover a card to reveal the <code>×</code> icon.</li>
       </ul>
     </section>
 
     <section id="code-curl">
-      <h2>3. Code Generation</h2>
-      
-      <h3>Pasting cURL &amp; Proxies</h3>
-      <p>The Input panel contains a large text area for each snippet. Paste standard cURL commands directly from your browser's developer tools (Network Tab &rarr; Right Click &rarr; Copy as cURL).</p>
-      
-      <p>The system automatically parses the raw string into structured data (URL, Method, Headers, Cookies, Body). Once pasted, the text area collapses to show a clean summary (e.g., <code>GET https://api.example.com</code>). You can click the arrow to expand it again.</p>
+      <h2><span class="num">03.1</span>Code generation</h2>
+      <p>Paste standard cURL commands straight from devtools (Network tab → right-click → Copy as cURL) into the Input Panel's text area.</p>
+      <p>curl2py parses the raw string into structured data — URL, method, headers, cookies, body — then collapses the field to a clean one-line summary (e.g. <code>GET https://api.example.com</code>). Click the arrow to expand it again.</p>
 
-      <h4>Static Proxy Configuration</h4>
-      <p>At the top of the Input Panel is a <strong>Proxy</strong> tab. Entering a proxy URL here (e.g., <code>http://user:pass@192.168.1.1:8080</code>) and checking "Enable Proxy" will hardcode this proxy into the Python scripts generated for <em>all</em> snippets in the collection.</p>
+      <h4>Static proxy configuration</h4>
+      <p>The <strong>Proxy</strong> tab at the top of the Input Panel lets you enter a proxy URL (e.g. <code>http://user:pass@192.168.1.1:8080</code>). Checking "Enable Proxy" hardcodes it into the generated Python for every snippet in the collection.</p>
     </section>
 
     <section id="code-generate">
       <h3>Generating Python (curl_cffi)</h3>
-      <p>When you click <strong>Generate</strong>, CurlCraft creates Python files visible in the Code Editor. We use the <code>curl_cffi</code> library instead of the standard <code>requests</code> library.</p>
-      
+      <p>Clicking <span class="kbd">Generate</span> writes Python files into the Code Editor, built on <code>curl_cffi</code> instead of the standard <code>requests</code> library.</p>
+
       <div class="callout callout-info">
-        <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></div>
+        <div class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></div>
         <div class="body">
-          <span class="title">Why curl_cffi?</span>
-          <p>Modern APIs use TLS Fingerprinting (like Cloudflare's JA3 checks) to detect and block Python scraping scripts. <code>curl_cffi</code> allows the script to pass the parameter <code>impersonate="chrome"</code>, which mimics a real browser's TLS handshake, bypassing these blocks flawlessly.</p>
+          <span class="title">Why curl_cffi</span>
+          <p>Modern APIs fingerprint the TLS handshake (Cloudflare's JA3 checks, for example) to detect scraping scripts. Passing <code>impersonate="chrome"</code> makes the request mimic a real browser's handshake, so it isn't flagged.</p>
         </div>
       </div>
 
-      <p>The generated code separates headers, cookies, and parameters into neat dictionaries. It automatically determines if a body should be sent as <code>json=</code> or <code>data=</code> based on the parsed <code>Content-Type</code> header.</p>
+      <p>Headers, cookies, and parameters are written into clean dictionaries. The body is sent as <code>json=</code> or <code>data=</code> automatically, based on the parsed <code>Content-Type</code> header.</p>
     </section>
 
     <section id="code-run">
-      <h3>Executing &amp; Responses</h3>
-      <p>Clicking <strong>Run</strong> sends the generated Python code to the backend. The backend spins up a sandboxed subprocess to execute the script safely. If the script throws a Python error (e.g., Syntax Error), it is displayed in the Output panel.</p>
-      
-      <p>If successful, the API response is saved to a file (e.g., <code>login_response.json</code>) and displayed in the <strong>Response Viewer</strong> tab. The viewer includes:</p>
+      <h3>Executing &amp; responses</h3>
+      <p>Clicking <span class="kbd">Run</span> sends the generated Python to a sandboxed subprocess on the backend. A Python error, like a syntax error, is shown directly in the Output panel.</p>
+      <p>On success, the response is saved to a file (e.g. <code>login_response.json</code>) and shown in the <strong>Response Viewer</strong>, which includes:</p>
       <ul>
-        <li><strong>Status Bar:</strong> Shows HTTP Status (200, 404, etc.), response time in milliseconds, and content size.</li>
-        <li><strong>Syntax Highlighting:</strong> JSON and HTML are beautifully formatted and color-coded.</li>
-        <li><strong>Interactive Elements:</strong> Clicking on keys in the JSON viewer, or elements in the HTML viewer, triggers the Parser system (detailed below).</li>
+        <li><strong>Status bar:</strong> HTTP status, response time in ms, and content size.</li>
+        <li><strong>Syntax highlighting:</strong> JSON and HTML rendered with color.</li>
+        <li><strong>Interactive elements:</strong> clicking a JSON key or HTML element opens the Parser.</li>
       </ul>
     </section>
 
     <section id="parser-json">
-      <h2>4. Visual Parsers</h2>
-      <p>Extracting specific data from massive API responses is tedious in raw code. The Visual Parser system automates this entirely.</p>
-      
-      <h3>JSON Parser in Detail</h3>
-      <p>Navigate to <strong>Parser &rarr; JSON Parser</strong>. The interface has multiple tabs:</p>
-      
+      <h2><span class="num">04.1</span>Visual parsers</h2>
+      <p>Pulling specific fields out of a large response by hand is slow. The visual parser automates it.</p>
+
+      <h3>JSON parser in detail</h3>
+      <p>Open <strong>Parser → JSON Parser</strong>. Four tabs:</p>
+
       <div class="table-container">
         <table>
-          <thead>
-            <tr>
-              <th>Tab</th>
-              <th>Function</th>
-            </tr>
-          </thead>
+          <thead><tr><th>Tab</th><th>Function</th></tr></thead>
           <tbody>
-            <tr>
-              <td><strong>Source</strong></td>
-              <td>Displays the raw JSON response. <strong>Click any key</strong> to instantly generate a JSON path for extraction. You can also manually paste JSON via the "Edit JSON" button if you don't want to run a live request.</td>
-            </tr>
-            <tr>
-              <td><strong>Paths</strong></td>
-              <td>Lists all selected extraction paths. Here you define the <strong>Output Key</strong> (the variable name in Python) and configure <strong>Loops</strong>.</td>
-            </tr>
-            <tr>
-              <td><strong>Parser (Code)</strong></td>
-              <td>Displays the auto-generated <code>parser.py</code> file. This file contains the Python dictionary traversal code.</td>
-            </tr>
-            <tr>
-              <td><strong>Output</strong></td>
-              <td>Shows the result of running the parser code against the source JSON. Includes a JSON view and a Table view for arrays.</td>
-            </tr>
+            <tr><td><strong>Source</strong></td><td>Raw JSON response. Click any key to generate its extraction path, or paste JSON manually with "Edit JSON" without running a live request.</td></tr>
+            <tr><td><strong>Paths</strong></td><td>Every selected extraction path. Define the <strong>output key</strong> — the Python variable name — and configure loops here.</td></tr>
+            <tr><td><strong>Parser (Code)</strong></td><td>The generated <code>parser.py</code>, containing the dictionary traversal code.</td></tr>
+            <tr><td><strong>Output</strong></td><td>The parser's result against the source JSON, in a JSON view and a table view for arrays.</td></tr>
           </tbody>
         </table>
       </div>
 
-      <h4>JSON Dot-Notation Arrays</h4>
-      <p>When you click a nested field, CurlCraft calculates the exact path using dot-notation. For example, clicking the price of the first item in an array generates the path <code>data.items[0].price</code>. By default, this extracts a <strong>single scalar value</strong>.</p>
+      <h4>JSON dot-notation arrays</h4>
+      <p>Clicking a nested field computes an exact dot-notation path — clicking the price of the first item in an array gives <code>data.items[0].price</code> — and by default extracts a <strong>single scalar value</strong>.</p>
     </section>
 
     <section id="parser-loops">
-      <h3>Loop Extraction vs Single Value</h3>
-      <p>Extracting a single value is easy, but usually, you want to extract data for <em>every</em> item in a list. This is where <strong>Loop Extraction</strong> comes in.</p>
-      
-      <p>In the <strong>Paths</strong> tab, look at the dropdown next to a path. If the path passes through an array (e.g., <code>data.items[0]</code>), the dropdown will populate with loop candidates (e.g., <code>data.items[*]</code>). Selecting the loop candidate instructs the code generator to write a Python <strong>List Comprehension</strong> instead of a direct index access.</p>
+      <h3>Loop extraction vs. single value</h3>
+      <p>A single value is easy, but usually you want every item in a list. That's <strong>loop extraction</strong>.</p>
+      <p>In the Paths tab, a path through an array (e.g. <code>data.items[0]</code>) populates a dropdown with loop candidates like <code>data.items[*]</code>. Selecting one tells the generator to write a Python <strong>list comprehension</strong> instead of a fixed index.</p>
 
       <div class="code-block">
-        <div class="code-header"><span>Single Extraction Code</span><span class="lang">Python</span></div>
-        <pre><code><span class="c-cm"># Path: data.items[0].name</span>
+        <div class="code-header">
+          <div class="code-header-left"><span class="dots"><span></span><span></span><span></span></span>single_extraction.py</div>
+          <span class="lang">python</span>
+        </div>
+        <pre><code><span class="c-cm"># path: data.items[0].name</span>
 result[<span class="c-st">"name"</span>] = data[<span class="c-st">"items"</span>][<span class="c-nu">0</span>][<span class="c-st">"name"</span>]</code></pre>
       </div>
 
       <div class="code-block">
-        <div class="code-header"><span>Loop Extraction Code</span><span class="lang">Python</span></div>
-        <pre><code><span class="c-cm"># Path: data.items[0].name | Loop: data.items[*]</span>
+        <div class="code-header">
+          <div class="code-header-left"><span class="dots"><span></span><span></span><span></span></span>loop_extraction.py</div>
+          <span class="lang">python</span>
+        </div>
+        <pre><code><span class="c-cm"># path: data.items[0].name | loop: data.items[*]</span>
 result[<span class="c-st">"name"</span>] = [
-    item[<span class="c-st">"name"</span>] 
+    item[<span class="c-st">"name"</span>]
     <span class="c-kw">for</span> item <span class="c-kw">in</span> data[<span class="c-st">"items"</span>]
 ]</code></pre>
       </div>
-      <p>Click the <strong>Optimize Parser</strong> button to clean up redundant loops and merge paths sharing the same array base.</p>
+      <p>Click <span class="kbd">Optimize Parser</span> to remove redundant loops and merge paths sharing the same array base.</p>
     </section>
 
     <section id="parser-html">
-      <h3>HTML DOM &amp; Extractors</h3>
-      <p>If the API returns raw HTML, the Parser page automatically opens the <strong>HTML Parser</strong>. It provides two distinct extraction methods:</p>
+      <h3>HTML DOM &amp; extractors</h3>
+      <p>If the response is raw HTML, the Parser page opens the <strong>HTML Parser</strong> automatically, with two extraction methods:</p>
 
-      <h4>1. Visual DOM Picker</h4>
-      <p>The HTML is rendered safely in an iframe. As you hover over the page, elements are highlighted. Clicking an element calculates the most resilient <strong>CSS Selector</strong> and <strong>XPath</strong> available.</p>
-      <p>In the Paths tab, you configure <em>what</em> to extract from that selector:</p>
+      <h4>1. Visual DOM picker</h4>
+      <p>The HTML renders in a sandboxed iframe; hovering highlights elements. Clicking one computes the most resilient <strong>CSS selector</strong> and <strong>XPath</strong> available. In the Paths tab, choose what to pull from that selector:</p>
       <ul>
-        <li><code>text</code>: Extracts the visible inner text.</li>
-        <li><code>html</code>: Extracts the raw inner HTML tags.</li>
-        <li><code>attr</code>: Extracts a specific attribute (you must define which one, e.g., <code>href</code> for links, <code>src</code> for images).</li>
+        <li><code>text</code> — the visible inner text.</li>
+        <li><code>html</code> — the raw inner HTML.</li>
+        <li><code>attr</code> — a specific attribute you name, such as <code>href</code> or <code>src</code>.</li>
       </ul>
 
-      <h4>2. Script Data Extractor (JSON-in-HTML)</h4>
-      <p>Modern web frameworks (Next.js, Nuxt.js) don't rely on HTML parsing; they embed their entire state as a massive JSON object inside a <code>&lt;script&gt;</code> tag. CurlCraft detects this automatically.</p>
-      <p>Click <strong>Extract JSON</strong> in the HTML parser toolbar. The tool scans the page for known injection variables (<code>__NEXT_DATA__</code>, <code>__NUXT__</code>, <code>window.initialState</code>). Select the block you want, click <strong>Save and Open JSON Parser</strong>, and CurlCraft will isolate that JSON and load it into the JSON Parser for easy clicking.</p>
+      <h4>2. Script data extractor (JSON-in-HTML)</h4>
+      <p>Frameworks like Next.js and Nuxt.js embed their state as JSON inside a <code>&lt;script&gt;</code> tag rather than the DOM. curl2py detects this automatically.</p>
+      <p>Click <span class="kbd">Extract JSON</span> in the toolbar. It scans for known injection variables (<code>__NEXT_DATA__</code>, <code>__NUXT__</code>, <code>window.initialState</code>). Pick a block, click <span class="kbd">Save and Open JSON Parser</span>, and it loads straight into the JSON Parser.</p>
     </section>
 
     <section id="parser-db">
-      <h3>Database Generation</h3>
-      <p>Once your JSON parser is successfully extracting arrays of data, navigate to the <strong>DB Code</strong> tab to convert that data into database insertion scripts.</p>
-      
-      <p>Select your target database from the dropdown:</p>
+      <h3>Database generation</h3>
+      <p>Once the JSON parser extracts an array of data, open the <strong>DB Code</strong> tab to turn it into insertion scripts.</p>
       <ul>
-        <li><strong>MySQL:</strong> Generates Python code using <code>mysql.connector</code>. It inspects your parsed JSON schema, generates a <code>CREATE TABLE IF NOT EXISTS</code> statement with appropriate SQL data types (VARCHAR, INT, DECIMAL), and writes an <code>executemany</code> query for bulk insertion.</li>
-        <li><strong>MongoDB:</strong> Generates Python code using <code>pymongo</code>. It creates a simple connection script utilizing <code>collection.insert_many()</code> to dump the JSON documents directly into the NoSQL store.</li>
+        <li><strong>MySQL:</strong> uses <code>mysql.connector</code>. Inspects the parsed schema, writes a <code>CREATE TABLE IF NOT EXISTS</code> with matching SQL types (VARCHAR, INT, DECIMAL), and an <code>executemany</code> for bulk insert.</li>
+        <li><strong>MongoDB:</strong> uses <code>pymongo</code> with a connection script and <code>collection.insert_many()</code> to dump documents directly.</li>
       </ul>
-      <p>Click <strong>Save DB Code</strong> to add the generated <code>db.py</code> file to your workspace.</p>
+      <p>Click <span class="kbd">Save DB Code</span> to add <code>db.py</code> to your workspace.</p>
     </section>
 
     <section id="pipeline-intro">
-      <h2>5. Pipelines (Connecting Requests)</h2>
-      <p>Pipelines allow you to chain requests together. Instead of copy-pasting a token from Request A into Request B, you define a relationship, and CurlCraft writes Python code to pass the variable automatically.</p>
+      <h2><span class="num">05.1</span>Pipelines</h2>
+      <p>Pipelines chain requests together. Instead of copy-pasting a token from request A into request B, you declare the relationship and curl2py writes the Python to pass it automatically.</p>
     </section>
 
     <section id="pipeline-syntax">
-      <h3>Variables &amp; Syntax</h3>
-      <p>Variables are defined using double curly braces directly inside the raw cURL text area in the Input Panel. You can place them in the URL, Headers, or JSON body.</p>
-      
+      <h3>Variables &amp; syntax</h3>
+      <p>Variables use double curly braces inside the raw cURL text — in the URL, headers, or JSON body.</p>
+
       <div class="code-block">
-        <div class="code-header">
-          <span>Placeholder Syntax Structure</span>
-        </div>
+        <div class="code-header"><div class="code-header-left"><span class="dots"><span></span><span></span><span></span></span>placeholder syntax</div></div>
         <pre><code>{{<span class="c-vr">source_snippet_name</span>.<span class="c-vr">json_path</span>|<span class="c-kw">type</span>}}</code></pre>
       </div>
 
       <ul>
-        <li><strong>source_snippet_name:</strong> The exact name you gave the snippet that generates the data (e.g., <code>auth_login</code>).</li>
-        <li><strong>json_path:</strong> The dot-notation path to the specific data point in that snippet's JSON response (e.g., <code>.data.token</code>).</li>
-        <li><strong>type (Optional):</strong> Forces the variable to cast in Python. Options: <code>int</code>, <code>float</code>, <code>bool</code>, <code>string</code>. Defaults to string.</li>
+        <li><strong>source_snippet_name</strong> — the name you gave the source snippet, e.g. <code>auth_login</code>.</li>
+        <li><strong>json_path</strong> — dot-notation path to the value in that snippet's response, e.g. <code>.data.token</code>.</li>
+        <li><strong>type</strong> (optional) — casts the value in Python: <code>int</code>, <code>float</code>, <code>bool</code>, <code>string</code>. Defaults to string.</li>
       </ul>
 
-      <p><strong>Example usages:</strong></p>
+      <p><strong>Example usage:</strong></p>
       <div class="code-block">
-        <pre><code><span class="c-cm"># Injecting into a URL:</span>
-curl 'https://api.example.com/users/<span class="c-pl">{{auth_login.user.id|int}}</span>'
+        <div class="code-header"><div class="code-header-left"><span class="dots"><span></span><span></span><span></span></span>request.curl</div></div>
+        <pre><code><span class="c-cm"># injecting into a URL</span>
+curl <span class="c-st">'https://api.example.com/users/</span><span class="c-pl">{{auth_login.user.id|int}}</span><span class="c-st">'</span>
 
-<span class="c-cm"># Injecting into an Authorization Header:</span>
--H 'Authorization: Bearer <span class="c-pl">{{auth_login.token}}</span>'</code></pre>
+<span class="c-cm"># injecting into an authorization header</span>
+-H <span class="c-st">'Authorization: Bearer </span><span class="c-pl">{{auth_login.token}}</span><span class="c-st">'</span></code></pre>
       </div>
     </section>
 
     <section id="pipeline-tutorial">
-      <h3>Tutorial: 3-Step Chain</h3>
-      <p>Let's build a real pipeline to understand how it orchestrates data.</p>
-      
+      <h3>Tutorial: 3-step chain</h3>
+      <p>A real pipeline, end to end.</p>
       <ol>
-        <li>
-          <strong>Step 1: The Login Request</strong><br>
-          Create a snippet named <strong><code>auth_login</code></strong>. Assume it returns <code>{"session_token": "abc123"}</code>.
-        </li>
-        <li>
-          <strong>Step 2: Fetch Profile</strong><br>
-          Create a snippet named <strong><code>get_profile</code></strong>. In the cURL headers, write:<br>
-          <code>-H 'Authorization: Bearer {{auth_login.session_token}}'</code><br>
-          Assume this returns <code>{"user": {"internal_id": 994}}</code>.
-        </li>
-        <li>
-          <strong>Step 3: Update Status</strong><br>
-          Create a snippet named <strong><code>set_status</code></strong>. It requires the token in the header, and the user ID in the URL. Write:<br>
-          <code>curl -X POST 'https://api.com/users/{{get_profile.user.internal_id|int}}/status' -H 'Authorization: Bearer {{auth_login.session_token}}'</code>
-        </li>
+        <li><strong>Step 1 — the login request.</strong> Create a snippet named <code>auth_login</code>, returning <code>{"session_token": "abc123"}</code>.</li>
+        <li><strong>Step 2 — fetch profile.</strong> Create <code>get_profile</code>. In the cURL headers: <code>-H 'Authorization: Bearer {{auth_login.session_token}}'</code>. It returns <code>{"user": {"internal_id": 994}}</code>.</li>
+        <li><strong>Step 3 — update status.</strong> Create <code>set_status</code>, needing the token in the header and the user ID in the URL:<br><code>curl -X POST 'https://api.com/users/{{get_profile.user.internal_id|int}}/status' -H 'Authorization: Bearer {{auth_login.session_token}}'</code></li>
       </ol>
     </section>
 
     <section id="pipeline-merge">
-      <h3>Merge Scripts (main.py)</h3>
-      <p>Once your placeholders are set, how do you actually run the 3-step chain from the tutorial above? You use <strong>Merge Scripts</strong>.</p>
-      
-      <p>Click <strong>Tools &rarr; Merge Scripts</strong>. CurlCraft generates an orchestration file named <code>main.py</code>. This file:</p>
+      <h3>Merge scripts (main.py)</h3>
+      <p>With placeholders set, <strong>Merge Scripts</strong> is what actually runs the chain.</p>
+      <p>Click <strong>Tools → Merge Scripts</strong> to generate an orchestration file, <code>main.py</code>, which:</p>
       <ol>
-        <li>Creates a master dictionary called <code>pipeline_context</code>.</li>
-        <li>Calls <code>auth_login()</code>, parses its JSON response, and saves it to <code>pipeline_context["auth_login"]</code>.</li>
-        <li>Calls <code>get_profile(pipeline_context=pipeline_context)</code>. The generated code for <code>get_profile</code> uses the <code>pipeline_utils.py</code> helper to extract the token dynamically from the context dictionary. It saves its own response to the context.</li>
-        <li>Calls <code>set_status(pipeline_context=pipeline_context)</code>, extracting both the token and the ID dynamically.</li>
+        <li>Creates a master dictionary, <code>pipeline_context</code>.</li>
+        <li>Calls <code>auth_login()</code>, parses the response, and stores it at <code>pipeline_context["auth_login"]</code>.</li>
+        <li>Calls <code>get_profile(pipeline_context=pipeline_context)</code>, which uses <code>pipeline_utils.py</code> to pull the token from the context and saves its own response back into it.</li>
+        <li>Calls <code>set_status(pipeline_context=pipeline_context)</code>, resolving both the token and the ID dynamically.</li>
       </ol>
-      
-      <p>This creates a completely autonomous Python scraping script that requires zero manual intervention.</p>
+      <p>The result is a self-contained scraping script that needs no manual steps to run.</p>
     </section>
 
     <section id="advanced-feasibility">
-      <h2>6. Advanced Features</h2>
-      
-      <h3>Feasibility Check</h3>
-      <p>The <strong>Feasibility</strong> tool is used for rapid reconnaissance. Before building complex parsers or pipelines, you need to know if an endpoint is protected by Datadome, Cloudflare, or requires a headless browser.</p>
-      
-      <p>Clicking Feasibility generates a script that sends a basic request and logs critical metadata to the console. It checks the response size, status codes, and scans the HTML for known anti-bot challenge keywords or JS-framework state injections. It saves you hours of debugging.</p>
+      <h2><span class="num">06.1</span>Advanced features</h2>
+      <h3>Feasibility check</h3>
+      <p>Use <span class="kbd">Feasibility</span> for fast reconnaissance before building a parser or pipeline — to see whether an endpoint sits behind Datadome, Cloudflare, or needs a headless browser.</p>
+      <p>It sends a basic request and logs response size, status codes, and scans the HTML for anti-bot challenge keywords or JS-framework state injections, saving hours of manual debugging.</p>
     </section>
 
     <section id="advanced-proxy">
-      <h3>IP Rotation System</h3>
-      <p>On every snippet card in the Input Panel, there is an <strong>"Enable IP rotation"</strong> checkbox. When checked, requests executed via the <strong>Run</strong> button are routed through the backend server's internal, rotating proxy pool.</p>
-      
+      <h3>IP rotation system</h3>
+      <p>Every snippet card has an <strong>"Enable IP rotation"</strong> checkbox. When checked, requests sent via <span class="kbd">Run</span> route through the backend's internal, rotating proxy pool.</p>
+
       <div class="callout callout-warning">
-        <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
+        <div class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
         <div class="body">
-          <span class="title">Proxy Secrecy</span>
-          <p>The backend proxy IPs are highly confidential. To prevent leaks, these proxies are <strong>never</strong> injected into the generated Python code that you see or download. They only apply when executing code live through the CurlCraft UI.</p>
+          <span class="title">Proxy secrecy</span>
+          <p>Backend proxy IPs are confidential and are never written into the Python you see or download. They apply only when running code live through the curl2py UI.</p>
         </div>
       </div>
     </section>
 
     <section id="advanced-export">
-      <h3>Exporting (ZIP Download)</h3>
-      <p>CurlCraft is designed to build production-ready Python projects. To move your work to your local machine or server, click <strong>Tools &rarr; Download All</strong>.</p>
-      
-      <p>This generates a structured ZIP archive containing:</p>
+      <h3>Exporting (ZIP download)</h3>
+      <p>curl2py builds production-ready Python projects. Click <strong>Tools → Download All</strong> to get a structured ZIP containing:</p>
       <ul>
-        <li><code>[snippet_name].py</code> — The generated request functions.</li>
-        <li><code>[snippet_name]_parser.py</code> — The data extraction logic.</li>
-        <li><code>main.py</code> — The orchestration script (if Merge Scripts is active).</li>
-        <li><code>db.py</code> — Database insertion scripts.</li>
-        <li><code>pipeline_utils.py</code> — The helper functions required for variables to resolve.</li>
-        <li><code>requirements.txt</code> — Ensure you run <code>pip install -r requirements.txt</code> (installs <code>curl_cffi</code>, <code>pymongo</code>, <code>mysql-connector</code> etc.) before running <code>python main.py</code>.</li>
+        <li><code>[snippet_name].py</code> — the generated request functions.</li>
+        <li><code>[snippet_name]_parser.py</code> — the data extraction logic.</li>
+        <li><code>main.py</code> — the orchestration script, if Merge Scripts is active.</li>
+        <li><code>db.py</code> — database insertion scripts.</li>
+        <li><code>pipeline_utils.py</code> — helpers that resolve pipeline variables.</li>
+        <li><code>requirements.txt</code> — run <code>pip install -r requirements.txt</code> (installs <code>curl_cffi</code>, <code>pymongo</code>, <code>mysql-connector</code>, etc.) before <code>python main.py</code>.</li>
       </ul>
     </section>
 
     <section id="advanced-issues">
-      <h3>Issue Tracking System</h3>
-      <p>If you encounter a bug, the app has a built-in issue tracker. Click your username in the top right and select <strong>Raise Issue</strong>.</p>
-      
-      <p>You can categorize the bug (Workspace, Parser, Execution), write a description, and <strong>attach logs or screenshots</strong> directly. Upon submission, you receive an Issue Tracking ID (e.g., <code>ISSUE-20260630-ABCDEF</code>). You can use the Track Issue page to check the status of your ticket.</p>
+      <h3>Issue tracking</h3>
+      <p>Found a bug? Click your username in the top right and select <strong>Raise Issue</strong>.</p>
+      <p>Categorize it (Workspace, Parser, Execution), describe it, and attach logs or screenshots. Submitting gives you an issue ID, e.g. <code>ISSUE-20260630-ABCDEF</code>, which you can look up on the Track Issue page.</p>
     </section>
 
-    <footer style="padding: 4rem 0 2rem; margin-top: 4rem; border-top: 1px solid var(--border); text-align: center;">
-      <p style="font-size: 0.875rem; color: var(--text-light); margin: 0;">
-        CurlCraft &mdash; Official Documentation System. All rights reserved.
-      </p>
+    <footer>
+      <p><span class="prompt">$</span> curl2py — official documentation. all rights reserved.</p>
     </footer>
 
   </div>
 </main>
 
 <script>
-  // Reading Progress Bar
   const progressBar = document.getElementById('progressBar');
-  
   window.addEventListener('scroll', () => {
     const winScroll = document.body.scrollTop || document.documentElement.scrollTop;
     const height = document.documentElement.scrollHeight - document.documentElement.clientHeight;
-    const scrolled = (winScroll / height) * 100;
+    const scrolled = height > 0 ? (winScroll / height) * 100 : 0;
     progressBar.style.width = scrolled + '%';
   });
 
-  // Active Link Highlighting using Intersection Observer
   const sections = document.querySelectorAll('section[id], header[id]');
   const navLinks = document.querySelectorAll('.nav-links a');
-  
-  const observerOptions = {
-    root: null,
-    rootMargin: '-100px 0px -60% 0px',
-    threshold: 0
-  };
-
   const observer = new IntersectionObserver((entries) => {
     entries.forEach(entry => {
       if (entry.isIntersecting) {
         navLinks.forEach(link => {
           link.classList.remove('active');
-          if (link.getAttribute('href') === '#' + entry.target.id) {
-            link.classList.add('active');
-          }
+          if (link.getAttribute('href') === '#' + entry.target.id) link.classList.add('active');
         });
       }
     });
-  }, observerOptions);
-
-  sections.forEach(section => {
-    observer.observe(section);
-  });
+  }, { root: null, rootMargin: '-100px 0px -60% 0px', threshold: 0 });
+  sections.forEach(s => observer.observe(s));
 </script>
 
 </body>
